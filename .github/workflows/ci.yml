@@ -24,3 +24,33 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
       - run: pnpm build
+
+  contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install nightly-2026-01-01 --profile minimal
+          rustup component add rust-src --toolchain nightly-2026-01-01
+          rustup target add wasm32-unknown-unknown --toolchain nightly-2026-01-01
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+
+      - name: Install cargo-odra
+        run: cargo install cargo-odra --locked
+
+      - name: Install wasm-opt + wasm-strip (binaryen + wabt)
+        run: sudo apt-get update && sudo apt-get install -y binaryen wabt
+
+      - name: Contract tests (OdraVM)
+        run: cargo odra test
+
+      - name: Build + optimize Casper wasm
+        run: cargo odra build
