@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Market } from "@/core/types";
 import { csprToMotes } from "@/core/types";
+import { useWallet } from "@/components/wallet-context";
 
 interface ChainResult {
   deployHash: string;
@@ -40,6 +41,7 @@ function ResultLine({ label, result }: { label: string; result: ChainResult }) {
  * transactions, no UI change. Human wallet connect (CSPR.click) + richer betting land in S4.
  */
 export function BetPanel({ market }: { market: Market }) {
+  const { account, connected, connect } = useWallet();
   const [outcomeKey, setOutcomeKey] = useState(market.outcomes[0]?.key ?? "");
   const [amount, setAmount] = useState("1");
   const [betting, setBetting] = useState(false);
@@ -52,6 +54,10 @@ export function BetPanel({ market }: { market: Market }) {
   const [resolveError, setResolveError] = useState<string | null>(null);
 
   async function placeBet() {
+    if (!account) {
+      connect();
+      return;
+    }
     setBetting(true);
     setBetError(null);
     setBetResult(null);
@@ -65,7 +71,7 @@ export function BetPanel({ market }: { market: Market }) {
           marketId: market.id,
           outcomeKey,
           amountMotes,
-          bettor: "demo:human",
+          bettor: account.publicKey,
         }),
       });
       const json = await res.json();
@@ -144,13 +150,18 @@ export function BetPanel({ market }: { market: Market }) {
         <button
           type="button"
           onClick={placeBet}
-          disabled={betting || !amountValid || !outcomeKey}
-          className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-background transition-opacity disabled:opacity-40"
+          disabled={betting || (connected && (!amountValid || !outcomeKey))}
+          className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition-opacity disabled:opacity-40"
         >
-          {betting ? "Placing…" : "Place bet"}
+          {betting ? "Placing…" : connected ? "Place bet" : "Connect wallet"}
         </button>
       </div>
 
+      {connected && account && (
+        <p className="mt-2 text-[11px] text-muted">
+          Betting as <span className="font-mono text-foreground">{account.label}</span>
+        </p>
+      )}
       {betError && <p className="mt-2 text-xs text-down">{betError}</p>}
       {betResult && <ResultLine label="Bet submitted" result={betResult} />}
 
