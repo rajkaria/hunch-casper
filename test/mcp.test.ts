@@ -2,10 +2,12 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { POST as mcpPOST } from "@/app/api/mcp/route";
 import { __resetLedger } from "@/adapters/mock/settlement-ledger";
 import { __resetOracleLedger } from "@/adapters/mock/oracle-ledger";
+import { __resetConsumedNonces } from "@/lib/agent-bet";
 
 beforeEach(() => {
   __resetLedger();
   __resetOracleLedger();
+  __resetConsumedNonces();
 });
 
 const URL = "http://localhost/api/mcp";

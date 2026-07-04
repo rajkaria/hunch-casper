@@ -33,6 +33,7 @@ describe("container (mock wiring)", () => {
       marketId: "m",
       outcomeKey: "yes",
       amountMotes: "1000000000",
+      payer: "agent:value",
     });
     const proof = await c.payment.settle(req, "agent:value");
     expect(proof.scheme).toBe("casper-x402");
@@ -41,7 +42,7 @@ describe("container (mock wiring)", () => {
 
   it("rejects a proof with a mismatched nonce", async () => {
     const c = createContainer("testnet");
-    const req = await c.payment.quote({ marketId: "m", outcomeKey: "yes", amountMotes: "1" });
+    const req = await c.payment.quote({ marketId: "m", outcomeKey: "yes", amountMotes: "1", payer: "agent:value" });
     const proof = await c.payment.settle(req, "agent:value");
     expect(await c.payment.verify({ ...req, nonce: "tampered" }, proof)).toBe(false);
   });

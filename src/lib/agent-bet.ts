@@ -16,6 +16,21 @@
 import type { Container } from "@/lib/container";
 import type { X402PaymentProof, X402PaymentRequirement } from "@/ports/payment";
 import { previewPayoutMotes } from "@/core/market-payout";
+import { getNetworkConfig, isCasperNetwork } from "@/config/network";
+import { motesToCspr } from "@/core/types";
+
+/**
+ * Nonces spent on a placed bet — one payment settles exactly one bet. The x402 nonce is bound to
+ * the bet params + payer (see mock-payment), so this consumption guard is what turns "a valid
+ * proof" into "a single-use valid proof", closing the replay hole. In-process for the mock/demo;
+ * the real adapter enforces one-time use via the on-chain transfer being spent + a persisted set.
+ */
+const consumedNonces = new Set<string>();
+
+/** Test-only: clear the spent-nonce registry. */
+export function __resetConsumedNonces(): void {
+  consumedNonces.clear();
+}
 
 export interface AgentBetInput {
   marketId: string;
@@ -58,6 +73,23 @@ export async function agentBet(container: Container, input: AgentBetInput): Prom
     return { status: "error", error: "bettor is required", code: 400 };
   }
 
+  // Mainnet guardrail — the same real-money cap the human bet route enforces. Agents must not be
+  // able to route around it via the x402 rail.
+  const cap = getNetworkConfig(container.network).guardrails.maxBetCspr;
+  if (cap != null && motesToCspr(amountMotes) > cap) {
+    return { status: "error", error: `bet exceeds the ${container.network} cap of ${cap} CSPR`, code: 400 };
+  }
+
+  // A `network:slug` marketId must be on this container's network — reject a cross-network id
+  // rather than silently mis-resolving it (keeps REST + MCP identical).
+  const colon = marketId.indexOf(":");
+  if (colon > 0) {
+    const prefix = marketId.slice(0, colon);
+    if (isCasperNetwork(prefix) && prefix !== container.network) {
+      return { status: "error", error: `market ${marketId} is not on ${container.network}`, code: 400 };
+    }
+  }
+
   // Validate against the read model (real market + outcome + still open).
   const slug = marketId.startsWith(`${container.network}:`)
     ? marketId.slice(container.network.length + 1)
@@ -71,7 +103,7 @@ export async function agentBet(container: Container, input: AgentBetInput): Prom
     return { status: "error", error: `market ${marketId} is ${market.status}`, code: 409 };
   }
 
-  const requirement = await container.payment.quote({ marketId: market.id, outcomeKey, amountMotes });
+  const requirement = await container.payment.quote({ marketId: market.id, outcomeKey, amountMotes, payer: bettor });
 
   // Step 1: no proof → hand back the 402 challenge + what this bet would pay if it wins.
   if (!paymentProof) {
@@ -82,9 +114,13 @@ export async function agentBet(container: Container, input: AgentBetInput): Prom
     };
   }
 
-  // Step 2: verify the proof settles the requirement, then escrow + index the bet.
+  // Step 2: verify the proof settles this payer's requirement, and that it hasn't already been
+  // spent, then escrow + index the bet.
   const ok = await container.payment.verify(requirement, paymentProof);
   if (!ok) return { status: "error", error: "invalid or unverifiable x402 payment proof", code: 402 };
+  if (consumedNonces.has(requirement.nonce)) {
+    return { status: "error", error: "x402 payment proof already spent", code: 402 };
+  }
 
   let res;
   try {
@@ -92,6 +128,8 @@ export async function agentBet(container: Container, input: AgentBetInput): Prom
   } catch (err) {
     return { status: "error", error: err instanceof Error ? err.message : "chain submission failed", code: 502 };
   }
+  // Money moved on-chain — burn the nonce so the same proof can't mint a second bet.
+  consumedNonces.add(requirement.nonce);
   try {
     const updated = await container.store.recordBet({ marketId: market.id, bettor, outcomeKey, amountMotes });
     return {

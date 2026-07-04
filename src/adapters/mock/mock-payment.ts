@@ -16,10 +16,12 @@ import { pseudoDeployHash } from "./mock-chain";
 export function createMockPayment(network: CasperNetwork, vaultAddress: string): PaymentPort {
   return {
     async quote(input: QuoteInput): Promise<X402PaymentRequirement> {
+      // Bind the nonce to the bet params AND the payer, so a proof for one payer/bet can't settle
+      // another's. The real adapter additionally verifies the on-chain transfer sender == payer.
       const nonce = pseudoDeployHash(
-        `nonce:${network}:${input.marketId}:${input.outcomeKey}:${input.amountMotes}`,
+        `nonce:${network}:${input.marketId}:${input.outcomeKey}:${input.amountMotes}:${input.payer}`,
       ).slice(0, 32);
-      return { amountMotes: input.amountMotes, payTo: vaultAddress, network, nonce };
+      return { amountMotes: input.amountMotes, payTo: vaultAddress, network, payer: input.payer, nonce };
     },
     async settle(requirement: X402PaymentRequirement, payer: string): Promise<X402PaymentProof> {
       const deployHash = pseudoDeployHash(
