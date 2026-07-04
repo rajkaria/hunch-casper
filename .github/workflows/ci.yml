@@ -46,8 +46,16 @@ jobs:
       - name: Install cargo-odra
         run: cargo install cargo-odra --locked
 
-      - name: Install wasm-opt + wasm-strip (binaryen + wabt)
-        run: sudo apt-get update && sudo apt-get install -y binaryen wabt
+      - name: Install wasm-strip (wabt)
+        run: sudo apt-get update && sudo apt-get install -y wabt
+
+      - name: Install modern wasm-opt (binaryen)
+        # Ubuntu's apt binaryen is too old — it rejects `--signext-lowering` that
+        # cargo-odra's optimize step passes. Pull a current release instead.
+        run: |
+          curl -sSL https://github.com/WebAssembly/binaryen/releases/download/version_130/binaryen-version_130-x86_64-linux.tar.gz \
+            | sudo tar -xz -C /usr/local --strip-components=1
+          wasm-opt --version
 
       - name: Contract tests (OdraVM)
         run: cargo odra test
