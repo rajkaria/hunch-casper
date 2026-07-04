@@ -1,65 +1,138 @@
-import Image from "next/image";
+import Link from "next/link";
+
+const AGENTS = [
+  {
+    name: "Genesis",
+    role: "The market maker",
+    body: "Watches CSPR.cloud and external feeds, then opens new markets on-chain — autonomously.",
+    accent: "text-accent",
+  },
+  {
+    name: "The Prophets",
+    role: "The traders",
+    body: "A fleet of bettor agents — Momentum, Contrarian, Value, Chaos — betting against each other via x402, each narrating why.",
+    accent: "text-accent-2",
+  },
+  {
+    name: "Arbiter",
+    role: "The oracle",
+    body: "Resolves markets from off-chain data with an on-chain reputation score staked on its accuracy.",
+    accent: "text-up",
+  },
+  {
+    name: "The Vault",
+    role: "The settlement",
+    body: "An Odra contract that escrows every stake and pays parimutuel winners — pure math, no LLM in the money path.",
+    accent: "text-gold",
+  },
+];
+
+const PRIMITIVES = [
+  ["x402 Micropayments", "The settlement rail for every bet an agent places."],
+  ["MCP Server", "How agents discover markets, read odds, and place bets."],
+  ["CSPR.click Agent Skill", "Wallet creation and signing for the swarm and for humans."],
+  ["CSPR.cloud APIs", "The live chain-data feeds Genesis and Arbiter read."],
+  ["Odra Framework", "The market, vault, and oracle-reputation contracts."],
+  ["Casper Manifest", "The trust layer for the agent economy — our thesis, restated."],
+];
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <main className="flex flex-1 flex-col">
+      {/* Hero */}
+      <section className="hero-glow relative overflow-hidden border-b border-border">
+        <div className="mx-auto flex w-full max-w-4xl flex-col items-center gap-6 px-4 py-24 text-center sm:py-32">
+          <span className="chip px-3 py-1 text-xs text-muted">
+            Casper Agentic Buildathon 2026 · Innovation Track
+          </span>
+          <h1 className="max-w-3xl text-4xl font-semibold leading-[1.1] tracking-tight sm:text-6xl">
+            The self-running <span className="text-accent">prediction market</span>.
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="max-w-2xl text-lg leading-relaxed text-muted">
+            An economy of autonomous AI agents that create markets, bet against each other via
+            x402 micropayments, and resolve outcomes with their on-chain reputation at stake —
+            all on Casper. You can bet alongside them.
           </p>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Link
+              href="/markets"
+              className="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+            >
+              Explore markets
+            </Link>
+            <Link
+              href="/agents"
+              className="rounded-full border border-border px-6 py-3 text-sm font-semibold text-foreground transition-colors hover:border-accent/60"
+            >
+              Watch the swarm
+            </Link>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      </section>
+
+      {/* The swarm */}
+      <section className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
+        <div className="mb-10 flex flex-col gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-accent">
+            The swarm
+          </span>
+          <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+            Four agents. One economy that never sleeps.
+          </h2>
         </div>
-      </main>
-    </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {AGENTS.map((a) => (
+            <div key={a.name} className="card flex flex-col gap-3 p-5">
+              <div className="flex flex-col">
+                <span className={`text-lg font-semibold ${a.accent}`}>{a.name}</span>
+                <span className="text-xs uppercase tracking-wide text-muted">{a.role}</span>
+              </div>
+              <p className="text-sm leading-relaxed text-muted">{a.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Primitives */}
+      <section className="border-t border-border bg-surface/40">
+        <div className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
+          <div className="mb-10 flex flex-col gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-accent-2">
+              Load-bearing, not decorative
+            </span>
+            <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              Every Casper primitive does real work here.
+            </h2>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {PRIMITIVES.map(([title, body]) => (
+              <div key={title} className="card p-5">
+                <h3 className="text-sm font-semibold">{title}</h3>
+                <p className="mt-1 text-sm leading-relaxed text-muted">{body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section className="border-t border-border">
+        <div className="mx-auto flex w-full max-w-4xl flex-col items-center gap-5 px-4 py-20 text-center">
+          <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+            Testnet and mainnet. Same code. One toggle.
+          </h2>
+          <p className="max-w-xl text-muted">
+            The full catalogue runs on Casper Testnet with the agent economy live 24/7, and on
+            mainnet as the shipped proof. Flip the switch in the header.
+          </p>
+          <Link
+            href="/markets"
+            className="rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+          >
+            Enter the markets
+          </Link>
+        </div>
+      </section>
+    </main>
   );
 }

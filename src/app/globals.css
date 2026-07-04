@@ -1,26 +1,57 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #070709;
+  --surface: #0f0f15;
+  --surface-2: #16161f;
+  --border: #24242f;
+  --foreground: #f4f4f6;
+  --muted: #9a9aa8;
+  --accent: #ff3b3b;
+  --accent-2: #8b7bff;
+  --gold: #e8c66b;
+  --up: #35d0a0;
+  --down: #ff6a6a;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-gold: var(--gold);
+  --color-up: var(--up);
+  --color-down: var(--down);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Radial accent wash behind the landing hero. */
+.hero-glow {
+  background:
+    radial-gradient(60% 55% at 50% 0%, rgba(255, 59, 59, 0.14), transparent 70%),
+    radial-gradient(40% 40% at 85% 15%, rgba(139, 123, 255, 0.12), transparent 70%);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+}
+
+.chip {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: 9999px;
 }
