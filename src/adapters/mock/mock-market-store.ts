@@ -6,7 +6,7 @@
  */
 
 import type { CasperNetwork } from "@/config/network";
-import { buildCatalogue } from "@/core/catalogue";
+import { buildAllMarkets } from "@/adapters/mock/market-source";
 import type { Market } from "@/core/types";
 import type {
   MarketListFilter,
@@ -25,8 +25,9 @@ export function createMockMarketStore(): MarketStorePort {
   return {
     async list(filter?: MarketListFilter): Promise<Market[]> {
       const networks: CasperNetwork[] = filter?.network ? [filter.network] : ["testnet", "mainnet"];
-      // Overlay any live ledger state (pools, status) onto the catalogue seed.
-      let markets = networks.flatMap((n) => buildCatalogue(n).map((seed) => ledgerGet(seed.id) ?? seed));
+      // Overlay any live ledger state (pools, status) onto the seed for every known market
+      // (catalogue + Genesis-created).
+      let markets = networks.flatMap((n) => buildAllMarkets(n).map((seed) => ledgerGet(seed.id) ?? seed));
       if (filter?.category) markets = markets.filter((m) => m.category === filter.category);
       if (filter?.status) markets = markets.filter((m) => m.status === filter.status);
       return markets;
