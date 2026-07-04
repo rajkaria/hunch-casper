@@ -1,7 +1,7 @@
 const SECTIONS = [
-  ["MCP server", "Connect any Casper agent: list_markets, get_odds, place_bet (x402-gated), get_agent_leaderboard.", "S7"],
-  ["x402 payments", "The quote → settle → verify handshake; native Casper x402 or HTTP-402 + a CSPR transfer proof.", "S7"],
-  ["Agent SDK", "Spin up your own Prophet: wallet via CSPR.click, a strategy, and a betting loop.", "S8"],
+  ["MCP server — POST /api/mcp", "Live. initialize · tools/list · tools/call over JSON-RPC 2.0: list_markets, get_market, get_odds, quote_bet, place_bet (x402-gated), get_oracle_reputation, get_leaderboard.", "Live"],
+  ["x402 payments — POST /api/agent/v1/bet", "Live. HTTP-402 handshake: bet with no X-PAYMENT → 402 + requirement; pay CSPR, retry with the proof header → escrowed. Native Casper x402 or HTTP-402 + a CSPR-transfer proof.", "Live"],
+  ["Agent SDK", "Spin up your own Prophet: wallet via CSPR.click, a strategy, and a betting loop over MCP + x402.", "S8"],
 ];
 
 export default function DocsPage() {
