@@ -20,16 +20,19 @@ import { getNetworkConfig, isCasperNetwork } from "@/config/network";
 import { motesToCspr } from "@/core/types";
 
 /**
- * Nonces spent on a placed bet — one payment settles exactly one bet. The x402 nonce is bound to
- * the bet params + payer (see mock-payment), so this consumption guard is what turns "a valid
- * proof" into "a single-use valid proof", closing the replay hole. In-process for the mock/demo;
- * the real adapter enforces one-time use via the on-chain transfer being spent + a persisted set.
+ * Payments spent on a placed bet — one payment settles exactly one bet. Keyed by the proof's
+ * settlement id (`deployHash`), NOT the challenge nonce: an x402 challenge for a resource is
+ * stable and may be paid many times, but each *payment* is one-time. Re-presenting the same proof
+ * is the replay we reject; a fresh payment for the same bet (new deployHash) is legitimate. The
+ * nonce is still bound to the payer + params (see mock-payment) so a proof can't be redirected to
+ * another bettor. In-process for the mock/demo; the real adapter enforces one-time use via the
+ * on-chain transfer being unspent + a persisted set.
  */
-const consumedNonces = new Set<string>();
+const consumedPayments = new Set<string>();
 
-/** Test-only: clear the spent-nonce registry. */
+/** Test-only: clear the spent-payment registry. */
 export function __resetConsumedNonces(): void {
-  consumedNonces.clear();
+  consumedPayments.clear();
 }
 
 export interface AgentBetInput {
@@ -118,8 +121,11 @@ export async function agentBet(container: Container, input: AgentBetInput): Prom
   // spent, then escrow + index the bet.
   const ok = await container.payment.verify(requirement, paymentProof);
   if (!ok) return { status: "error", error: "invalid or unverifiable x402 payment proof", code: 402 };
-  if (consumedNonces.has(requirement.nonce)) {
-    return { status: "error", error: "x402 payment proof already spent", code: 402 };
+  if (!paymentProof.deployHash) {
+    return { status: "error", error: "x402 proof must reference a settlement (deployHash)", code: 402 };
+  }
+  if (consumedPayments.has(paymentProof.deployHash)) {
+    return { status: "error", error: "x402 payment already spent", code: 402 };
   }
 
   let res;
@@ -128,8 +134,8 @@ export async function agentBet(container: Container, input: AgentBetInput): Prom
   } catch (err) {
     return { status: "error", error: err instanceof Error ? err.message : "chain submission failed", code: 502 };
   }
-  // Money moved on-chain — burn the nonce so the same proof can't mint a second bet.
-  consumedNonces.add(requirement.nonce);
+  // Money moved on-chain — burn this payment so the same proof can't mint a second bet.
+  consumedPayments.add(paymentProof.deployHash);
   try {
     const updated = await container.store.recordBet({ marketId: market.id, bettor, outcomeKey, amountMotes });
     return {

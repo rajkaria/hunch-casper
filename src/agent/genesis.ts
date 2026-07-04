@@ -16,6 +16,7 @@ import { buildMarket } from "@/core/catalogue";
 import type { Market, MarketOutcome, ResolverBinding } from "@/core/types";
 import { buildDeployPlan } from "@/core/market-generator";
 import { addCreatedMarket } from "@/adapters/mock/market-source";
+import { appendAction } from "@/adapters/mock/activity-log";
 
 /** A CSPR.cloud-style signal that motivates a new market. */
 export interface GenesisTrigger {
@@ -83,5 +84,13 @@ export async function runGenesis(container: Container, trigger: GenesisTrigger):
   const def = definitionFromTrigger(trigger, framing);
   buildDeployPlan(def); // ABI-validate before registering (throws on a bad config)
   addCreatedMarket(def); // MarketFactory.register_market, off-chain mirror
-  return buildMarket(def, container.network);
+  const market = buildMarket(def, container.network);
+  appendAction({
+    agent: "Genesis",
+    kind: "market_created",
+    marketId: market.id,
+    marketTitle: market.title,
+    narration: def.resolver.description,
+  });
+  return market;
 }

@@ -1,4 +1,5 @@
 import { OracleReputation } from "@/components/oracle-reputation";
+import { ActivityFeed } from "@/components/activity-feed";
 
 const ROADMAP = [
   ["Genesis", "Autonomously opens markets from CSPR.cloud signals — POST /api/agent/genesis/run", "Live"],
@@ -21,6 +22,12 @@ export default function AgentsPage() {
       {/* Live now: the Arbiter's on-chain reputation (S6). */}
       <div className="mt-8">
         <OracleReputation oracleId="arbiter" variant="card" />
+      </div>
+
+      {/* Live agent activity — Genesis opens, the Prophets bet, the Arbiter resolves. */}
+      <div className="mt-8">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Live activity</h2>
+        <ActivityFeed />
       </div>
 
       <div className="mt-6 flex flex-col gap-3">
