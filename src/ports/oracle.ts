@@ -16,14 +16,22 @@ export interface OracleReading {
 
 export interface OracleReputation {
   oracleId: string;
+  /** Human-readable oracle name. */
+  name: string;
   /** Historical resolution accuracy in [0, 1]. */
   accuracy: number;
+  /** Accuracy in basis points (floored) — the exact on-chain `accuracy_bps`. */
+  accuracyBps: number;
   /** Number of markets resolved. */
   resolvedCount: number;
+  /** Of those, how many were confirmed accurate. */
+  accurateCount: number;
 }
 
 export interface OraclePort {
   /** Determine the winning outcome for a market from off-chain data. */
   read(marketId: string): Promise<OracleReading>;
   reputationOf(oracleId: string): Promise<OracleReputation>;
+  /** Record a resolution's accuracy against an oracle — updates its reputation. Idempotent per market. */
+  recordResolution(oracleId: string, marketId: string, accurate: boolean): Promise<OracleReputation>;
 }

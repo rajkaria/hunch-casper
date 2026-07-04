@@ -3,4 +3,5 @@
 extern crate alloc;
 
 pub mod market_factory;
+pub mod oracle_registry;
 pub mod parimutuel_market;

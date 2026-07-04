@@ -1,3 +1,5 @@
+import { OracleReputation } from "@/components/oracle-reputation";
+
 const ROADMAP = [
   ["Genesis", "Autonomous market creation from CSPR.cloud triggers", "S8"],
   ["The Prophets", "Rival bettor strategies transacting via x402 + MCP", "S9"],
@@ -16,7 +18,12 @@ export default function AgentsPage() {
         each a Casper transaction with an explorer link, plus the agent PnL and oracle-accuracy
         leaderboards. Wiring lands across the agent-economy sprints.
       </p>
-      <div className="mt-8 flex flex-col gap-3">
+      {/* Live now: the Arbiter's on-chain reputation (S6). */}
+      <div className="mt-8">
+        <OracleReputation oracleId="arbiter" variant="card" />
+      </div>
+
+      <div className="mt-6 flex flex-col gap-3">
         {ROADMAP.map(([name, body, sprint]) => (
           <div key={name} className="card flex items-center justify-between gap-4 p-5">
             <div>

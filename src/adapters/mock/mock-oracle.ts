@@ -6,7 +6,22 @@
 
 import type { OraclePort, OracleReading, OracleReputation } from "@/ports/oracle";
 import { buildCatalogue } from "@/core/catalogue";
+import { accuracyBps as accuracyBpsOf } from "@/core/oracle-reputation";
+import type { OracleReputationState } from "@/core/oracle-reputation";
+import { oracleRecordResolution, oracleReputationOf } from "./oracle-ledger";
 import { pseudoDeployHash } from "./mock-chain";
+
+function toReputation(state: OracleReputationState): OracleReputation {
+  const bps = accuracyBpsOf(state.accurate, state.resolved);
+  return {
+    oracleId: state.oracleId,
+    name: state.name,
+    accuracy: bps / 10_000,
+    accuracyBps: bps,
+    resolvedCount: state.resolved,
+    accurateCount: state.accurate,
+  };
+}
 
 function stablePick(marketId: string, outcomeKeys: string[]): string {
   const hash = pseudoDeployHash(`oracle:${marketId}`);
@@ -30,7 +45,10 @@ export function createMockOracle(): OraclePort {
       };
     },
     async reputationOf(oracleId: string): Promise<OracleReputation> {
-      return { oracleId, accuracy: 0.96, resolvedCount: 128 };
+      return toReputation(oracleReputationOf(oracleId));
+    },
+    async recordResolution(oracleId: string, marketId: string, accurate: boolean): Promise<OracleReputation> {
+      return toReputation(oracleRecordResolution(oracleId, marketId, accurate));
     },
   };
 }

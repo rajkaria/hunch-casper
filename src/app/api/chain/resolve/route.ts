@@ -93,6 +93,9 @@ export async function POST(req: Request): Promise<Response> {
     const res = await container.chain.resolveMarket({ marketId: market.id, winningOutcomeKey, oracleId: oracle });
     // Settle off-chain through the pure payout engine — the exact numbers the on-chain claim mirrors.
     const settlement = await container.store.settle(market.id, winningOutcomeKey);
+    // Record the resolution against the oracle's reputation (the OracleRegistry mirror). The
+    // deterministic Arbiter read the data correctly → accurate; a dispute layer (S10) can revise.
+    const reputation = await container.oracle.recordResolution(oracle, market.id, true);
     return NextResponse.json({
       deployHash: res.deployHash,
       explorerUrl: res.explorerUrl,
@@ -101,6 +104,7 @@ export async function POST(req: Request): Promise<Response> {
       winningOutcomeKey,
       oracleId: oracle,
       settlement,
+      oracleReputation: reputation,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "chain submission failed";
