@@ -5,7 +5,7 @@
  */
 
 import type { OraclePort, OracleReading, OracleReputation } from "@/ports/oracle";
-import { buildCatalogue } from "@/core/catalogue";
+import { findDefinition } from "@/adapters/mock/market-source";
 import { accuracyBps as accuracyBpsOf } from "@/core/oracle-reputation";
 import type { OracleReputationState } from "@/core/oracle-reputation";
 import { oracleRecordResolution, oracleReputationOf } from "./oracle-ledger";
@@ -32,9 +32,9 @@ function stablePick(marketId: string, outcomeKeys: string[]): string {
 export function createMockOracle(): OraclePort {
   return {
     async read(marketId: string): Promise<OracleReading> {
-      // Derive outcome keys from the catalogue slug embedded in the id (`network:slug`).
+      // Derive outcome keys from the definition slug embedded in the id (`network:slug`).
       const slug = marketId.includes(":") ? marketId.split(":")[1] : marketId;
-      const def = buildCatalogue("testnet").find((m) => m.slug === slug);
+      const def = findDefinition(slug);
       const keys = def ? def.outcomes.map((o) => o.key) : ["yes", "no"];
       const winningOutcomeKey = stablePick(marketId, keys);
       return {

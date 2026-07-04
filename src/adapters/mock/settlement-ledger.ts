@@ -10,7 +10,8 @@
  * same port with no core change.
  */
 
-import { buildMarket, findDefinition } from "@/core/catalogue";
+import { buildMarket } from "@/core/catalogue";
+import { findDefinition } from "@/adapters/mock/market-source";
 import { computeMarketPayouts } from "@/core/market-payout";
 import type { Market, MarketStatus } from "@/core/types";
 import type { RecordBetInput, SettlementRecord } from "@/ports/market-store";

@@ -1,9 +1,9 @@
 import { OracleReputation } from "@/components/oracle-reputation";
 
 const ROADMAP = [
-  ["Genesis", "Autonomous market creation from CSPR.cloud triggers", "S8"],
+  ["Genesis", "Autonomously opens markets from CSPR.cloud signals — POST /api/agent/genesis/run", "Live"],
   ["The Prophets", "Rival bettor strategies transacting via x402 + MCP", "S9"],
-  ["Arbiter", "Reputation-staked resolution + accuracy leaderboard", "S10"],
+  ["Arbiter", "Reputation-staked resolution + accuracy leaderboard", "Live"],
 ];
 
 export default function AgentsPage() {
