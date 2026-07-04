@@ -57,6 +57,13 @@ export interface MarketDeployPlan {
   resolver: ResolverBinding;
   init: MarketInitPlan;
   registration: MarketRegistrationPlan;
+  /**
+   * House launch liquidity to escrow on-chain immediately after deploy: `outcomeKey -> motes`.
+   * The deploy driver places these as real `bet` calls from the house key so the on-chain pools
+   * match the catalogue seed — which is what makes the off-chain payout engine a faithful mirror
+   * of the vault (the house is a real staker on both sides, never a dead 0/0 book).
+   */
+  seedBets: Record<string, string>;
 }
 
 function deadlineToMs(slug: string, iso: string): number {
@@ -131,6 +138,7 @@ export function buildDeployPlan(def: MarketDefinition): MarketDeployPlan {
       category: def.category,
       deadlineMs,
     },
+    seedBets: { ...def.seedPoolMotes },
   };
 }
 

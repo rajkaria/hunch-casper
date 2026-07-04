@@ -50,20 +50,64 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
+  const container = createContainer(network);
+
+  // Validate against the catalogue read model before touching the chain: the bet must be on a
+  // real market and a real outcome of it. (Closes the S4-review correctness gap; safe because the
+  // money path itself is pure-math + operator-custody, but a bet on a bad outcome is nonsense.)
+  const slug = marketId.startsWith(`${network}:`) ? marketId.slice(network.length + 1) : marketId;
+  const market = await container.store.get(slug, network);
+  if (!market) {
+    return NextResponse.json({ error: `unknown market '${marketId}'` }, { status: 400 });
+  }
+  if (!market.outcomes.some((o) => o.key === outcomeKey)) {
+    return NextResponse.json({ error: `'${outcomeKey}' is not an outcome of ${marketId}` }, { status: 400 });
+  }
+  if (market.status !== "open") {
+    return NextResponse.json({ error: `market ${marketId} is ${market.status}` }, { status: 409 });
+  }
+
+  // Phase 1 — submit the escrow to the chain (the money authority). A failure here means no
+  // value moved, so it is the only case that returns 502.
+  let res;
   try {
-    const container = createContainer(network);
-    const res = await container.chain.placeBet({ marketId, outcomeKey, amountMotes, bettor });
+    res = await container.chain.placeBet({ marketId: market.id, outcomeKey, amountMotes, bettor });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "chain submission failed";
+    return NextResponse.json({ error: message }, { status: 502 });
+  }
+
+  // Phase 2 — index the escrowed bet so pools + odds go live. The chain already accepted the bet;
+  // if indexing fails (e.g. a concurrent resolve flipped the market between the pre-flight check
+  // and here), we must NOT report a chain failure and lose the escrowed bet. Surface it distinctly
+  // (`indexed: false` + the deploy hash) so it can be reconciled from chain state — closing the
+  // orphaned-settlement class the S5 review flagged.
+  try {
+    const updated = await container.store.recordBet({ marketId: market.id, bettor, outcomeKey, amountMotes });
     return NextResponse.json({
       deployHash: res.deployHash,
       explorerUrl: res.explorerUrl,
       network,
-      marketId,
+      marketId: market.id,
       outcomeKey,
       amountMotes,
+      indexed: true,
+      totalStakedMotes: updated.totalStakedMotes,
+      poolByOutcomeMotes: updated.poolByOutcomeMotes,
       simulated: isSimulated(),
     });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "chain submission failed";
-    return NextResponse.json({ error: message }, { status: 502 });
+  } catch (recordErr) {
+    const message = recordErr instanceof Error ? recordErr.message : "off-chain indexing failed";
+    return NextResponse.json({
+      deployHash: res.deployHash,
+      explorerUrl: res.explorerUrl,
+      network,
+      marketId: market.id,
+      outcomeKey,
+      amountMotes,
+      indexed: false,
+      indexError: message,
+      simulated: isSimulated(),
+    });
   }
 }

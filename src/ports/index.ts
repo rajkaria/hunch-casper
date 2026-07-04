@@ -12,4 +12,9 @@ export type {
 } from "./payment";
 export type { OraclePort, OracleReading, OracleReputation } from "./oracle";
 export type { LlmClient, LlmCompleteInput } from "./llm";
-export type { MarketStorePort, MarketListFilter } from "./market-store";
+export type {
+  MarketStorePort,
+  MarketListFilter,
+  RecordBetInput,
+  SettlementRecord,
+} from "./market-store";
