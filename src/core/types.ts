@@ -81,6 +81,8 @@ export interface Market {
   outcomes: MarketOutcome[];
   network: CasperNetwork;
   status: MarketStatus;
+  /** Parimutuel fee in basis points — the vault + payout engine + UI preview all read this. */
+  feeBps: number;
   /** ISO 8601 resolution deadline. */
   deadlineIso: string;
   /** Total staked across all outcomes, in motes (1 CSPR = 1e9 motes). String for bigint safety. */

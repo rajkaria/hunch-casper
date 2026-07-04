@@ -106,6 +106,12 @@ describe("market generator (the on-chain half of the engine)", () => {
     expect(() => buildDeployPlan(bad)).toThrow(/threshold resolver requires/);
   });
 
+  it("carries the house seed bets so a deploy escrows on-chain pools that match the catalogue", () => {
+    for (const def of MARKET_DEFINITIONS) {
+      expect(buildDeployPlan(def).seedBets).toEqual(def.seedPoolMotes);
+    }
+  });
+
   it("the whole catalogue generates without throwing (all configs are ABI-valid)", () => {
     expect(() => buildAllDeployPlans()).not.toThrow();
   });

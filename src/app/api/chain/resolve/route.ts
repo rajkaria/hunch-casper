@@ -64,16 +64,43 @@ export async function POST(req: Request): Promise<Response> {
   }
   const oracle = typeof oracleId === "string" && oracleId.length > 0 ? oracleId : "arbiter";
 
+  const container = createContainer(network);
+  const slug = marketId.startsWith(`${network}:`) ? marketId.slice(network.length + 1) : marketId;
+  const market = await container.store.get(slug, network);
+  if (!market) {
+    return NextResponse.json({ error: `unknown market '${marketId}'` }, { status: 400 });
+  }
+  if (!market.outcomes.some((o) => o.key === winningOutcomeKey)) {
+    return NextResponse.json({ error: `'${winningOutcomeKey}' is not an outcome of ${marketId}` }, { status: 400 });
+  }
+
+  // Idempotency: if the market is already settled, do NOT re-submit an on-chain resolve — the
+  // vault's assert_open would revert it and burn gas, and a second body could echo a different
+  // winner than the one that actually settled. Return the recorded settlement verbatim.
+  const existing = await container.store.settlementFor(market.id);
+  if (existing) {
+    return NextResponse.json({
+      network,
+      marketId: market.id,
+      winningOutcomeKey: existing.winningOutcomeKey,
+      oracleId: oracle,
+      settlement: existing,
+      alreadySettled: true,
+    });
+  }
+
   try {
-    const container = createContainer(network);
-    const res = await container.chain.resolveMarket({ marketId, winningOutcomeKey, oracleId: oracle });
+    const res = await container.chain.resolveMarket({ marketId: market.id, winningOutcomeKey, oracleId: oracle });
+    // Settle off-chain through the pure payout engine — the exact numbers the on-chain claim mirrors.
+    const settlement = await container.store.settle(market.id, winningOutcomeKey);
     return NextResponse.json({
       deployHash: res.deployHash,
       explorerUrl: res.explorerUrl,
       network,
-      marketId,
+      marketId: market.id,
       winningOutcomeKey,
       oracleId: oracle,
+      settlement,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "chain submission failed";

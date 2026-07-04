@@ -393,6 +393,7 @@ export function buildMarket(def: MarketDefinition, network: CasperNetwork): Mark
     outcomes: def.outcomes,
     network,
     status: "open",
+    feeBps: def.feeBps,
     deadlineIso: def.deadlineIso,
     totalStakedMotes: sumMotes(def.seedPoolMotes),
     poolByOutcomeMotes: { ...def.seedPoolMotes },

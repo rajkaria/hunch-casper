@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import type { Market } from "@/core/types";
-import { csprToMotes } from "@/core/types";
+import { csprToMotes, motesToCspr } from "@/core/types";
+import { previewPayoutMotes } from "@/core/market-payout";
 import { useWallet } from "@/components/wallet-context";
 
 interface ChainResult {
@@ -110,6 +111,10 @@ export function BetPanel({ market }: { market: Market }) {
   }
 
   const amountValid = Number(amount) > 0 && Number.isFinite(Number(amount));
+  const previewCspr =
+    amountValid && outcomeKey
+      ? motesToCspr(previewPayoutMotes(market.poolByOutcomeMotes, outcomeKey, csprToMotes(Number(amount)), market.feeBps))
+      : 0;
 
   return (
     <div className="card p-5">
@@ -157,8 +162,15 @@ export function BetPanel({ market }: { market: Market }) {
         </button>
       </div>
 
+      {amountValid && outcomeKey && (
+        <p className="mt-2 text-xs text-muted">
+          If <span className="text-foreground">{market.outcomes.find((o) => o.key === outcomeKey)?.label ?? outcomeKey}</span>{" "}
+          wins, this stake pays ~<span className="font-semibold text-up">{previewCspr.toFixed(2)} CSPR</span>{" "}
+          <span className="text-[10px]">(pool-implied, at current odds)</span>
+        </p>
+      )}
       {connected && account && (
-        <p className="mt-2 text-[11px] text-muted">
+        <p className="mt-1 text-[11px] text-muted">
           Betting as <span className="font-mono text-foreground">{account.label}</span>
         </p>
       )}
