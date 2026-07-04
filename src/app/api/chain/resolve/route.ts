@@ -1,0 +1,82 @@
+/**
+ * POST /api/chain/resolve — the oracle posts a market's winning outcome, triggering on-chain
+ * settlement. This is the Arbiter's action in the full economy (S6/S10); for the S2 thin
+ * slice it is an operator-triggered resolve so the bet → resolve loop is demonstrable from
+ * the UI.
+ *
+ * SAFETY: resolution is a money-path authority. With the mock adapter it moves no real value,
+ * so the route is open for the demo. In **real** mode it is FAIL-CLOSED: it stays disabled
+ * unless an operator explicitly sets `CASPER_ENABLE_RESOLVE_ROUTE=true` AND presents the shared
+ * `CASPER_RESOLVE_OPERATOR_TOKEN` — because the server holds the oracle key, the on-chain
+ * `assert_oracle` check does NOT gate *who* triggered the HTTP call. (The autonomous Arbiter
+ * identity replaces this operator gate in S6/S10.)
+ */
+
+import { timingSafeEqual } from "node:crypto";
+import { NextResponse } from "next/server";
+import { createContainer } from "@/lib/container";
+import { isCasperNetwork } from "@/config/network";
+import { chainMode } from "@/config/chain-mode";
+
+/** Real mode: OFF unless explicitly enabled. Mock mode: ON unless explicitly disabled. */
+function resolveRouteEnabled(): boolean {
+  return chainMode() === "real"
+    ? process.env.CASPER_ENABLE_RESOLVE_ROUTE === "true"
+    : process.env.CASPER_ENABLE_RESOLVE_ROUTE !== "false";
+}
+
+/** Real mode requires a matching operator token; mock mode moves no value → no token needed. */
+function operatorAuthorized(req: Request): boolean {
+  if (chainMode() !== "real") return true;
+  const expected = process.env.CASPER_RESOLVE_OPERATOR_TOKEN;
+  if (!expected) return false; // fail closed: no configured token ⇒ no one is authorized
+  const provided = req.headers.get("x-operator-token") ?? "";
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export async function POST(req: Request): Promise<Response> {
+  if (!resolveRouteEnabled()) {
+    return NextResponse.json({ error: "resolve route is disabled" }, { status: 403 });
+  }
+  if (!operatorAuthorized(req)) {
+    return NextResponse.json({ error: "unauthorized: missing or invalid operator token" }, { status: 401 });
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await req.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+
+  const { network, marketId, winningOutcomeKey, oracleId } = body ?? {};
+
+  if (!isCasperNetwork(network)) {
+    return NextResponse.json({ error: "network must be 'testnet' or 'mainnet'" }, { status: 400 });
+  }
+  if (typeof marketId !== "string" || marketId.length === 0) {
+    return NextResponse.json({ error: "marketId is required" }, { status: 400 });
+  }
+  if (typeof winningOutcomeKey !== "string" || winningOutcomeKey.length === 0) {
+    return NextResponse.json({ error: "winningOutcomeKey is required" }, { status: 400 });
+  }
+  const oracle = typeof oracleId === "string" && oracleId.length > 0 ? oracleId : "arbiter";
+
+  try {
+    const container = createContainer(network);
+    const res = await container.chain.resolveMarket({ marketId, winningOutcomeKey, oracleId: oracle });
+    return NextResponse.json({
+      deployHash: res.deployHash,
+      explorerUrl: res.explorerUrl,
+      network,
+      marketId,
+      winningOutcomeKey,
+      oracleId: oracle,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "chain submission failed";
+    return NextResponse.json({ error: message }, { status: 502 });
+  }
+}

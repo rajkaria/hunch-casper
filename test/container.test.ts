@@ -17,7 +17,7 @@ describe("container (mock wiring)", () => {
       bettor: "agent:momentum",
     });
     expect(res.deployHash).toHaveLength(64);
-    expect(res.explorerUrl).toContain("testnet.cspr.live/deploy/");
+    expect(res.explorerUrl).toContain("testnet.cspr.live/transaction/");
   });
 
   it("is deterministic — identical bet yields identical hash", async () => {

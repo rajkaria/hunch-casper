@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   CASPER_NETWORKS,
   NETWORKS,
-  explorerDeployUrl,
+  explorerTransactionUrl,
   isCasperNetwork,
 } from "@/config/network";
 
@@ -16,9 +16,9 @@ describe("network config", () => {
     expect(NETWORKS.mainnet.chainName).toBe("casper");
   });
 
-  it("builds per-network explorer deploy URLs", () => {
-    expect(explorerDeployUrl("testnet", "abc")).toBe("https://testnet.cspr.live/deploy/abc");
-    expect(explorerDeployUrl("mainnet", "abc")).toBe("https://cspr.live/deploy/abc");
+  it("builds per-network explorer transaction URLs (Casper 2.0 /transaction/ path)", () => {
+    expect(explorerTransactionUrl("testnet", "abc")).toBe("https://testnet.cspr.live/transaction/abc");
+    expect(explorerTransactionUrl("mainnet", "abc")).toBe("https://cspr.live/transaction/abc");
   });
 
   it("caps mainnet bets and discloses; testnet is uncapped", () => {
