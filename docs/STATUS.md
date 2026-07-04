@@ -9,7 +9,48 @@ _Resume point for the next session. Full plan: [`BUILD_SPEC.md`](./BUILD_SPEC.md
 - **Deploy:** https://hunch-casper.vercel.app (Vercel prod, public 200) — Vercel team `rajkaria67-1831s-projects`, project `hunch-casper`
 - **Domain:** `casper.playhunch.xyz` **not yet attached** — user will connect the domain in the Vercel dashboard (TXT-verify if `playhunch.xyz` DNS is on a different Vercel team). No main-Hunch-repo change needed.
 
-## Current state — S2 (End-to-end thin slice) DONE, green
+## Current state — S3–S9 DONE + green (Phase 1 core + Phase 2 agent economy)
+
+**S3–S9 shipped** (tags `s3`…`s9`, main `6f9c30f`; 456 TS tests + 22 OdraVM tests; gate
+`typecheck && lint && test && build` green each sprint; every sprint adversarially reviewed
+before commit and money-path findings fixed).
+
+- **S3 — Catalogue engine.** `MarketDefinition` enriched with a declarative `resolver` binding
+  (kind/source/metric/target/comparator), `feeBps`, `cadence`; full 16-market catalogue across
+  all 4 categories. `core/market-generator.ts` = the on-chain half (one config → `init` +
+  `register_market` args) that doubles as the config validator (rejects bad fee/outcomes/deadline/
+  seed-pool offline).
+- **S4 — Explorer + detail + human betting.** Store-backed read model (`/api/markets[/slug]`) via
+  a client hook; mock CSPR.click wallet connect behind an SSR-safe store (fixed an infinite-loop
+  getSnapshot bug from review); pure `related-markets` + full-width section; bet panel carries the
+  connected account.
+- **S5 — Payout engine.** `core/market-payout.ts` reproduces the vault's claim() algorithm
+  exactly (5 parity vectors + 300 property runs). Mutable in-process settlement ledger (bets → live
+  pools; resolve → settle). Review fixes: house-liquidity model (seed = real staker escrowed
+  on-chain via `MarketDeployPlan.seedBets`), orphaned-settlement guard (`indexed:false`), deadline
+  lock, idempotent resolve.
+- **S6 — Oracle + reputation.** Odra `OracleRegistry` (identity + `accuracy_bps`, admin-gated,
+  once-per-market; 6 OdraVM tests). Off-chain mirror + reputation ledger (Arbiter seeded 123/128 ≈
+  96.09%); resolve records accuracy; `GET /api/oracle/[id]` + `<OracleReputation>` on detail +
+  /agents.
+- **S7 — x402 + MCP.** REST x402 rail `POST /api/agent/v1/bet` (HTTP-402 handshake) + MCP server
+  `POST /api/mcp` (JSON-RPC: list/get/odds/quote_bet/place_bet/reputation/leaderboard), sharing
+  `lib/agent-bet.ts`. **Hardened per review:** payer-bound + single-use proofs (replay keyed on
+  the payment deployHash), agent-rail mainnet cap, REST/MCP network parity, MCP envelope guard.
+- **S8 — Agent SDK + Genesis.** `market-source` unifies static + Genesis-created markets. Genesis
+  (`POST /api/agent/genesis/run`) autonomously opens markets from CSPR.cloud-style signals
+  (LLM-framed, generator-validated). Typed `HunchCasperClient` SDK (injectable transport) runs the
+  full x402 exchange.
+- **S9 — Prophet fleet.** Four pure strategies (Momentum/Contrarian/Value/Chaos) → live agents that
+  read odds, narrate (LLM, advisory), and bet via x402; `POST /api/agent/prophets/run` sends the
+  fleet at one market per round (visible rivalry); activity feed (`/api/agent/activity`) +
+  live `/agents` dashboard.
+
+**Next: S10** — Arbiter automation + meta-market resolution + agent PnL / oracle-accuracy
+leaderboards (the boards the meta-markets `prophet-race-weekly` / `momentum-vs-contrarian-weekly`
+/ `arbiter-accuracy-95` settle against). Then S11 mainnet, S12 polish, S13–S14 judge loop + submit.
+
+## Prior state — S2 (End-to-end thin slice) DONE, green
 
 **S2 (End-to-end thin slice)** — the app can now place a bet and resolve a market end-to-end
 through the `CasperChainPort`, mock today and byte-identical when the real Casper adapter is
