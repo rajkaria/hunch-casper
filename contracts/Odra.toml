@@ -2,4 +2,7 @@
 fqn = "market_factory::MarketFactory"
 
 [[contracts]]
+fqn = "oracle_registry::OracleRegistry"
+
+[[contracts]]
 fqn = "parimutuel_market::ParimutuelMarket"

@@ -9,6 +9,7 @@ import { motesToCspr } from "@/core/types";
 import { computeOdds, formatProbability } from "@/core/parimutuel-odds";
 import { BetPanel } from "@/components/bet-panel";
 import { RelatedMarkets } from "@/components/related-markets";
+import { OracleReputation } from "@/components/oracle-reputation";
 
 const CATEGORY_META: Record<MarketCategory, { label: string; className: string }> = {
   "casper-native": { label: "Casper-native", className: "text-accent" },
@@ -135,8 +136,11 @@ export default function MarketDetailPage() {
           </div>
         </div>
 
-        {/* Human bet panel (CSPR.click-connected) */}
-        <BetPanel market={market} />
+        {/* Human bet panel (CSPR.click-connected) + the reputation-staked oracle that settles it */}
+        <div className="flex flex-col gap-4">
+          <BetPanel market={market} />
+          <OracleReputation oracleId="arbiter" variant="inline" />
+        </div>
       </div>
 
       {/* Related markets — full-width at the foot, per the Hunch UI rule. */}
