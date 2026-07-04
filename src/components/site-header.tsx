@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { NetworkToggle } from "@/components/network-toggle";
+import { WalletButton } from "@/components/wallet-button";
 
 const NAV = [
   { href: "/markets", label: "Markets" },
@@ -30,7 +31,10 @@ export function SiteHeader() {
           ))}
         </nav>
 
-        <NetworkToggle />
+        <div className="flex items-center gap-2">
+          <NetworkToggle />
+          <WalletButton />
+        </div>
       </div>
     </header>
   );

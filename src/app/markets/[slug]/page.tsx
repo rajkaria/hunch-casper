@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useMemo } from "react";
 import { useNetwork } from "@/components/network-context";
-import { buildCatalogue } from "@/core/catalogue";
+import { useMarket } from "@/components/use-markets";
 import type { MarketCategory } from "@/core/types";
 import { motesToCspr } from "@/core/types";
 import { computeOdds, formatProbability } from "@/core/parimutuel-odds";
 import { BetPanel } from "@/components/bet-panel";
+import { RelatedMarkets } from "@/components/related-markets";
 
 const CATEGORY_META: Record<MarketCategory, { label: string; className: string }> = {
   "casper-native": { label: "Casper-native", className: "text-accent" },
@@ -40,13 +40,23 @@ export default function MarketDetailPage() {
   const { network } = useNetwork();
   const params = useParams<{ slug: string }>();
   const slug = params.slug;
+  const { market, loading, error } = useMarket(network, slug);
 
-  const market = useMemo(
-    () => buildCatalogue(network).find((m) => m.slug === slug),
-    [network, slug],
-  );
+  if (loading) {
+    return (
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6">
+        <div className="h-6 w-40 animate-pulse rounded bg-surface-2/60" />
+        <div className="mt-6 h-8 w-2/3 animate-pulse rounded bg-surface-2/60" />
+        <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="card h-20 animate-pulse bg-surface-2/40" />
+          ))}
+        </div>
+      </main>
+    );
+  }
 
-  if (!market) {
+  if (error || !market) {
     return (
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-16 sm:px-6">
         <p className="text-muted">
@@ -125,9 +135,12 @@ export default function MarketDetailPage() {
           </div>
         </div>
 
-        {/* Thin-slice trade panel */}
+        {/* Human bet panel (CSPR.click-connected) */}
         <BetPanel market={market} />
       </div>
+
+      {/* Related markets — full-width at the foot, per the Hunch UI rule. */}
+      <RelatedMarkets market={market} />
     </main>
   );
 }
