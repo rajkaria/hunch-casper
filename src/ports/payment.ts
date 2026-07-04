@@ -13,7 +13,9 @@ export interface X402PaymentRequirement {
   /** Vault/recipient the payment must land in. */
   payTo: string;
   network: CasperNetwork;
-  /** Replay-protection nonce echoed back in the proof. */
+  /** The payer this challenge is bound to — a proof for one payer must not settle another's bet. */
+  payer: string;
+  /** Replay-protection nonce echoed back in the proof (bound to the bet params + payer). */
   nonce: string;
 }
 
@@ -28,6 +30,8 @@ export interface QuoteInput {
   marketId: string;
   outcomeKey: string;
   amountMotes: string;
+  /** The bettor the resulting requirement + proof are bound to. */
+  payer: string;
 }
 
 export interface PaymentPort {

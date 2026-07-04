@@ -54,11 +54,17 @@ export async function POST(req: Request): Promise<Response> {
       return result(id, { tools: MCP_TOOLS });
     case "tools/call": {
       const name = typeof params?.name === "string" ? params.name : "";
-      const res = await callTool(name, params?.arguments);
-      if (!res.ok) {
-        return result(id, { content: [{ type: "text", text: res.error }], isError: true });
+      try {
+        const res = await callTool(name, params?.arguments);
+        if (!res.ok) {
+          return result(id, { content: [{ type: "text", text: res.error }], isError: true });
+        }
+        return result(id, { content: [{ type: "text", text: JSON.stringify(res.data) }] });
+      } catch (err) {
+        // Never let an adapter throw escape as a raw 500 — keep the JSON-RPC envelope intact.
+        const message = err instanceof Error ? err.message : "tool execution failed";
+        return result(id, { content: [{ type: "text", text: message }], isError: true });
       }
-      return result(id, { content: [{ type: "text", text: JSON.stringify(res.data) }] });
     }
     default:
       return error(id, -32601, `method not found: ${method}`);

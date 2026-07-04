@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { POST as betPOST } from "@/app/api/agent/v1/bet/route";
 import { __resetLedger } from "@/adapters/mock/settlement-ledger";
+import { __resetConsumedNonces } from "@/lib/agent-bet";
 
-beforeEach(__resetLedger);
+beforeEach(() => {
+  __resetLedger();
+  __resetConsumedNonces();
+});
 
 const URL = "http://localhost/api/agent/v1/bet";
 function post(body: unknown, paymentProof?: unknown): Promise<Response> {
@@ -52,5 +56,31 @@ describe("x402 REST bet (/api/agent/v1/bet)", () => {
   it("rejects a bet on an unknown market", async () => {
     const res = await post({ ...BET, marketId: "testnet:nope" });
     expect(res.status).toBe(400);
+  });
+
+  it("rejects a replayed proof (one payment settles exactly one bet)", async () => {
+    const nonce = (await (await post(BET)).json()).accepts[0].nonce;
+    const proof = { scheme: "casper-x402", deployHash: "tx", nonce };
+    expect((await post(BET, proof)).status).toBe(200); // first use
+    expect((await post(BET, proof)).status).toBe(402); // replay rejected
+  });
+
+  it("rejects a proof minted for a different payer", async () => {
+    const nonce = (await (await post({ ...BET, bettor: "agent:alice" })).json()).accepts[0].nonce;
+    const proof = { scheme: "casper-x402", deployHash: "tx", nonce };
+    // Bob presents Alice's proof for the same market/outcome/amount → nonce mismatch → 402.
+    const res = await post({ ...BET, bettor: "agent:bob" }, proof);
+    expect(res.status).toBe(402);
+  });
+
+  it("enforces the mainnet bet cap on the agent rail", async () => {
+    const over = await post({
+      network: "mainnet",
+      marketId: "mainnet:btc-150k-aug",
+      outcomeKey: "yes",
+      amountMotes: "26000000000", // 26 CSPR > 25 cap
+      bettor: "agent:whale",
+    });
+    expect(over.status).toBe(400);
   });
 });
