@@ -5,7 +5,7 @@
  */
 
 import type { CasperNetwork } from "@/config/network";
-import { explorerDeployUrl } from "@/config/network";
+import { explorerTransactionUrl } from "@/config/network";
 import type {
   CasperChainPort,
   DeployResult,
@@ -41,16 +41,16 @@ export function createMockChain(network: CasperNetwork): CasperChainPort {
       const hash = pseudoDeployHash(
         `bet:${network}:${input.marketId}:${input.outcomeKey}:${input.amountMotes}:${input.bettor}`,
       );
-      return { deployHash: hash, explorerUrl: explorerDeployUrl(network, hash) };
+      return { deployHash: hash, explorerUrl: explorerTransactionUrl(network, hash) };
     },
     async resolveMarket(input: ResolveMarketInput): Promise<DeployResult> {
       const hash = pseudoDeployHash(
         `resolve:${network}:${input.marketId}:${input.winningOutcomeKey}:${input.oracleId}`,
       );
-      return { deployHash: hash, explorerUrl: explorerDeployUrl(network, hash) };
+      return { deployHash: hash, explorerUrl: explorerTransactionUrl(network, hash) };
     },
     explorerUrlForDeploy(deployHash: string) {
-      return explorerDeployUrl(network, deployHash);
+      return explorerTransactionUrl(network, deployHash);
     },
   };
 }

@@ -102,9 +102,13 @@ export function getNetworkConfig(network: CasperNetwork): NetworkConfig {
   return NETWORKS[network];
 }
 
-/** Explorer URL for a deploy (transaction) hash on the given network. */
-export function explorerDeployUrl(network: CasperNetwork, deployHash: string): string {
-  return `${NETWORKS[network].explorerBaseUrl}/deploy/${deployHash}`;
+/**
+ * Explorer URL for a transaction hash on the given network. Casper 2.0 (Condor) serves
+ * `TransactionV1` hashes — which the real adapter submits via `putTransaction` — under
+ * `/transaction/<hash>` on cspr.live (legacy Deploys used `/deploy/`; we emit transactions).
+ */
+export function explorerTransactionUrl(network: CasperNetwork, transactionHash: string): string {
+  return `${NETWORKS[network].explorerBaseUrl}/transaction/${transactionHash}`;
 }
 
 /** Explorer URL for an account hash / public key on the given network. */
