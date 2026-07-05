@@ -94,7 +94,7 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
     network: "testnet",
     label: "Testnet",
     chainName: "casper-test",
-    nodeRpcUrl: env("NEXT_PUBLIC_CASPER_TESTNET_RPC", "https://rpc.testnet.casperlabs.io/rpc"),
+    nodeRpcUrl: env("NEXT_PUBLIC_CASPER_TESTNET_RPC", "https://node.testnet.casper.network/rpc"),
     csprCloudBaseUrl: env("NEXT_PUBLIC_CSPR_CLOUD_TESTNET", "https://api.testnet.cspr.cloud"),
     explorerBaseUrl: env("NEXT_PUBLIC_CASPER_TESTNET_EXPLORER", "https://testnet.cspr.live"),
     contracts: {
@@ -109,7 +109,7 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
     network: "mainnet",
     label: "Mainnet",
     chainName: "casper",
-    nodeRpcUrl: env("NEXT_PUBLIC_CASPER_MAINNET_RPC", "https://rpc.mainnet.casperlabs.io/rpc"),
+    nodeRpcUrl: env("NEXT_PUBLIC_CASPER_MAINNET_RPC", "https://node.mainnet.casper.network/rpc"),
     csprCloudBaseUrl: env("NEXT_PUBLIC_CSPR_CLOUD_MAINNET", "https://api.cspr.cloud"),
     explorerBaseUrl: env("NEXT_PUBLIC_CASPER_MAINNET_EXPLORER", "https://cspr.live"),
     contracts: {
