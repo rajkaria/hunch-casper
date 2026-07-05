@@ -13,12 +13,17 @@
  * adapter swaps in native Casper x402 (or an HTTP-402 + CSPR-transfer proof) behind the same port.
  *
  * ⚠️ REAL-MODE SAFETY: in `CASPER_CHAIN_MODE=real` the chain adapter submits a real, operator-funded
- * on-chain bet, but the composition root still wires the MOCK PaymentPort — its `verify` is a
- * nonce-match, NOT a check that the proof corresponds to an unspent CSPR transfer from the payer. So
- * the real agent x402 rail is OFF by default in real mode: an operator must set
- * `CASPER_REAL_AGENT_X402=true` to opt in, explicitly acknowledging that x402 verification is not yet
- * trustless (a real on-chain-transfer-verifying PaymentPort + persisted `consumedPayments` is S4/S7
- * work). This keeps the mock-vs-real mismatch explicit and safe-by-default rather than a silent gap.
+ * on-chain bet, so the agent rail is OFF by default in real mode and opens through exactly two paths:
+ *
+ *   1. `CASPER_X402_PAYTO` set → the composition root wires the REAL PaymentPort
+ *      (`adapters/casper/real-payment.ts`): a proof must map to a successful on-chain CSPR
+ *      transfer from the payer to the operator treasury — trustless verification;
+ *   2. `CASPER_REAL_AGENT_X402=true` → the legacy explicit opt-in that keeps the MOCK PaymentPort,
+ *      whose `verify` is a nonce-match only — the operator acknowledges verification isn't trustless.
+ *
+ * Neither configured → fail closed (503). This keeps any mock-vs-real mismatch explicit and
+ * safe-by-default rather than a silent operator-funded gap. (Persisting `consumedPayments` across
+ * cold starts remains follow-up work for a long-lived real deployment.)
  */
 
 import type { Container } from "@/lib/container";
@@ -72,14 +77,16 @@ const MOTES = /^\d+$/;
 export async function agentBet(container: Container, input: AgentBetInput): Promise<AgentBetResult> {
   const { marketId, outcomeKey, amountMotes, bettor, paymentProof } = input;
 
-  // Real-mode safety (see file header): the mock PaymentPort's proof verification is nonce-match
-  // only, so a real, operator-funded on-chain bet must NOT be reachable via the agent x402 rail
-  // unless an operator explicitly opts in and accepts that x402 verification isn't yet trustless.
-  if (chainMode() === "real" && process.env.CASPER_REAL_AGENT_X402 !== "true") {
+  // Real-mode safety (see file header): a real, operator-funded on-chain bet is reachable via the
+  // agent x402 rail only when payment verification is trustless (CASPER_X402_PAYTO wires the real
+  // transfer-verifying PaymentPort) or an operator explicitly opted in to mock nonce-match
+  // verification (CASPER_REAL_AGENT_X402=true). Otherwise: fail closed.
+  const realPaymentConfigured = Boolean(process.env.CASPER_X402_PAYTO);
+  if (chainMode() === "real" && process.env.CASPER_REAL_AGENT_X402 !== "true" && !realPaymentConfigured) {
     return {
       status: "error",
       error:
-        "real-mode x402 payment verification is not enabled — set CASPER_REAL_AGENT_X402=true to opt in (mock proof verification only)",
+        "real-mode x402 payment verification is not enabled — set CASPER_X402_PAYTO to verify proofs against on-chain CSPR transfers (trustless), or CASPER_REAL_AGENT_X402=true to opt in to mock nonce-match verification",
       code: 503,
     };
   }

@@ -37,9 +37,14 @@ Full spec & sprint plan: [`docs/BUILD_SPEC.md`](./docs/BUILD_SPEC.md).
 - **The Arbiter's accuracy is two-sided.** The mock oracle marks a deterministic minority of external
   reads inaccurate, so a wrong call genuinely lowers reputation and `arbiter-accuracy-95` can resolve
   NO. Meta-markets resolve from board math and are accurate by construction.
-- **Real-mode agent x402 is opt-in.** In `CASPER_CHAIN_MODE=real` the mock PaymentPort's proof
-  verification is nonce-match only, so `agentBet` rejects unless `CASPER_REAL_AGENT_X402=true` — the
-  mock-vs-real mismatch is explicit and safe-by-default, never a silent operator-funded gap.
+- **Real-mode agent x402 opens through exactly two paths.** In `CASPER_CHAIN_MODE=real` `agentBet`
+  fails closed unless EITHER `CASPER_X402_PAYTO` is set — wiring the real transfer-verifying
+  PaymentPort (`adapters/casper/real-payment.ts`), which accepts a proof only if it maps to a
+  successful on-chain CSPR transfer from the payer to the treasury (trustless) — OR
+  `CASPER_REAL_AGENT_X402=true`, the weaker legacy opt-in that keeps the mock nonce-match verifier.
+  Either way the mock-vs-real mismatch is explicit and safe-by-default, never a silent
+  operator-funded gap. (With the real PaymentPort wired, the internal fleet's fabricated proofs
+  correctly fail verification — the fleet needs genuine funded transfers or the mock/testnet demo.)
 
 ## Green gate (before every commit)
 `pnpm typecheck && pnpm lint && pnpm test && pnpm build` — all green. `tsc` also typechecks test

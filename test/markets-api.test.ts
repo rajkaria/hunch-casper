@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { GET as listGET } from "@/app/api/markets/route";
 import { GET as detailGET } from "@/app/api/markets/[slug]/route";
 import { MARKET_DEFINITIONS } from "@/core/catalogue";
+import { DEFAULT_NETWORK } from "@/config/network";
 
 const LIST = "http://localhost/api/markets";
 
@@ -27,8 +28,15 @@ describe("GET /api/markets", () => {
     expect(json.count).toBe(MARKET_DEFINITIONS.length);
   });
 
-  it("rejects a missing/invalid network", async () => {
-    expect((await listGET(new Request(LIST))).status).toBe(400);
+  it("defaults a missing network to DEFAULT_NETWORK", async () => {
+    const res = await listGET(new Request(LIST));
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.network).toBe(DEFAULT_NETWORK);
+    expect(json.count).toBe(MARKET_DEFINITIONS.length);
+  });
+
+  it("rejects an invalid network", async () => {
     expect((await listGET(new Request(`${LIST}?network=devnet`))).status).toBe(400);
   });
 });
@@ -50,6 +58,15 @@ describe("GET /api/markets/[slug]", () => {
 
   it("404s an unknown slug", async () => {
     expect((await detail("no-such-market")).status).toBe(404);
+  });
+
+  it("defaults a missing network to DEFAULT_NETWORK", async () => {
+    const res = await detailGET(new Request("http://localhost/api/markets/btc-150k-aug"), {
+      params: Promise.resolve({ slug: "btc-150k-aug" }),
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.market.network).toBe(DEFAULT_NETWORK);
   });
 
   it("rejects an invalid network", async () => {

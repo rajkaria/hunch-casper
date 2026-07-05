@@ -5,7 +5,8 @@
  * verify.
  */
 
-import type { CasperNetwork } from "@/config/network";
+// Relative (not `@/`) so the emitted `.d.ts` resolves inside the published SDK package.
+import type { CasperNetwork } from "../config/network";
 
 export interface X402PaymentRequirement {
   /** Amount owed, in motes. */

@@ -22,6 +22,7 @@ const TOC: { id: string; label: string }[] = [
   { id: "sdk", label: "Agent SDK" },
   { id: "quickstart", label: "Build a Prophet" },
   { id: "networks", label: "Networks & deploy" },
+  { id: "onchain", label: "On-chain proof" },
 ];
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -200,6 +201,8 @@ const MCP_CURL = `curl -s -X POST https://casper.playhunch.xyz/api/mcp \\
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
        "params":{"name":"list_markets","arguments":{"network":"testnet"}}}'
 # result.content[0].text is a JSON string of { network, markets[] }`;
+
+const MCP_CONNECT = `claude mcp add --transport http hunch-casper https://casper.playhunch.xyz/api/mcp`;
 
 const SDK_CODE = `import { HunchCasperClient } from "@/agent/sdk";
 
@@ -539,6 +542,16 @@ export default function DocsPage() {
               <C>paymentProof</C> to get an x402 requirement bound to <em>your</em> bettor, pay, then
               call <C>place_bet</C> again with the proof — the MCP mirror of the REST 402 flow below.
             </P>
+            <P>
+              <strong className="text-foreground">Connect Claude.</strong> One command points Claude
+              Code at the economy:
+            </P>
+            <Code>{MCP_CONNECT}</Code>
+            <P>
+              Any MCP-capable client — Claude Code, Claude Desktop (via <C>mcp-remote</C>), Cursor —
+              discovers all seven tools and can place x402-gated bets. Try the demo prompt:{" "}
+              <C>list the open markets, then quote a 5 CSPR bet on The Flip (coin-flip-5m)</C>.
+            </P>
           </Section>
 
           <Section id="x402" eyebrow="The settlement rail" title="x402 payments">
@@ -559,10 +572,13 @@ export default function DocsPage() {
             <Code>{X402_CURL}</Code>
             <P>
               <C>Verification, honestly:</C> in the default mock/demo mode the proof is verified by a
-              payer-bound nonce match. In real chain mode the mock verifier does not yet confirm the
-              proof maps to an unspent on-chain CSPR transfer — so the real agent x402 rail is
-              off-by-default and must be opted into with <C>CASPER_REAL_AGENT_X402=true</C>. A real
-              transfer-verifying PaymentPort is the next step; the port shape stays identical.
+              payer-bound nonce match. In real chain mode the rail is off-by-default and opens two
+              ways: set <C>CASPER_X402_PAYTO</C> (the operator treasury account) to wire the real
+              transfer-verifying PaymentPort — a proof is accepted only if its <C>deployHash</C> is a
+              successful on-chain native CSPR transfer from the payer to that account of at least the
+              quoted amount, read straight from the node RPC — or set{" "}
+              <C>CASPER_REAL_AGENT_X402=true</C>, the weaker opt-in that keeps mock nonce-match
+              verification. The port shape stays identical either way.
             </P>
           </Section>
 
@@ -650,6 +666,24 @@ export default function DocsPage() {
               <C>ParimutuelMarket</C> per catalogue market, with init + registration args and seed
               liquidity. The per-market plans are byte-identical across networks — the identity that
               lets one codebase serve both.
+            </P>
+          </Section>
+
+          <Section id="onchain" eyebrow="Receipts, not claims" title="On-chain proof">
+            <P>
+              The public demo runs the deterministic mock economy so it is always alive and
+              credential-free — and every simulated hash in the feed is labelled{" "}
+              <C>simulated</C>, never linked to the live explorer. The chain layer&rsquo;s reality
+              is proven separately: the deployed contract package hashes and real transaction
+              receipts (a live bet through Odra&rsquo;s payable proxy, a live oracle resolution)
+              render on the{" "}
+              <Link href="/#onchain-proof" className="text-foreground underline decoration-border underline-offset-4 hover:decoration-accent">
+                landing page
+              </Link>{" "}
+              as cspr.live links the moment the ops deploy wires{" "}
+              <C>NEXT_PUBLIC_TESTNET_MARKET_FACTORY</C> / <C>_ORACLE_REGISTRY</C> / <C>_VAULT</C>{" "}
+              and <C>NEXT_PUBLIC_ONCHAIN_RECEIPTS</C>. Until then the section hides — the proof
+              surface never fabricates a hash.
             </P>
           </Section>
 

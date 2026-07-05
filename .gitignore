@@ -20,6 +20,10 @@
 # production
 /build
 
+# workspace packages (packages/sdk): build output + per-package node_modules
+/packages/*/dist/
+/packages/*/node_modules/
+
 # misc
 .DS_Store
 *.pem
@@ -42,3 +46,4 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.burn-rate/

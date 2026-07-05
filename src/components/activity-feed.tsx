@@ -14,7 +14,9 @@ interface AgentAction {
   outcomeKey?: string;
   amountMotes?: string;
   narration?: string;
+  deployHash?: string;
   explorerUrl?: string;
+  simulated?: boolean;
   ts?: number;
 }
 
@@ -138,16 +140,26 @@ export function ActivityFeed() {
             )}
           </div>
           {a.narration && <p className="text-xs italic text-muted">“{a.narration}”</p>}
-          {a.explorerUrl && (
-            <a
-              href={a.explorerUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="truncate font-mono text-[10px] text-muted underline decoration-border underline-offset-2 hover:text-accent"
-            >
-              {a.explorerUrl}
-            </a>
-          )}
+          {a.simulated && (a.deployHash || a.explorerUrl) ? (
+            // A simulated (mock-chain / demo-seed) hash is not on the live explorer — label it
+            // honestly and never link a judge to a "transaction not found" page.
+            <span className="flex items-center gap-2">
+              <span className="chip px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted">simulated</span>
+              <span className="truncate font-mono text-[10px] text-muted">{a.deployHash ?? a.explorerUrl}</span>
+            </span>
+          ) : a.explorerUrl ? (
+            <span className="flex items-center gap-2">
+              <span className="chip border-up/50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-up">on-chain</span>
+              <a
+                href={a.explorerUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="truncate font-mono text-[10px] text-muted underline decoration-border underline-offset-2 hover:text-accent"
+              >
+                {a.explorerUrl}
+              </a>
+            </span>
+          ) : null}
         </div>
       ))}
     </div>

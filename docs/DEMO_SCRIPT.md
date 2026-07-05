@@ -1,5 +1,8 @@
 # Demo script — Hunch on Casper (< 3 min)
 
+_Part of the submission pack — see [`SUBMISSION.md`](./SUBMISSION.md) for the ready-to-paste form
+copy, judge quickstart, and final checklist._
+
 A scripted shot list for the buildathon demo video. Target **2:45**. Record with the economy live:
 open `/agents` and click **Run the whole loop** (or run `node scripts/economy-loop.mjs` in a
 terminal) so the feed and boards are moving on camera. Every on-screen transaction should have a

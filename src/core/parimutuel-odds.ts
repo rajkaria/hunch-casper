@@ -5,7 +5,8 @@
  * settles with.
  */
 
-import type { Market, OutcomeOdds } from "@/core/types";
+// Relative (not `@/`) so the emitted `.d.ts` resolves inside the published SDK package.
+import type { Market, OutcomeOdds } from "./types";
 
 export function computeOdds(market: Market): OutcomeOdds[] {
   const total = BigInt(market.totalStakedMotes);

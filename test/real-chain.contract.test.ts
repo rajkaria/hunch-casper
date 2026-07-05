@@ -29,11 +29,23 @@ describe("realChainOptionsFromEnv", () => {
     }
   });
 
-  it("throws when no market package hash is configured for the network", () => {
+  it("throws when neither a vault nor a per-market address map is configured", () => {
     const savedKey = process.env.CASPER_BETTOR_KEY;
     process.env.CASPER_BETTOR_KEY = "0".repeat(64);
     try {
-      expect(() => realChainOptionsFromEnv(undefined)).toThrow(/package hash/);
+      expect(() => realChainOptionsFromEnv(undefined)).toThrow(/no market contracts configured/);
+    } finally {
+      if (savedKey === undefined) delete process.env.CASPER_BETTOR_KEY;
+      else process.env.CASPER_BETTOR_KEY = savedKey;
+    }
+  });
+
+  it("accepts a per-market address map with no vault fallback (full-catalogue deploy)", () => {
+    const savedKey = process.env.CASPER_BETTOR_KEY;
+    process.env.CASPER_BETTOR_KEY = "0".repeat(64);
+    try {
+      const opts = realChainOptionsFromEnv(undefined, { "the-flip": `hash-${"a".repeat(64)}` });
+      expect(opts.marketAddresses).toEqual({ "the-flip": `hash-${"a".repeat(64)}` });
     } finally {
       if (savedKey === undefined) delete process.env.CASPER_BETTOR_KEY;
       else process.env.CASPER_BETTOR_KEY = savedKey;
