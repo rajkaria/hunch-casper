@@ -1,6 +1,6 @@
 "use client";
 
-import { shortKey, useWallet } from "@/components/wallet-context";
+import { isDemoAccount, shortKey, useWallet } from "@/components/wallet-context";
 
 /** Header wallet control: connect (mock CSPR.click) or show the connected account + disconnect. */
 export function WalletButton() {
@@ -27,6 +27,11 @@ export function WalletButton() {
     >
       <span className="h-1.5 w-1.5 rounded-full bg-up" aria-hidden />
       <span className="font-mono">{shortKey(account.publicKey)}</span>
+      {isDemoAccount(account) && (
+        <span className="rounded bg-surface-2 px-1 text-[9px] font-semibold uppercase tracking-wide text-muted">
+          demo
+        </span>
+      )}
     </button>
   );
 }

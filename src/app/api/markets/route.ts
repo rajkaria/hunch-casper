@@ -11,6 +11,7 @@
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { isCasperNetwork } from "@/config/network";
+import { ensureDemoSeed } from "@/adapters/mock/demo-seed";
 import type { MarketCategory } from "@/core/types";
 
 const CATEGORIES: readonly MarketCategory[] = ["casper-native", "provably-fair", "rwa", "meta"];
@@ -28,6 +29,7 @@ export async function GET(req: Request): Promise<Response> {
   const categoryParam = url.searchParams.get("category");
   const category = isCategory(categoryParam) ? categoryParam : undefined;
 
+  ensureDemoSeed(network); // keep /markets consistent with the seeded /agents boards (no-op in test/real)
   const container = createContainer(network);
   const markets = await container.store.list({ network, category });
   return NextResponse.json({ network, count: markets.length, markets });

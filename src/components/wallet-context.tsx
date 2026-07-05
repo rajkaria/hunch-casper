@@ -100,3 +100,8 @@ export function useWallet(): WalletContextValue {
 export function shortKey(publicKey: string): string {
   return publicKey.length > 12 ? `${publicKey.slice(0, 6)}…${publicKey.slice(-4)}` : publicKey;
 }
+
+/** Whether an account is the mock CSPR.click demo account (so the UI can label it honestly). */
+export function isDemoAccount(account: WalletAccount | null): boolean {
+  return account?.publicKey === DEMO_ACCOUNT.publicKey;
+}

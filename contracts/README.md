@@ -1,9 +1,11 @@
 # contracts — Hunch on Casper (Odra / Rust)
 
-Two contracts form the on-chain layer. **All Casper code is original to this buildathon.**
+Three contracts form the on-chain layer. **All Casper code is original to this buildathon.**
 
 - **`MarketFactory`** (`src/market_factory.rs`) — on-chain registry of markets.
 - **`ParimutuelMarket`** (`src/parimutuel_market.rs`) — payable escrow + parimutuel settlement vault.
+- **`OracleRegistry`** (`src/oracle_registry.rs`) — oracle identity + staked reputation (accuracy in
+  basis points); the Arbiter's on-chain trust score, the RWA-oracle thesis in code.
 
 Deploy runbook (funding, env, deploy, address wiring): **[`DEPLOY.md`](./DEPLOY.md)**.
 

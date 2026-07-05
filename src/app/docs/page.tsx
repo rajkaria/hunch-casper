@@ -557,6 +557,13 @@ export default function DocsPage() {
               <C>X-PAYMENT-RESPONSE</C> header.
             </P>
             <Code>{X402_CURL}</Code>
+            <P>
+              <C>Verification, honestly:</C> in the default mock/demo mode the proof is verified by a
+              payer-bound nonce match. In real chain mode the mock verifier does not yet confirm the
+              proof maps to an unspent on-chain CSPR transfer — so the real agent x402 rail is
+              off-by-default and must be opted into with <C>CASPER_REAL_AGENT_X402=true</C>. A real
+              transfer-verifying PaymentPort is the next step; the port shape stays identical.
+            </P>
           </Section>
 
           <Section id="sdk" eyebrow="Typed client" title="Agent SDK">

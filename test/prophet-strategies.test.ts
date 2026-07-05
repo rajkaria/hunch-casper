@@ -29,8 +29,14 @@ describe("Prophet strategies", () => {
     expect(market.outcomes.some((o) => o.key === a.outcomeKey)).toBe(true);
   });
 
-  it("sizes the stake by the strategy's conviction", () => {
-    expect(decide("momentum", market, odds, 0, 3)!.amountMotes).toBe(csprToMotes(3));
+  it("Momentum sizes up (2×) when the favourite is strong, base stake otherwise", () => {
+    // btc-150k: NO is a strong favourite (~77% > 70%) → Momentum doubles down.
+    expect(decide("momentum", market, odds, 0, 3)!.amountMotes).toBe(
+      (BigInt(csprToMotes(3)) * 2n).toString(),
+    );
+    // cspr-price-05-aug: favourite ~60% (≤ 70%) → base conviction, flat stake.
+    const balanced = buildMarket(findDefinition("cspr-price-05-aug")!, "testnet");
+    expect(decide("momentum", balanced, computeOdds(balanced), 0, 3)!.amountMotes).toBe(csprToMotes(3));
   });
 
   it("skips a market that isn't open", () => {

@@ -42,6 +42,14 @@ function ResultLine({ label, result }: { label: string; result: ChainResult }) {
  * `CASPER_CHAIN_MODE=real` + testnet contracts are wired the SAME panel submits live Casper
  * transactions, no UI change. Human wallet connect (CSPR.click) + richer betting land in S4.
  */
+/**
+ * The operator "Oracle resolve" control is a leftover S2 thin-slice demo aid: it lets whoever holds
+ * the page resolve a market. That both confuses the UX (an end-user shouldn't resolve markets) and
+ * undercuts the "the autonomous Arbiter resolves, reputation staked" story — so it's OFF by default
+ * on the public deploy and only shown when a demoer opts in with NEXT_PUBLIC_SHOW_DEMO_RESOLVE=true.
+ */
+const SHOW_DEMO_RESOLVE = process.env.NEXT_PUBLIC_SHOW_DEMO_RESOLVE === "true";
+
 export function BetPanel({ market }: { market: Market }) {
   const { account, connected, connect } = useWallet();
   const [outcomeKey, setOutcomeKey] = useState(market.outcomes[0]?.key ?? "");
@@ -192,6 +200,18 @@ export function BetPanel({ market }: { market: Market }) {
       {betError && <p className="mt-2 text-xs text-down">{betError}</p>}
       {betResult && <ResultLine label="Bet submitted" result={betResult} />}
 
+      {!SHOW_DEMO_RESOLVE && (
+        <p className="mt-4 border-t border-border pt-4 text-[11px] text-muted">
+          Resolution is the autonomous <span className="text-foreground">Arbiter</span>’s job — it
+          posts the winning outcome on-chain with its reputation staked. Watch it on the{" "}
+          <a href="/agents" className="underline decoration-border underline-offset-2 hover:text-accent">
+            swarm dashboard
+          </a>
+          .
+        </p>
+      )}
+
+      {SHOW_DEMO_RESOLVE && (
       <div className="mt-6 border-t border-border pt-4">
         <h3 className="text-sm font-semibold">Oracle resolve</h3>
         <p className="mt-1 text-xs text-muted">
@@ -226,6 +246,7 @@ export function BetPanel({ market }: { market: Market }) {
         {resolveError && <p className="mt-2 text-xs text-down">{resolveError}</p>}
         {resolveResult && <ResultLine label="Resolution submitted" result={resolveResult} />}
       </div>
+      )}
     </div>
   );
 }

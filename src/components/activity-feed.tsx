@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motesToCspr } from "@/core/types";
+import { SWARM_REFRESH_EVENT } from "@/components/swarm-triggers";
 
 interface AgentAction {
   seq: number;
@@ -14,6 +15,18 @@ interface AgentAction {
   amountMotes?: string;
   narration?: string;
   explorerUrl?: string;
+  ts?: number;
+}
+
+/** Compact relative time — "now" / "12s ago" / "4m ago" / "2h ago". */
+function relativeTime(ts: number | undefined, nowMs: number): string {
+  if (!ts) return "";
+  const s = Math.max(0, Math.round((nowMs - ts) / 1000));
+  if (s < 5) return "now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.round(m / 60)}h ago`;
 }
 
 const AGENT_ACCENT: Record<string, string> = {
@@ -40,6 +53,7 @@ function slugOf(marketId: string): string {
 export function ActivityFeed() {
   const [actions, setActions] = useState<AgentAction[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     let active = true;
@@ -49,6 +63,7 @@ export function ActivityFeed() {
         .then((j) => {
           if (!active) return;
           setActions(j.actions);
+          setNow(Date.now());
           setStatus("ready");
         })
         .catch(() => {
@@ -56,9 +71,12 @@ export function ActivityFeed() {
         });
     load();
     const timer = setInterval(load, 5000);
+    const onRefresh = () => load();
+    window.addEventListener(SWARM_REFRESH_EVENT, onRefresh);
     return () => {
       active = false;
       clearInterval(timer);
+      window.removeEventListener(SWARM_REFRESH_EVENT, onRefresh);
     };
   }, []);
 
@@ -111,6 +129,11 @@ export function ActivityFeed() {
               <span className="chip px-2 py-0.5 text-[11px] text-muted">
                 {a.outcomeKey}
                 {a.amountMotes ? ` · ${motesToCspr(a.amountMotes)} CSPR` : ""}
+              </span>
+            )}
+            {a.ts != null && (
+              <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted" title={new Date(a.ts).toLocaleString()}>
+                {relativeTime(a.ts, now)}
               </span>
             )}
           </div>

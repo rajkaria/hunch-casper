@@ -11,10 +11,12 @@ import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { computeAgentLeaderboard } from "@/core/agent-leaderboard";
 import { isCasperNetwork, DEFAULT_NETWORK } from "@/config/network";
+import { ensureDemoSeed } from "@/adapters/mock/demo-seed";
 
 export async function GET(req: Request): Promise<Response> {
   const param = new URL(req.url).searchParams.get("network");
   const network = isCasperNetwork(param) ? param : DEFAULT_NETWORK;
+  ensureDemoSeed(network); // populate the boards on a cold instance (no-op in test/real mode)
   const container = createContainer(network);
 
   const agentPnl = computeAgentLeaderboard(await container.store.settledEntries(network));

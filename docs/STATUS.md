@@ -9,10 +9,44 @@ _Resume point for the next session. Full plan: [`BUILD_SPEC.md`](./BUILD_SPEC.md
 - **Deploy:** https://hunch-casper.vercel.app (Vercel prod, public 200) — Vercel team `rajkaria67-1831s-projects`, project `hunch-casper`
 - **Domain:** `casper.playhunch.xyz` **attached on Vercel** (2026-07-05). No main-Hunch-repo change needed.
 
-## Current state — S3–S12 DONE + green (Phase 1 core + Phase 2 agent economy + Phase 3 mainnet + polish, loop closed)
+## Current state — S3–S13 DONE + green (Phase 1 core + Phase 2 agent economy + Phase 3 mainnet + polish + judge loop, loop closed)
 
-**S3–S12 shipped** (tags `s3`…`s12`; 493 TS tests + 22 OdraVM tests; gate
+**S3–S13 shipped** (tags `s3`…`s13`; **501 TS tests + 22 OdraVM tests**; gate
 `typecheck && lint && test && build` green each sprint; every sprint adversarially reviewed
+before commit and money-path findings fixed).
+
+- **S13 — Judge loop (Phase 4).** A 6-dimension simulated judge panel (each finding
+  adversarially verified) scored the repo, then every confirmed code/docs gap was fixed to raise
+  the weakest dimensions (innovation, UX, docs, demo-readiness) toward launch-grade:
+  - **Economic teeth, made real.** The Arbiter's reputation is now **two-sided** — the mock oracle
+    marks a deterministic minority of external reads inaccurate (`isAccurateReading`), so a wrong
+    call genuinely lowers accuracy and `arbiter-accuracy-95` can resolve **NO** (was hardcoded
+    `accurate: true` → the "oracle with teeth" thesis was hollow). Prophets **no longer bet
+    meta-markets** (reflexive-loop close), and `prophet_pnl` meta-markets require a
+    **participation floor** (`META_MIN_SETTLED`) so a single manipulated pool can't crown a Prophet.
+    Genesis emits **≥2 market shapes** (hold-above/break-below, varying bands) instead of one
+    templated bet; Prophet strategies differentiate harder on binaries (Momentum conviction sizing,
+    Value plausibility floor). New tests: `oracle-accuracy`, `demo-seed`, meta-floor, genesis-shape.
+  - **The live economy no longer looks dead.** A guarded **cold-start demo seed**
+    (`adapters/mock/demo-seed.ts`, OFF under test/real mode) settles a few base markets through the
+    real payout engine so the **Agent PnL + oracle boards + activity feed are populated on a fresh
+    serverless instance**; a client **`<SwarmTriggers>`** panel lets a judge run Genesis / Prophets /
+    Arbiter / the whole tick with one click and watch the feed + boards refresh (a `swarm:refresh`
+    event). Activity items carry **relative timestamps**; boards carry timeframe labels.
+  - **Honest surfaces.** The operator "Oracle resolve" control is **gated OFF by default**
+    (`NEXT_PUBLIC_SHOW_DEMO_RESOLVE`) so the page tells the "autonomous Arbiter resolves" story; the
+    mock wallet chip shows a **`demo`** pill; the markets loading copy no longer reads "Loading live".
+    The real-mode agent x402 rail is now **opt-in** (`CASPER_REAL_AGENT_X402`) — the mock-payment /
+    real-chain mismatch is explicit + safe-by-default, documented in `/docs`, `.env.example`, `AGENTS.md`.
+  - **Docs for judges.** New **`VISION.md`** (long-term plan, linked from README) + **`docs/DEMO_SCRIPT.md`**
+    (timestamped <3-min shot list); README gained a **mermaid loop diagram**, a Demo section, and an
+    accurate S3–S13 status (was still "S0"); `contracts/README` now lists all **three** contracts.
+    Runtime-verified via `next start`: feed 18 seeded actions, PnL board 4 Prophets (real winner/loser),
+    oracle 95.41% over 131 resolutions, 16 markets (13 open / 3 resolved), tick + x402 rail live.
+  - **Skipped (verified non-issues):** STATUS/landing "16" is correct (catalogue IS 16, not 17); the
+    Hobby cron stays daily (client triggers are the load-bearing "runs live" fix per the panel).
+
+**S3–S12 shipped** (tags `s3`…`s12`; gate green each sprint; every sprint adversarially reviewed
 before commit and money-path findings fixed).
 
 - **S12 — Landing + docs + branding polish (Phase 3 complete).** The human-facing surface (main

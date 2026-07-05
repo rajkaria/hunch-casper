@@ -5,6 +5,8 @@
  * via CSPR.cloud behind the same read shape.
  */
 
+import { ensureDemoSeed } from "./demo-seed";
+
 export type AgentActionKind = "market_created" | "bet_placed" | "market_resolved";
 
 export interface AgentAction {
@@ -21,22 +23,25 @@ export interface AgentAction {
   narration?: string;
   deployHash?: string;
   explorerUrl?: string;
+  /** Epoch ms the action was recorded — the feed renders it as relative time ("2m ago"). */
+  ts: number;
 }
 
 const CAP = 60;
 const log: AgentAction[] = [];
 let counter = 0;
 
-/** Append an action and return it (with its assigned seq). Newest actions sort first. */
-export function appendAction(action: Omit<AgentAction, "seq">): AgentAction {
-  const withSeq: AgentAction = { ...action, seq: counter++ };
+/** Append an action and return it (with its assigned seq + timestamp). Newest actions sort first. */
+export function appendAction(action: Omit<AgentAction, "seq" | "ts"> & { ts?: number }): AgentAction {
+  const withSeq: AgentAction = { ...action, seq: counter++, ts: action.ts ?? Date.now() };
   log.unshift(withSeq);
   if (log.length > CAP) log.length = CAP;
   return withSeq;
 }
 
-/** The most recent actions, newest first. */
+/** The most recent actions, newest first. Seeds a deterministic demo feed on a cold instance. */
 export function listActions(limit = 50): AgentAction[] {
+  if (log.length === 0) ensureDemoSeed();
   return log.slice(0, limit);
 }
 

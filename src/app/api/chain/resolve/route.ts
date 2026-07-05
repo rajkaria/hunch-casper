@@ -63,6 +63,9 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ error: "winningOutcomeKey is required" }, { status: 400 });
   }
   const oracle = typeof oracleId === "string" && oracleId.length > 0 ? oracleId : "arbiter";
+  // The operator asserts ground truth, so a resolution is accurate by default; an explicit
+  // `accurate: false` lets a demo record a wrong call and watch the oracle's reputation drop.
+  const accurate = (body?.accurate ?? true) !== false;
 
   const container = createContainer(network);
   const slug = marketId.startsWith(`${network}:`) ? marketId.slice(network.length + 1) : marketId;
@@ -93,9 +96,9 @@ export async function POST(req: Request): Promise<Response> {
     const res = await container.chain.resolveMarket({ marketId: market.id, winningOutcomeKey, oracleId: oracle });
     // Settle off-chain through the pure payout engine — the exact numbers the on-chain claim mirrors.
     const settlement = await container.store.settle(market.id, winningOutcomeKey);
-    // Record the resolution against the oracle's reputation (the OracleRegistry mirror). The
-    // deterministic Arbiter read the data correctly → accurate; a dispute layer (S10) can revise.
-    const reputation = await container.oracle.recordResolution(oracle, market.id, true);
+    // Record the resolution against the oracle's reputation (the OracleRegistry mirror). Defaults to
+    // accurate (the operator asserts truth); an explicit `accurate: false` demos a reputation hit.
+    const reputation = await container.oracle.recordResolution(oracle, market.id, accurate);
     return NextResponse.json({
       deployHash: res.deployHash,
       explorerUrl: res.explorerUrl,

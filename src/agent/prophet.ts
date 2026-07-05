@@ -78,7 +78,14 @@ export async function runProphet(
  * open markets and sends every Prophet at it in order, so the pool shifts between them.
  */
 export async function runProphetFleet(container: Container, seq: number): Promise<AgentAction[]> {
-  const open = await container.store.list({ network: container.network, status: "open" });
+  // Prophets trade only BASE markets — never meta-markets. A meta-market (`prophet-race`,
+  // `momentum-vs-contrarian`, `arbiter-accuracy-95`) resolves against the Prophet PnL / oracle
+  // boards, so letting the fleet bet them would let their bets contaminate the very board that
+  // scores them (a reflexive loop). Meta-markets are for humans + external agents; excluding them
+  // here keeps the self-scoring board honest — the same invariant the economy-loop tests assume.
+  const open = (await container.store.list({ network: container.network, status: "open" })).filter(
+    (m) => m.category !== "meta",
+  );
   if (open.length === 0) return [];
   const target = open[seq % open.length];
 
