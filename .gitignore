@@ -28,6 +28,10 @@
 .DS_Store
 *.pem
 
+# Casper deploy keys — secret_key.pem is covered by *.pem, but public_key_hex
+# is not; ignore the whole dir so no key material can ever be staged
+contracts/keys/
+
 # debug
 npm-debug.log*
 yarn-debug.log*
