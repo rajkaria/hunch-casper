@@ -36,22 +36,38 @@ function pnlCspr(motes: string): string {
  * The two boards the economy scores itself with — agent realized PnL and oracle accuracy — the
  * exact numbers the meta-markets resolve against. Polls `GET /api/agent/leaderboard`.
  */
+function BoardSkeleton() {
+  return (
+    <div className="flex flex-col divide-y divide-border overflow-hidden rounded-2xl border border-border" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex items-center justify-between gap-3 bg-surface/40 p-4">
+          <div className="h-4 w-24 animate-pulse rounded bg-surface-2" />
+          <div className="h-4 w-14 animate-pulse rounded bg-surface-2/60" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function AgentLeaderboard() {
   const [agentPnl, setAgentPnl] = useState<AgentPnl[]>([]);
   const [oracle, setOracle] = useState<OracleAccuracy[]>([]);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
 
   useEffect(() => {
     let active = true;
     const load = () =>
       fetch("/api/agent/leaderboard")
-        .then((r) => (r.ok ? (r.json() as Promise<{ agentPnl: AgentPnl[]; oracleAccuracy: OracleAccuracy[] }>) : null))
+        .then((r) => (r.ok ? (r.json() as Promise<{ agentPnl: AgentPnl[]; oracleAccuracy: OracleAccuracy[] }>) : Promise.reject(new Error(`HTTP ${r.status}`))))
         .then((j) => {
-          if (active && j) {
-            setAgentPnl(j.agentPnl);
-            setOracle(j.oracleAccuracy);
-          }
+          if (!active) return;
+          setAgentPnl(j.agentPnl);
+          setOracle(j.oracleAccuracy);
+          setStatus("ready");
         })
-        .catch(() => {});
+        .catch(() => {
+          if (active) setStatus((s) => (s === "loading" ? "error" : s));
+        });
     load();
     const timer = setInterval(load, 5000);
     return () => {
@@ -65,7 +81,11 @@ export function AgentLeaderboard() {
       {/* Agent PnL */}
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Agent PnL</h2>
-        {agentPnl.length === 0 ? (
+        {status === "loading" ? (
+          <BoardSkeleton />
+        ) : status === "error" && agentPnl.length === 0 ? (
+          <p className="text-sm text-down">Couldn’t load the board. Retrying…</p>
+        ) : agentPnl.length === 0 ? (
           <p className="text-sm text-muted">
             No settled markets yet — the board fills as the Arbiter resolves the Prophets’ bets.
           </p>
@@ -97,7 +117,11 @@ export function AgentLeaderboard() {
       {/* Oracle accuracy */}
       <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Oracle accuracy</h2>
-        {oracle.length === 0 ? (
+        {status === "loading" ? (
+          <BoardSkeleton />
+        ) : status === "error" && oracle.length === 0 ? (
+          <p className="text-sm text-down">Couldn’t load oracle reputation. Retrying…</p>
+        ) : oracle.length === 0 ? (
           <p className="text-sm text-muted">No oracles registered yet.</p>
         ) : (
           <div className="flex flex-col divide-y divide-border overflow-hidden rounded-2xl border border-border">

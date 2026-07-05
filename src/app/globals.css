@@ -30,11 +30,46 @@
   --font-mono: var(--font-geist-mono);
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Keyboard focus is visible everywhere against the dark theme (was browser-default only). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: rgba(255, 59, 59, 0.28);
+  color: var(--foreground);
+}
+
+/* Anchored sections clear the sticky header — single source of truth is the
+   `scroll-mt-24` utility on each docs <Section>; this covers any other :target. */
+:target {
+  scroll-margin-top: 5.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
 /* Radial accent wash behind the landing hero. */
@@ -54,4 +89,42 @@ body {
   border: 1px solid var(--border);
   background: var(--surface-2);
   border-radius: 9999px;
+}
+
+/* Interactive cards lift and warm their border on hover/focus. */
+.card-hover {
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+.card-hover:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--surface-2);
+}
+
+/* Small "live" status dot with a gentle pulse (respects reduced-motion above). */
+.live-dot {
+  position: relative;
+  display: inline-block;
+  height: 0.5rem;
+  width: 0.5rem;
+  border-radius: 9999px;
+  background: var(--up);
+}
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--up);
+  animation: live-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+@keyframes live-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  75%,
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
 }

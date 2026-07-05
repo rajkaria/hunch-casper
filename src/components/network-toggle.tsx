@@ -9,7 +9,7 @@ export function NetworkToggle() {
   return (
     <div
       className="chip inline-flex p-0.5 text-xs font-medium"
-      role="tablist"
+      role="radiogroup"
       aria-label="Casper network"
     >
       {CASPER_NETWORKS.map((n) => {
@@ -17,8 +17,9 @@ export function NetworkToggle() {
         return (
           <button
             key={n}
-            role="tab"
-            aria-selected={active}
+            type="button"
+            role="radio"
+            aria-checked={active}
             onClick={() => setNetwork(n)}
             className={`rounded-full px-3 py-1 transition-colors ${
               active
