@@ -9,11 +9,25 @@ _Resume point for the next session. Full plan: [`BUILD_SPEC.md`](./BUILD_SPEC.md
 - **Deploy:** https://hunch-casper.vercel.app (Vercel prod, public 200) — Vercel team `rajkaria67-1831s-projects`, project `hunch-casper`
 - **Domain:** `casper.playhunch.xyz` **attached on Vercel** (2026-07-05). No main-Hunch-repo change needed.
 
-## Current state — S3–S11 DONE + green (Phase 1 core + Phase 2 agent economy + Phase 3 mainnet, loop closed)
+## Current state — S3–S12 DONE + green (Phase 1 core + Phase 2 agent economy + Phase 3 mainnet + polish, loop closed)
 
-**S3–S11 shipped** (tags `s3`…`s11`; 493 TS tests + 22 OdraVM tests; gate
+**S3–S12 shipped** (tags `s3`…`s12`; 493 TS tests + 22 OdraVM tests; gate
 `typecheck && lint && test && build` green each sprint; every sprint adversarially reviewed
 before commit and money-path findings fixed).
+
+- **S12 — Landing + docs + branding polish (Phase 3 complete).** The human-facing surface (main
+  `f5f218b`): `/docs` grew from a 3-card stub to a 13-section hub with a sticky TOC (agents,
+  markets & odds, money path, Odra contracts, oracle reputation, meta-markets, REST API, MCP's 7
+  tools, x402 handshake, SDK, "build a Prophet", networks) — the catalogue table renders straight
+  from `MARKET_DEFINITIONS` so it can't drift; landing gained the "closed loop" recursion story,
+  the 4 market categories, and a "money path is pure contract math" trust section. Fixed the real
+  **mobile-nav bug** (header nav was `hidden sm:flex` with no fallback → added a hamburger drawer +
+  skip-link), added a **site footer** (layout was scaffolded for one), OG/Twitter metadata +
+  dynamic `opengraph-image` + `icon.svg` + `sitemap.ts`/`robots.ts`, **loading/error states +
+  aria-live** on the activity feed & leaderboard (failures used to render as "empty"), and a11y
+  (`:focus-visible`, reduced-motion, nav aria-labels, network-toggle → radiogroup). Adversarial
+  review (docs-accuracy + design/a11y) → 4 findings fixed, incl. correcting the documented MCP bet
+  flow (`place_bet` no-proof → pay → proof; `quote_bet` is a non-binding preview).
 
 - **S3 — Catalogue engine.** `MarketDefinition` enriched with a declarative `resolver` binding
   (kind/source/metric/target/comparator), `feeBps`, `cadence`; full 16-market catalogue across
