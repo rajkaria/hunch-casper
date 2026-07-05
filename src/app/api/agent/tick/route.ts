@@ -1,0 +1,72 @@
+/**
+ * /api/agent/tick — one turn of the whole economy: Prophets bet, the Arbiter resolves every
+ * matured market, boards update. This is the heartbeat that makes "the full loop runs unattended"
+ * literal — a Vercel cron (GET) fires it on a schedule; the demo can also POST it by hand.
+ *
+ * GET  — the cron entry point (Vercel issues GET). Runs a plain tick.
+ * POST — manual/demo. Optional body `{ network?, seq?, resolveSlugs?: string[] }`; `resolveSlugs`
+ *        force-closes those markets this tick (the weekly meta-market close) so their settlement
+ *        against the freshly-updated boards is demoable on demand.
+ *
+ * Auth: open in the credential-free mock/demo. In real mode it requires the cron secret — either
+ * Vercel's native `Authorization: Bearer <CRON_SECRET>` or an `x-cron-secret` header — because a
+ * tick moves the money path (bets + resolutions).
+ */
+
+import { NextResponse } from "next/server";
+import { createContainer } from "@/lib/container";
+import { runEconomyTick } from "@/agent/economy";
+import { listActions } from "@/adapters/mock/activity-log";
+import { isCasperNetwork, DEFAULT_NETWORK } from "@/config/network";
+import { chainMode } from "@/config/chain-mode";
+import type { CasperNetwork } from "@/config/network";
+
+function authorized(req: Request): boolean {
+  const secret = process.env.CRON_SECRET ?? process.env.TICK_CRON_SECRET;
+  if (chainMode() !== "real" && !secret) return true; // open in the credential-free demo
+  if (!secret) return false;
+  const bearer = req.headers.get("authorization");
+  if (bearer === `Bearer ${secret}`) return true; // Vercel's native cron auth
+  return req.headers.get("x-cron-secret") === secret;
+}
+
+async function tick(network: CasperNetwork, seq: number, resolveSlugs?: string[]): Promise<Response> {
+  const report = await runEconomyTick(createContainer(network), { seq, resolveSlugs });
+  return NextResponse.json({
+    network,
+    round: report.seq,
+    placed: report.prophetActions.length,
+    resolved: report.arbiterActions.length,
+    prophetActions: report.prophetActions,
+    arbiterActions: report.arbiterActions,
+    leaderboard: report.leaderboard,
+    oracleAccuracy: report.oracleBoard,
+  });
+}
+
+export async function GET(req: Request): Promise<Response> {
+  if (!authorized(req)) {
+    return NextResponse.json({ error: "unauthorized: the tick is gated by the cron secret" }, { status: 401 });
+  }
+  const param = new URL(req.url).searchParams.get("network");
+  const network = isCasperNetwork(param) ? param : DEFAULT_NETWORK;
+  return tick(network, listActions().length);
+}
+
+export async function POST(req: Request): Promise<Response> {
+  if (!authorized(req)) {
+    return NextResponse.json({ error: "unauthorized: the tick is gated by the cron secret" }, { status: 401 });
+  }
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await req.json()) as Record<string, unknown>;
+  } catch {
+    /* body optional */
+  }
+  const network = isCasperNetwork(body.network) ? body.network : DEFAULT_NETWORK;
+  const seq = typeof body.seq === "number" ? body.seq : listActions().length;
+  const resolveSlugs = Array.isArray(body.resolveSlugs)
+    ? body.resolveSlugs.filter((s): s is string => typeof s === "string")
+    : undefined;
+  return tick(network, seq, resolveSlugs);
+}

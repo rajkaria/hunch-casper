@@ -14,7 +14,7 @@ import { buildMarket } from "@/core/catalogue";
 import { findDefinition } from "@/adapters/mock/market-source";
 import { computeMarketPayouts } from "@/core/market-payout";
 import type { Market, MarketStatus } from "@/core/types";
-import type { RecordBetInput, SettlementRecord } from "@/ports/market-store";
+import type { RecordBetInput, SettledEntry, SettlementRecord } from "@/ports/market-store";
 import { isCasperNetwork } from "@/config/network";
 
 interface LedgerEntry {
@@ -149,6 +149,28 @@ export function ledgerSettlementFor(marketId: string): SettlementRecord | null {
   const { slug } = parseMarketId(marketId);
   if (!findDefinition(slug)) return null;
   return ledger.get(marketId)?.settlement ?? null;
+}
+
+/** Deep-ish copy of a stakes map so callers can't mutate ledger state through the returned entry. */
+function cloneStakes(stakes: Record<string, Record<string, string>>): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  for (const [bettor, byOutcome] of Object.entries(stakes)) out[bettor] = { ...byOutcome };
+  return out;
+}
+
+/**
+ * Every settled market's stakes + manifest (optionally filtered to one network) — the raw input
+ * the pure agent-PnL leaderboard folds over. Only markets with a computed manifest are included.
+ */
+export function ledgerSettledEntries(network?: "testnet" | "mainnet"): SettledEntry[] {
+  const out: SettledEntry[] = [];
+  for (const [marketId, entry] of ledger) {
+    const manifest = entry.settlement?.manifest;
+    if (!manifest) continue;
+    if (network && parseMarketId(marketId).network !== network) continue;
+    out.push({ marketId, stakesByBettor: cloneStakes(entry.stakes), manifest });
+  }
+  return out;
 }
 
 /** Test-only: clear all in-process settlement state so cases don't contaminate each other. */

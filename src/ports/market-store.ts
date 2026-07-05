@@ -33,6 +33,19 @@ export interface SettlementRecord {
   manifest: PayoutManifest | null;
 }
 
+/**
+ * A settled market's raw stakes + manifest — the input the pure agent-PnL leaderboard folds over.
+ * Exposed by the store so the boards (and the meta-markets that resolve against them) read the
+ * exact money-path numbers, never an estimate.
+ */
+export interface SettledEntry {
+  marketId: string;
+  /** `bettor -> (outcomeKey -> motes)` for this market. */
+  stakesByBettor: Record<string, Record<string, string>>;
+  /** The settlement manifest (money authority). */
+  manifest: PayoutManifest;
+}
+
 export interface MarketStorePort {
   list(filter?: MarketListFilter): Promise<Market[]>;
   get(slug: string, network: CasperNetwork): Promise<Market | null>;
@@ -46,4 +59,6 @@ export interface MarketStorePort {
   settle(marketId: string, winningOutcomeKey: string | null): Promise<SettlementRecord>;
   /** The settlement record for a market, or `null` if never touched. */
   settlementFor(marketId: string): Promise<SettlementRecord | null>;
+  /** Every settled market's stakes + manifest (optionally one network) — feeds the PnL board. */
+  settledEntries(network?: CasperNetwork): Promise<SettledEntry[]>;
 }

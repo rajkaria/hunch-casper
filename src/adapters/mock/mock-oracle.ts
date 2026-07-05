@@ -8,7 +8,7 @@ import type { OraclePort, OracleReading, OracleReputation } from "@/ports/oracle
 import { findDefinition } from "@/adapters/mock/market-source";
 import { accuracyBps as accuracyBpsOf } from "@/core/oracle-reputation";
 import type { OracleReputationState } from "@/core/oracle-reputation";
-import { oracleRecordResolution, oracleReputationOf } from "./oracle-ledger";
+import { listOracleReputations, oracleRecordResolution, oracleReputationOf } from "./oracle-ledger";
 import { pseudoDeployHash } from "./mock-chain";
 
 function toReputation(state: OracleReputationState): OracleReputation {
@@ -49,6 +49,9 @@ export function createMockOracle(): OraclePort {
     },
     async recordResolution(oracleId: string, marketId: string, accurate: boolean): Promise<OracleReputation> {
       return toReputation(oracleRecordResolution(oracleId, marketId, accurate));
+    },
+    async leaderboard(): Promise<OracleReputation[]> {
+      return listOracleReputations().map(toReputation);
     },
   };
 }

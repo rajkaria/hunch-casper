@@ -12,12 +12,14 @@ import type {
   MarketListFilter,
   MarketStorePort,
   RecordBetInput,
+  SettledEntry,
   SettlementRecord,
 } from "@/ports/market-store";
 import {
   ledgerGet,
   ledgerRecordBet,
   ledgerSettle,
+  ledgerSettledEntries,
   ledgerSettlementFor,
 } from "./settlement-ledger";
 
@@ -43,6 +45,9 @@ export function createMockMarketStore(): MarketStorePort {
     },
     async settlementFor(marketId: string): Promise<SettlementRecord | null> {
       return ledgerSettlementFor(marketId);
+    },
+    async settledEntries(network?: CasperNetwork): Promise<SettledEntry[]> {
+      return ledgerSettledEntries(network);
     },
   };
 }

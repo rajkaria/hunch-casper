@@ -12,6 +12,7 @@ import type { X402PaymentProof } from "@/ports/payment";
 import { isCasperNetwork, DEFAULT_NETWORK } from "@/config/network";
 import type { CasperNetwork } from "@/config/network";
 import { computeOdds } from "@/core/parimutuel-odds";
+import { computeAgentLeaderboard } from "@/core/agent-leaderboard";
 import type { Market } from "@/core/types";
 
 export interface McpTool {
@@ -96,8 +97,9 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "get_leaderboard",
-    description: "Get the economy's leaderboard. Currently the oracle-accuracy board; agent PnL is added with the Prophet fleet.",
-    inputSchema: { type: "object", properties: {} },
+    description:
+      "Get the economy's leaderboards: agent realized PnL (the Prophets, ranked) and oracle-accuracy. These are the boards the meta-markets resolve against.",
+    inputSchema: { type: "object", properties: { ...NETWORK_PROP } },
   },
 ];
 
@@ -180,16 +182,14 @@ export async function callTool(name: string, rawArgs: unknown): Promise<ToolResu
       return { ok: true, data: await container.oracle.reputationOf(oracleId) };
     }
     case "get_leaderboard": {
-      const arbiter = await container.oracle.reputationOf("arbiter");
-      return {
-        ok: true,
-        data: {
-          oracleAccuracy: [
-            { oracleId: arbiter.oracleId, name: arbiter.name, accuracyBps: arbiter.accuracyBps, resolvedCount: arbiter.resolvedCount },
-          ],
-          note: "Agent PnL leaderboard is added with the Prophet fleet.",
-        },
-      };
+      const agentPnl = computeAgentLeaderboard(await container.store.settledEntries(network));
+      const oracleAccuracy = (await container.oracle.leaderboard()).map((o) => ({
+        oracleId: o.oracleId,
+        name: o.name,
+        accuracyBps: o.accuracyBps,
+        resolvedCount: o.resolvedCount,
+      }));
+      return { ok: true, data: { network, agentPnl, oracleAccuracy } };
     }
     default:
       return { ok: false, error: `unknown tool '${name}'` };
