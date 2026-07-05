@@ -102,6 +102,21 @@ export function getNetworkConfig(network: CasperNetwork): NetworkConfig {
   return NETWORKS[network];
 }
 
+/** Per-bet cap in whole CSPR for a network (the mainnet real-money guardrail), or `null` if uncapped. */
+export function maxBetCspr(network: CasperNetwork): number | null {
+  return NETWORKS[network].guardrails.maxBetCspr;
+}
+
+/**
+ * The single source of truth for the mainnet per-bet cap. Both the human bet route and the
+ * agent x402 rail enforce it server-side, and the trade panel surfaces it client-side, so a bet
+ * can never route around the guardrail on any surface. `amountCspr` is a whole-CSPR amount.
+ */
+export function exceedsBetCap(network: CasperNetwork, amountCspr: number): boolean {
+  const cap = NETWORKS[network].guardrails.maxBetCspr;
+  return cap != null && amountCspr > cap;
+}
+
 /**
  * Explorer URL for a transaction hash on the given network. Casper 2.0 (Condor) serves
  * `TransactionV1` hashes — which the real adapter submits via `putTransaction` — under
