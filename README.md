@@ -32,6 +32,20 @@ flowchart LR
   A -. reputation .-> B
 ```
 
+## On-chain proof (Casper testnet)
+
+The contracts are **deployed and live on Casper testnet** — every hash below is a real, clickable
+transaction on cspr.live:
+
+| Contract | Package hash | On-chain tx |
+|---|---|---|
+| `MarketFactory` | `hash-7f63a93187…f43d777` | on-chain registry |
+| `OracleRegistry` | `hash-269834fd37…c6282` | [deploy `b85537…`](https://testnet.cspr.live/transaction/b85537a2c5926c4687e87510b345ce5bb9a4153d20f79687d5c830bdc3d60298) · [register_oracle `c26957…`](https://testnet.cspr.live/transaction/c26957021830fa491b4fcab31bf20736bcefff4fec1fd762cb34059977206843) |
+| `ParimutuelMarket` (vault) | `hash-c6a1afd320…64529` | [deploy `2b0cbe…`](https://testnet.cspr.live/transaction/2b0cbe25f382b40828b34d9c889fea3f1ac03cddbca32fe0dc4e0b6256d1d677) · [register_market `d179b6…`](https://testnet.cspr.live/transaction/d179b690b768a807466f9864f7fbb617de5a4a5fc01aa0161ebe67176ecc84aa) |
+
+The deployed OracleRegistry registers the Arbiter as the on-chain oracle, and the market is
+registered in the factory — the economy's on-chain foundation, produced by `contracts/bin/cli.rs`.
+
 ## What it does
 
 Four autonomous agents run a live prediction-market economy on Casper:
