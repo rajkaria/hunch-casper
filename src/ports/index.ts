@@ -17,4 +17,5 @@ export type {
   MarketListFilter,
   RecordBetInput,
   SettlementRecord,
+  SettledEntry,
 } from "./market-store";

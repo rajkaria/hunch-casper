@@ -38,6 +38,24 @@ export function oracleReputationOf(oracleId: string): OracleReputationState {
   return { ...ensure(oracleId) };
 }
 
+/**
+ * Every known oracle's reputation, ranked by accuracy (desc) then most-resolved — the
+ * oracle-accuracy leaderboard. The Arbiter is always present (seeded on first read) so the board
+ * is never empty even before the first live resolution.
+ */
+export function listOracleReputations(): OracleReputationState[] {
+  ensure("arbiter"); // guarantee the Arbiter appears even on a cold start
+  return [...ledger.values()]
+    .map((s) => ({ ...s }))
+    .sort((a, b) => {
+      const accA = a.resolved > 0 ? a.accurate / a.resolved : 0;
+      const accB = b.resolved > 0 ? b.accurate / b.resolved : 0;
+      if (accA !== accB) return accB - accA;
+      if (a.resolved !== b.resolved) return b.resolved - a.resolved;
+      return a.oracleId < b.oracleId ? -1 : a.oracleId > b.oracleId ? 1 : 0;
+    });
+}
+
 /** Record one resolution's accuracy against an oracle. Idempotent per (oracle, market). */
 export function oracleRecordResolution(
   oracleId: string,

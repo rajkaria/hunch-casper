@@ -34,4 +34,6 @@ export interface OraclePort {
   reputationOf(oracleId: string): Promise<OracleReputation>;
   /** Record a resolution's accuracy against an oracle — updates its reputation. Idempotent per market. */
   recordResolution(oracleId: string, marketId: string, accurate: boolean): Promise<OracleReputation>;
+  /** Every known oracle's reputation, ranked by accuracy — the oracle-accuracy leaderboard. */
+  leaderboard(): Promise<OracleReputation[]>;
 }

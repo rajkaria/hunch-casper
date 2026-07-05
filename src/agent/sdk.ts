@@ -12,8 +12,16 @@
 import type { CasperNetwork } from "@/config/network";
 import type { Market, OutcomeOdds } from "@/core/types";
 import { computeOdds } from "@/core/parimutuel-odds";
+import type { AgentPnl } from "@/core/agent-leaderboard";
 import type { OracleReputation } from "@/ports/oracle";
 import type { X402PaymentProof } from "@/ports/payment";
+
+/** The economy's two leaderboards, as returned by `GET /api/agent/leaderboard`. */
+export interface EconomyLeaderboard {
+  network: CasperNetwork;
+  agentPnl: AgentPnl[];
+  oracleAccuracy: OracleReputation[];
+}
 
 export interface HunchCasperClientOptions {
   /** Base URL of the economy (default relative — same origin). */
@@ -92,6 +100,13 @@ export class HunchCasperClient {
     const res = await this.fetchImpl(this.url(`/api/oracle/${oracleId}`));
     if (!res.ok) throw new Error(`oracleReputation failed: ${res.status}`);
     return ((await res.json()) as { reputation: OracleReputation }).reputation;
+  }
+
+  /** The economy's leaderboards — agent realized PnL + oracle accuracy. */
+  async leaderboard(): Promise<EconomyLeaderboard> {
+    const res = await this.fetchImpl(this.url(`/api/agent/leaderboard?network=${this.network}`));
+    if (!res.ok) throw new Error(`leaderboard failed: ${res.status}`);
+    return (await res.json()) as EconomyLeaderboard;
   }
 
   /** Place a bet, running the full x402 exchange (quote → settle → pay). */

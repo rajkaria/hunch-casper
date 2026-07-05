@@ -9,9 +9,9 @@ _Resume point for the next session. Full plan: [`BUILD_SPEC.md`](./BUILD_SPEC.md
 - **Deploy:** https://hunch-casper.vercel.app (Vercel prod, public 200) — Vercel team `rajkaria67-1831s-projects`, project `hunch-casper`
 - **Domain:** `casper.playhunch.xyz` **not yet attached** — user will connect the domain in the Vercel dashboard (TXT-verify if `playhunch.xyz` DNS is on a different Vercel team). No main-Hunch-repo change needed.
 
-## Current state — S3–S9 DONE + green (Phase 1 core + Phase 2 agent economy)
+## Current state — S3–S10 DONE + green (Phase 1 core + Phase 2 agent economy, loop closed)
 
-**S3–S9 shipped** (tags `s3`…`s9`, main `6f9c30f`; 456 TS tests + 22 OdraVM tests; gate
+**S3–S10 shipped** (tags `s3`…`s10`; 483 TS tests + 22 OdraVM tests; gate
 `typecheck && lint && test && build` green each sprint; every sprint adversarially reviewed
 before commit and money-path findings fixed).
 
@@ -45,10 +45,29 @@ before commit and money-path findings fixed).
   read odds, narrate (LLM, advisory), and bet via x402; `POST /api/agent/prophets/run` sends the
   fleet at one market per round (visible rivalry); activity feed (`/api/agent/activity`) +
   live `/agents` dashboard.
+- **S10 — Arbiter + meta-markets + boards (the loop closes).** The economy now runs itself and
+  scores itself:
+  - **Autonomous Arbiter** (`src/agent/arbiter.ts`): `resolveMarket(slug)` reads the deciding datum,
+    posts the winner on-chain, settles via the pure engine, and updates its on-chain reputation.
+    `runArbiterSweep` resolves every *matured* (past-deadline) market unattended; explicit-by-slug
+    resolution is the operator/demo weekly-close (gated by `ARBITER_CRON_SECRET` in real mode).
+    `POST /api/agent/arbiter/run` (sweep, or `{slug}`).
+  - **Boards, from money-path numbers:** pure `core/agent-leaderboard.ts` folds settled markets'
+    stakes + payout manifests into per-agent realized PnL/ROI/W-L (house + humans excluded);
+    `core/meta-resolution.ts` resolves the meta-markets against them. `GET /api/agent/leaderboard`
+    (agent PnL + oracle accuracy) + `<AgentLeaderboard>` on `/agents`; MCP `get_leaderboard` now
+    returns the real boards; new port methods `MarketStorePort.settledEntries` + `OraclePort.leaderboard`.
+  - **The recursion:** `prophet-race-weekly` settles to the board's top Prophet;
+    `momentum-vs-contrarian-weekly` to whichever out-earned; `arbiter-accuracy-95` to the Arbiter's
+    live accuracy (seeded ≥95 → YES). Proven end-to-end in `test/economy-loop.test.ts`.
+  - **Unattended full loop:** `runEconomyTick` (Prophets bet → Arbiter sweeps → boards snapshot) via
+    `/api/agent/tick` (GET = Vercel cron, POST = demo w/ `resolveSlugs` weekly close). `vercel.json`
+    cron is a **Hobby-safe daily** schedule; the live demo cadence is driven by the plan-independent
+    `scripts/economy-loop.mjs` (POSTs the tick on an interval). Tighten the cron to `*/5 * * * *`
+    on Pro.
 
-**Next: S10** — Arbiter automation + meta-market resolution + agent PnL / oracle-accuracy
-leaderboards (the boards the meta-markets `prophet-race-weekly` / `momentum-vs-contrarian-weekly`
-/ `arbiter-accuracy-95` settle against). Then S11 mainnet, S12 polish, S13–S14 judge loop + submit.
+**Next: S11 — mainnet.** Deploy all contracts + full catalogue to mainnet; wire the network toggle
+end-to-end; mainnet caps + unaudited disclosure banner. Then S12 polish, S13–S14 judge loop + submit.
 
 ## Prior state — S2 (End-to-end thin slice) DONE, green
 
