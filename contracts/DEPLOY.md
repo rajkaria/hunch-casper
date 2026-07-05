@@ -53,7 +53,8 @@ and keep the per-bet cap + unaudited banner on (see `src/config/network.ts` guar
 Create `contracts/.env` (see `.env.example`):
 
 ```bash
-ODRA_CASPER_LIVENET_NODE_ADDRESS=https://rpc.testnet.casperlabs.io/rpc
+ODRA_CASPER_LIVENET_NODE_ADDRESS=https://node.testnet.casper.network/rpc
+ODRA_CASPER_LIVENET_EVENTS_URL=https://node.testnet.casper.network/events
 ODRA_CASPER_LIVENET_CHAIN_NAME=casper-test
 ODRA_CASPER_LIVENET_SECRET_KEY_PATH=./keys/secret_key.pem
 ```
@@ -110,7 +111,8 @@ Rust holds real value here — the cap + banner are the safety envelope, never r
    Point `contracts/.env` at mainnet:
 
    ```bash
-   ODRA_CASPER_LIVENET_NODE_ADDRESS=https://rpc.mainnet.casperlabs.io/rpc
+   ODRA_CASPER_LIVENET_NODE_ADDRESS=https://node.mainnet.casper.network/rpc
+   ODRA_CASPER_LIVENET_EVENTS_URL=https://node.mainnet.casper.network/events
    ODRA_CASPER_LIVENET_CHAIN_NAME=casper
    ODRA_CASPER_LIVENET_SECRET_KEY_PATH=./keys/mainnet_secret_key.pem
    ```
