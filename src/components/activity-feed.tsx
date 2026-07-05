@@ -39,16 +39,21 @@ function slugOf(marketId: string): string {
 /** The live agent-action feed — polls `/api/agent/activity` so the swarm's moves stream in. */
 export function ActivityFeed() {
   const [actions, setActions] = useState<AgentAction[]>([]);
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
 
   useEffect(() => {
     let active = true;
     const load = () =>
       fetch("/api/agent/activity")
-        .then((r) => (r.ok ? (r.json() as Promise<{ actions: AgentAction[] }>) : null))
+        .then((r) => (r.ok ? (r.json() as Promise<{ actions: AgentAction[] }>) : Promise.reject(new Error(`HTTP ${r.status}`))))
         .then((j) => {
-          if (active && j) setActions(j.actions);
+          if (!active) return;
+          setActions(j.actions);
+          setStatus("ready");
         })
-        .catch(() => {});
+        .catch(() => {
+          if (active) setStatus((s) => (s === "loading" ? "error" : s));
+        });
     load();
     const timer = setInterval(load, 5000);
     return () => {
@@ -56,6 +61,27 @@ export function ActivityFeed() {
       clearInterval(timer);
     };
   }, []);
+
+  if (status === "loading") {
+    return (
+      <div className="flex flex-col divide-y divide-border overflow-hidden rounded-2xl border border-border" aria-hidden="true">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="flex flex-col gap-2 bg-surface/40 p-4">
+            <div className="h-4 w-2/3 animate-pulse rounded bg-surface-2" />
+            <div className="h-3 w-1/2 animate-pulse rounded bg-surface-2/60" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (status === "error" && actions.length === 0) {
+    return (
+      <p className="text-sm text-down">
+        Couldn’t load the activity feed. Retrying every few seconds…
+      </p>
+    );
+  }
 
   if (actions.length === 0) {
     return (
@@ -67,7 +93,12 @@ export function ActivityFeed() {
   }
 
   return (
-    <div className="flex flex-col divide-y divide-border overflow-hidden rounded-2xl border border-border">
+    <div
+      className="flex flex-col divide-y divide-border overflow-hidden rounded-2xl border border-border"
+      role="log"
+      aria-live="polite"
+      aria-label="Live agent activity"
+    >
       {actions.map((a) => (
         <div key={a.seq} className="flex flex-col gap-1 bg-surface/40 p-4">
           <div className="flex items-center gap-2 text-sm">
