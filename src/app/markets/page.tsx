@@ -46,6 +46,7 @@ export default function MarketsPage() {
           return (
             <button
               key={f.key}
+              type="button"
               onClick={() => setFilter(f.key)}
               className={`chip px-3 py-1.5 text-xs font-medium transition-colors ${
                 active ? "border-accent/60 text-accent" : "text-muted hover:text-foreground"
