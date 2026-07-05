@@ -30,6 +30,11 @@ export interface GenesisTrigger {
   deadlineIso: string;
   /** Monotone sequence for a deterministic unique slug (the cron passes the created-count). */
   seq: number;
+  /**
+   * Where the signal came from ("CSPR.cloud" | "Casper RPC" | …) — stamped into the market
+   * subtitle so a live-RPC datum is never mislabelled as CSPR.cloud. Defaults to "CSPR.cloud".
+   */
+  sourceLabel?: string;
 }
 
 const YES_NO: MarketOutcome[] = [
@@ -85,7 +90,7 @@ export function definitionFromTrigger(trigger: GenesisTrigger, framing: string):
   return {
     slug: `genesis-${slugify(trigger.metric)}-${trigger.seq}`,
     title: `Will ${trigger.metric} ${shape.verb} ${trigger.unitLabel}${target}?`,
-    subtitle: `Genesis · autonomously opened from CSPR.cloud (${trigger.metric} = ${trigger.unitLabel}${trigger.value})`,
+    subtitle: `Genesis · autonomously opened from ${trigger.sourceLabel ?? "CSPR.cloud"} (${trigger.metric} = ${trigger.unitLabel}${trigger.value})`,
     category: "casper-native",
     outcomes: YES_NO,
     feeBps: 200,
@@ -112,6 +117,9 @@ export async function runGenesis(container: Container, trigger: GenesisTrigger):
     marketId: market.id,
     marketTitle: market.title,
     narration: def.resolver.description,
+    // No on-chain MarketFactory tx backs a runtime creation yet (the factory registration is a
+    // deploy-time step), so a Genesis creation is always simulated until that lands.
+    simulated: true,
   });
   return market;
 }

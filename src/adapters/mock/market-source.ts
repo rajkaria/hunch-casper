@@ -13,6 +13,7 @@ import { MARKET_DEFINITIONS, buildMarket } from "@/core/catalogue";
 import type { MarketDefinition } from "@/core/catalogue";
 import type { CasperNetwork } from "@/config/network";
 import type { Market } from "@/core/types";
+import { fireEconomyPersistHook } from "@/adapters/persist/economy-persist-hook";
 
 const created: MarketDefinition[] = [];
 
@@ -35,6 +36,7 @@ export function buildAllMarkets(network: CasperNetwork): Market[] {
 export function addCreatedMarket(def: MarketDefinition): void {
   if (findDefinition(def.slug)) throw new Error(`market '${def.slug}' already exists`);
   created.push(def);
+  fireEconomyPersistHook(); // snapshot to KV when configured (no-op otherwise) — see adapters/persist
 }
 
 /** The Genesis-created markets, in creation order. */
@@ -45,4 +47,20 @@ export function listCreatedMarkets(): readonly MarketDefinition[] {
 /** Test-only: forget all Genesis-created markets. */
 export function __resetCreatedMarkets(): void {
   created.length = 0;
+}
+
+/** JSON-safe snapshot of the Genesis-created definitions for KV persistence. */
+export interface CreatedMarketsSnapshot {
+  created: MarketDefinition[];
+}
+
+/** Export the created markets, deep-cloned so later creations never leak into a snapshot. */
+export function exportCreatedMarkets(): CreatedMarketsSnapshot {
+  return { created: structuredClone(created) };
+}
+
+/** Restore a snapshot, REPLACING (not merging) current state. Idempotent. */
+export function importCreatedMarkets(snapshot: CreatedMarketsSnapshot): void {
+  created.length = 0;
+  created.push(...structuredClone(snapshot.created));
 }

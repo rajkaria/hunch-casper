@@ -9,6 +9,7 @@
 
 import type { OracleReputationState } from "@/core/oracle-reputation";
 import { recordResolution } from "@/core/oracle-reputation";
+import { fireEconomyPersistHook } from "@/adapters/persist/economy-persist-hook";
 
 /** The Arbiter's seeded track record: 123/128 ≈ 96.09% accuracy going into the buildathon. */
 const ARBITER_BASELINE: OracleReputationState = {
@@ -68,6 +69,7 @@ export function oracleRecordResolution(
   recorded.add(key);
   const updated = recordResolution(current, accurate);
   ledger.set(oracleId, updated);
+  fireEconomyPersistHook(); // snapshot to KV when configured (no-op otherwise) — see adapters/persist
   return { ...updated };
 }
 
@@ -75,4 +77,28 @@ export function oracleRecordResolution(
 export function __resetOracleLedger(): void {
   ledger.clear();
   recorded.clear();
+}
+
+/** JSON-safe snapshot of the FULL oracle state (Map → entries, Set → array) for KV persistence.
+ * The `recorded` idempotence keys ride along so a restored instance still counts each
+ * (oracle, market) resolution at most once. */
+export interface OracleSnapshot {
+  reputations: [string, OracleReputationState][];
+  recorded: string[];
+}
+
+/** Export the oracle ledger, cloned so later resolutions never leak into a captured snapshot. */
+export function exportOracleState(): OracleSnapshot {
+  return {
+    reputations: Array.from(ledger.entries(), ([id, s]): [string, OracleReputationState] => [id, { ...s }]),
+    recorded: [...recorded],
+  };
+}
+
+/** Restore a snapshot, REPLACING (not merging) current state. Idempotent. */
+export function importOracleState(snapshot: OracleSnapshot): void {
+  ledger.clear();
+  recorded.clear();
+  for (const [id, s] of snapshot.reputations) ledger.set(id, { ...s });
+  for (const key of snapshot.recorded) recorded.add(key);
 }

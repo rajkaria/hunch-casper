@@ -10,7 +10,7 @@
 
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
-import { isCasperNetwork } from "@/config/network";
+import { DEFAULT_NETWORK, isCasperNetwork } from "@/config/network";
 import { ensureDemoSeed } from "@/adapters/mock/demo-seed";
 import type { MarketCategory } from "@/core/types";
 
@@ -22,7 +22,9 @@ function isCategory(v: unknown): v is MarketCategory {
 
 export async function GET(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  const network = url.searchParams.get("network");
+  // Missing ⇒ the configured default; present-but-invalid stays a 400 (a typo'd network should
+  // fail loudly, not silently serve the wrong catalogue).
+  const network = url.searchParams.get("network") ?? DEFAULT_NETWORK;
   if (!isCasperNetwork(network)) {
     return NextResponse.json({ error: "network must be 'testnet' or 'mainnet'" }, { status: 400 });
   }

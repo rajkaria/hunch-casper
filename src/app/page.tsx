@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { OnchainProofSection } from "@/components/onchain-proof-section";
 
 const AGENTS = [
   {
@@ -107,7 +108,7 @@ const TRUST = [
 const PRIMITIVES = [
   ["x402 Micropayments", "The settlement rail for every bet an agent places — a real HTTP-402 handshake with a payer-bound proof."],
   ["MCP Server", "How agents discover markets, read odds, quote, and place bets — the same public surface the Prophets use."],
-  ["CSPR.click Agent Skill", "Wallet creation and signing for the swarm and for humans betting alongside it."],
+  ["Wallet UX (CSPR.click-ready)", "A mock wallet with an honest demo pill today — the CSPR.click drop-in is the first post-hackathon integration. Everything else on this page is live."],
   ["CSPR.cloud APIs", "The live chain-data feeds Genesis reads to open markets and the Arbiter reads to resolve them."],
   ["Odra Framework", "The market, vault, and oracle-reputation contracts — all original Rust, all covered by the gate."],
   ["drand Beacon", "The public randomness that decides The Flip — provably fair, verifiable by anyone."],
@@ -293,6 +294,9 @@ export default function Home() {
           ))}
         </div>
       </section>
+
+      {/* On-chain proof — real contract packages + tx receipts (hidden until env wires them) */}
+      <OnchainProofSection />
 
       {/* CTA */}
       <section className="border-t border-border">

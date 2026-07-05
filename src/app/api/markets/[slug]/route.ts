@@ -7,7 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
-import { isCasperNetwork } from "@/config/network";
+import { DEFAULT_NETWORK, isCasperNetwork } from "@/config/network";
 
 export async function GET(
   req: Request,
@@ -15,7 +15,8 @@ export async function GET(
 ): Promise<Response> {
   const { slug } = await ctx.params;
   const url = new URL(req.url);
-  const network = url.searchParams.get("network");
+  // Same contract as the list route: missing ⇒ DEFAULT_NETWORK, invalid ⇒ 400.
+  const network = url.searchParams.get("network") ?? DEFAULT_NETWORK;
   if (!isCasperNetwork(network)) {
     return NextResponse.json({ error: "network must be 'testnet' or 'mainnet'" }, { status: 400 });
   }

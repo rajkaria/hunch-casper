@@ -12,11 +12,13 @@ import { createContainer } from "@/lib/container";
 import { computeAgentLeaderboard } from "@/core/agent-leaderboard";
 import { isCasperNetwork, DEFAULT_NETWORK } from "@/config/network";
 import { ensureDemoSeed } from "@/adapters/mock/demo-seed";
+import { hydrateEconomyState } from "@/adapters/persist/economy-state";
 
 export async function GET(req: Request): Promise<Response> {
+  await hydrateEconomyState(); // restore persisted boards BEFORE the demo-seed decision (no-op unconfigured)
   const param = new URL(req.url).searchParams.get("network");
   const network = isCasperNetwork(param) ? param : DEFAULT_NETWORK;
-  ensureDemoSeed(network); // populate the boards on a cold instance (no-op in test/real mode)
+  ensureDemoSeed(network); // populate the boards on a cold instance (no-op in test/real, or after hydration)
   const container = createContainer(network);
 
   const agentPnl = computeAgentLeaderboard(await container.store.settledEntries(network));

@@ -17,7 +17,7 @@ import type { Market, MarketStatus } from "@/core/types";
 import type { RecordBetInput, SettledEntry, SettlementRecord } from "@/ports/market-store";
 import { isCasperNetwork } from "@/config/network";
 
-interface LedgerEntry {
+export interface LedgerEntry {
   market: Market;
   /** bettor -> outcomeKey -> motes. */
   stakes: Record<string, Record<string, string>>;
@@ -176,4 +176,20 @@ export function ledgerSettledEntries(network?: "testnet" | "mainnet"): SettledEn
 /** Test-only: clear all in-process settlement state so cases don't contaminate each other. */
 export function __resetLedger(): void {
   ledger.clear();
+}
+
+/** JSON-safe snapshot of the FULL settlement state (Map → array of entries) for KV persistence. */
+export interface SettlementSnapshot {
+  entries: [string, LedgerEntry][];
+}
+
+/** Export the full ledger, deep-cloned so later mutations never leak into a captured snapshot. */
+export function exportSettlementState(): SettlementSnapshot {
+  return { entries: structuredClone(Array.from(ledger.entries())) };
+}
+
+/** Restore a snapshot, REPLACING (not merging) current state. Idempotent. */
+export function importSettlementState(snapshot: SettlementSnapshot): void {
+  ledger.clear();
+  for (const [marketId, entry] of structuredClone(snapshot.entries)) ledger.set(marketId, entry);
 }
