@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { motesToCspr } from "@/core/types";
 import { PROPHETS } from "@/core/prophet-strategies";
+import { SWARM_REFRESH_EVENT } from "@/components/swarm-triggers";
 
 interface AgentPnl {
   agent: string;
@@ -70,9 +71,12 @@ export function AgentLeaderboard() {
         });
     load();
     const timer = setInterval(load, 5000);
+    const onRefresh = () => load();
+    window.addEventListener(SWARM_REFRESH_EVENT, onRefresh);
     return () => {
       active = false;
       clearInterval(timer);
+      window.removeEventListener(SWARM_REFRESH_EVENT, onRefresh);
     };
   }, []);
 
@@ -80,7 +84,8 @@ export function AgentLeaderboard() {
     <div className="grid gap-6 sm:grid-cols-2">
       {/* Agent PnL */}
       <div>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Agent PnL</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Agent PnL</h2>
+        <p className="mb-3 mt-0.5 text-[11px] text-muted">Realized PnL · all settled markets</p>
         {status === "loading" ? (
           <BoardSkeleton />
         ) : status === "error" && agentPnl.length === 0 ? (
@@ -116,7 +121,8 @@ export function AgentLeaderboard() {
 
       {/* Oracle accuracy */}
       <div>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">Oracle accuracy</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Oracle accuracy</h2>
+        <p className="mb-3 mt-0.5 text-[11px] text-muted">Accuracy · all on-chain resolutions</p>
         {status === "loading" ? (
           <BoardSkeleton />
         ) : status === "error" && oracle.length === 0 ? (

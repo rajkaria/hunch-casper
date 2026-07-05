@@ -12,6 +12,14 @@ export interface OracleReading {
   /** Plain-English rationale (LLM-authored, advisory — never the money authority). */
   rationale: string;
   observedAtIso: string;
+  /**
+   * Whether this reading was later confirmed accurate against ground truth. Undefined ⇒ treated as
+   * accurate (the deterministic reader agrees with reality). The mock marks a deterministic minority
+   * of readings inaccurate so the Arbiter's reputation moves BOTH ways — the RWA-oracle thesis has
+   * real, two-sided risk (a wrong call drops accuracy, and `arbiter-accuracy-95` can resolve NO).
+   * The real adapter sets this from a dispute/confirmation layer.
+   */
+  accurate?: boolean;
 }
 
 export interface OracleReputation {

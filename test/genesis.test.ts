@@ -32,6 +32,17 @@ describe("Genesis market maker", () => {
     expect(definitionFromTrigger(trigger, "framing copy")).toEqual(def);
   });
 
+  it("rotates through ≥2 distinct market shapes (direction varies, not just the metric)", () => {
+    const shapes = [0, 1, 2, 3].map((seq) => {
+      const def = definitionFromTrigger({ ...trigger, seq }, "");
+      return def.resolver.comparator;
+    });
+    // At least one "hold/break above" (gte) and one "fall/dip below" (lte) — Genesis isn't templated.
+    expect(shapes).toContain("gte");
+    expect(shapes).toContain("lte");
+    expect(new Set(shapes).size).toBeGreaterThanOrEqual(2);
+  });
+
   it("creates a market that is instantly live in the store and bettable", async () => {
     const container = createContainer("testnet");
     const market = await runGenesis(container, trigger);

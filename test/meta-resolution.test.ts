@@ -4,8 +4,9 @@ import type { EconomyBoards } from "@/core/meta-resolution";
 import type { AgentPnl } from "@/core/agent-leaderboard";
 import type { ResolverBinding } from "@/core/types";
 
-/** Minimal ranked board entry (only the fields the resolver reads). */
-function pnl(agent: string, realizedPnlMotes: string): AgentPnl {
+/** Minimal ranked board entry (only the fields the resolver reads). `settledCount` defaults to 2
+ *  so a candidate clears the META_MIN_SETTLED participation floor unless a test says otherwise. */
+function pnl(agent: string, realizedPnlMotes: string, settledCount = 2): AgentPnl {
   return {
     agent,
     name: agent.slice("agent:".length),
@@ -13,7 +14,7 @@ function pnl(agent: string, realizedPnlMotes: string): AgentPnl {
     returnedMotes: "0",
     realizedPnlMotes,
     roiBps: 0,
-    settledCount: 1,
+    settledCount,
     wins: 0,
   };
 }
@@ -57,6 +58,24 @@ describe("resolveMetaMarket — prophet_pnl", () => {
 
   it("voids (null) when no candidate has any settled activity", () => {
     const boards: EconomyBoards = { agentPnl: [pnl("agent:someoneelse", "5")], arbiterAccuracyPct: 96 };
+    expect(resolveMetaMarket(PROPHET_RACE, outcomes, boards)).toBeNull();
+  });
+
+  it("skips a candidate below the participation floor and crowns the next qualifying one", () => {
+    const boards: EconomyBoards = {
+      // value tops the raw PnL board but on only ONE settled market — a single manipulated pool
+      // could have handed it that. The floor skips it; momentum (2 settled) wins instead.
+      agentPnl: [pnl("agent:value", "99", 1), pnl("agent:momentum", "4", 2)],
+      arbiterAccuracyPct: 96,
+    };
+    expect(resolveMetaMarket(PROPHET_RACE, outcomes, boards)).toBe("momentum");
+  });
+
+  it("voids (null) when every candidate is below the participation floor", () => {
+    const boards: EconomyBoards = {
+      agentPnl: [pnl("agent:value", "99", 1), pnl("agent:momentum", "4", 1)],
+      arbiterAccuracyPct: 96,
+    };
     expect(resolveMetaMarket(PROPHET_RACE, outcomes, boards)).toBeNull();
   });
 });

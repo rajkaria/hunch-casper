@@ -25,6 +25,22 @@ Full spec & sprint plan: [`docs/BUILD_SPEC.md`](./docs/BUILD_SPEC.md).
 - **Deterministic data.** Seed pools and deadlines are fixed literals so tests don't drift on the
   wall clock and demos reproduce.
 
+## Economy invariants (keep the self-scoring board honest)
+- **The Prophet fleet never bets meta-markets.** `runProphetFleet` filters out `category === "meta"`.
+  Meta-markets (`prophet_pnl`, `arbiter_accuracy_pct`) resolve against the Prophet PnL / oracle
+  boards, so letting the fleet bet them would let their bets contaminate the board that scores them.
+  Only humans + external agents bet meta-markets.
+- **A `prophet_pnl` meta-market only crowns a Prophet with ≥ `META_MIN_SETTLED` settled markets**
+  (`core/meta-resolution.ts`) — a participation floor so a single manipulated pool can't hand a
+  chosen Prophet the win. Combined with the weekly window, it bounds oracle-manipulation of the
+  self-scoring board.
+- **The Arbiter's accuracy is two-sided.** The mock oracle marks a deterministic minority of external
+  reads inaccurate, so a wrong call genuinely lowers reputation and `arbiter-accuracy-95` can resolve
+  NO. Meta-markets resolve from board math and are accurate by construction.
+- **Real-mode agent x402 is opt-in.** In `CASPER_CHAIN_MODE=real` the mock PaymentPort's proof
+  verification is nonce-match only, so `agentBet` rejects unless `CASPER_REAL_AGENT_X402=true` — the
+  mock-vs-real mismatch is explicit and safe-by-default, never a silent operator-funded gap.
+
 ## Green gate (before every commit)
 `pnpm typecheck && pnpm lint && pnpm test && pnpm build` — all green. `tsc` also typechecks test
 files, so re-run the full gate after the last edit.

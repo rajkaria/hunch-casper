@@ -11,6 +11,27 @@ Built for the **Casper Agentic Buildathon 2026** (Innovation Track). Live at
 > repository is original and newly written for this buildathon** — the Odra/Rust contracts, the
 > Casper adapter, the agent swarm, and this UI.
 
+## Demo
+
+- **Live:** [`casper.playhunch.xyz`](https://casper.playhunch.xyz) — open `/agents` and click **Run
+  the whole loop** to watch Genesis → Prophets → Arbiter move in one click.
+- **3-minute walkthrough:** _link added at submission_ — shot list in [`docs/DEMO_SCRIPT.md`](./docs/DEMO_SCRIPT.md).
+- **Where it's going:** [`VISION.md`](./VISION.md) — the long-term launch plan (RWA oracle, third-party
+  agents, grant ask).
+
+## The closed loop
+
+```mermaid
+flowchart LR
+  G[Genesis<br/>opens markets] --> P[The Prophets<br/>discover via MCP, bet via x402]
+  P --> V[The Vault<br/>Odra parimutuel escrow · pure math, no LLM]
+  V --> A[Arbiter<br/>resolves · on-chain reputation staked]
+  A --> B[(PnL + accuracy<br/>boards)]
+  B --> M[Meta-markets<br/>markets about the agents]
+  M --> P
+  A -. reputation .-> B
+```
+
 ## What it does
 
 Four autonomous agents run a live prediction-market economy on Casper:
@@ -38,9 +59,12 @@ Prophets can bet on too — a recursive economy that never sleeps.
 
 ## Testnet & mainnet
 
-The full catalogue deploys to **both** Casper Testnet (the judged surface + 24/7 agent economy)
-and Mainnet (shipped proof), served by the same code. Flip the **Testnet ⇄ Mainnet** toggle in the
-header. Mainnet carries bet caps and an unaudited-build disclosure.
+The full catalogue targets **both** Casper Testnet (the judged surface + 24/7 agent economy) and
+Mainnet — the **same code, one build**, flipped by the **Testnet ⇄ Mainnet** toggle in the header
+(the deploy manifest is byte-identical across networks). Mainnet carries bet caps and an
+unaudited-build disclosure. The testnet contract deploy + address wiring is a credential-gated ops
+step (see [`contracts/DEPLOY.md`](./contracts/DEPLOY.md)); until it runs, the app serves the
+deterministic mock adapter so CI and the demo need zero secrets.
 
 ## Architecture
 
@@ -82,8 +106,15 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build
 
 ## Status
 
-**Sprint S0 — Foundation.** Scaffold, network config + toggle, ports & mock adapters, seed
-catalogue, landing + `/markets`, tests, and CI are in place. Roadmap: `docs/BUILD_SPEC.md`.
+**S3–S12 shipped — the self-running economy is live.** A 16-market catalogue across four
+categories; four autonomous agent roles (Genesis market-maker, four Prophet bettors, the Arbiter
+oracle with on-chain reputation, and the Odra Vault); the **x402 + MCP** public agent rail; the
+Odra **MarketFactory / ParimutuelMarket / OracleRegistry** contracts; and the **Testnet ⇄ Mainnet**
+toggle end-to-end. 500+ TS tests + 22 OdraVM contract tests, green gate each sprint
+(`typecheck / lint / test / build`), GitHub CI green. Remaining to fully launch is credential-gated
+ops (mint the real testnet tx, wire addresses) + the submission pack — see
+[`docs/BUILD_SPEC.md`](./docs/BUILD_SPEC.md) for the full roadmap and [`VISION.md`](./VISION.md) for
+what comes after the hackathon.
 
 ## License
 

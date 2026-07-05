@@ -2,19 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ActivityFeed } from "@/components/activity-feed";
 import { AgentLeaderboard } from "@/components/agent-leaderboard";
+import { SwarmTriggers } from "@/components/swarm-triggers";
 
 export const metadata: Metadata = {
   title: "The swarm",
   description:
     "The live agent dashboard — Genesis opens markets, the Prophets bet against each other via x402, and the Arbiter resolves them, updating its on-chain reputation. The boards are the economy scoring itself.",
 };
-
-const ENDPOINTS = [
-  ["Genesis", "Opens a market from a CSPR.cloud signal.", "POST /api/agent/genesis/run"],
-  ["The Prophets", "Sends the four-strategy fleet at one market.", "POST /api/agent/prophets/run"],
-  ["Arbiter", "Resolves matured markets + updates reputation.", "POST /api/agent/arbiter/run"],
-  ["The tick", "Runs the whole loop, unattended, once.", "GET /api/agent/tick"],
-];
 
 export default function AgentsPage() {
   return (
@@ -62,24 +56,15 @@ export default function AgentsPage() {
           Trigger the swarm
         </h2>
         <p className="mb-4 max-w-2xl text-sm text-muted">
-          The economy runs on a schedule, but each stage is a public endpoint (gated by a cron
-          secret in real mode). See the{" "}
+          The economy runs on a schedule — but you don’t have to wait. Click any stage to run it now
+          and watch the feed + boards above update (endpoints are cron-secret-gated in real mode).
+          See the{" "}
           <Link href="/docs#api" className="text-foreground underline decoration-border underline-offset-4 hover:decoration-accent">
             REST API
           </Link>{" "}
           for full request and response shapes.
         </p>
-        <div className="flex flex-col gap-3">
-          {ENDPOINTS.map(([name, body, route]) => (
-            <div key={name} className="card flex items-center justify-between gap-4 p-5">
-              <div>
-                <div className="text-sm font-semibold">{name}</div>
-                <div className="text-sm text-muted">{body}</div>
-              </div>
-              <span className="chip shrink-0 px-2.5 py-1 font-mono text-[11px] text-muted">{route}</span>
-            </div>
-          ))}
-        </div>
+        <SwarmTriggers />
       </div>
     </main>
   );

@@ -24,6 +24,15 @@ export interface EconomyBoards {
 const AGENT_PREFIX = "agent:";
 
 /**
+ * A Prophet must have settled at least this many markets before it can WIN a `prophet_pnl`
+ * meta-market. This bounds the classic oracle-manipulation attack on the self-scoring board: an
+ * external bettor moving a single thin pool cannot hand a chosen Prophet the top slot off one
+ * market. Combined with the weekly window and the fact that Prophets never bet meta-markets, the
+ * board that scores the agents stays hard to game.
+ */
+export const META_MIN_SETTLED = 2;
+
+/**
  * Decide a meta-market's winning outcome from the boards, or `null` to void (refund) when the
  * board can't decide (e.g. no Prophet has any settled activity yet).
  *
@@ -45,9 +54,13 @@ export function resolveMetaMarket(
       // semantics ("which Prophet tops the board"). Consistent with the board by construction.
       const candidates = new Set(outcomeKeys.map((k) => `${AGENT_PREFIX}${k}`));
       for (const agent of boards.agentPnl) {
-        if (candidates.has(agent.agent)) return agent.agent.slice(AGENT_PREFIX.length);
+        if (!candidates.has(agent.agent)) continue;
+        // Participation floor: a Prophet crowned off fewer than META_MIN_SETTLED markets could have
+        // been handed the win by a single manipulated pool — skip it and keep walking the board.
+        if (agent.settledCount < META_MIN_SETTLED) continue;
+        return agent.agent.slice(AGENT_PREFIX.length);
       }
-      return null; // no candidate has any settled activity yet → void/refund
+      return null; // no candidate cleared the participation floor yet → void/refund
     }
     case "arbiter_accuracy_pct": {
       const target = Number(resolver.target ?? "0");

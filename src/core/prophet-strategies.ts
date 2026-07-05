@@ -70,7 +70,13 @@ export function decide(
   switch (strategy) {
     case "momentum": {
       const pick = byProb[0];
-      return { outcomeKey: pick.outcomeKey, amountMotes, reason: `${label(market, pick.outcomeKey)} is the favourite — riding the crowd.` };
+      // Conviction sizing: when the favourite is strong (> 70%), Momentum backs it HARDER (2×).
+      // This is what separates Momentum from a flat bet — and from the other strategies — on
+      // lopsided binaries where the raw outcome pick would otherwise coincide.
+      const conviction = pick.impliedProbability > 0.7 ? 2n : 1n;
+      const staked = (BigInt(amountMotes) * conviction).toString();
+      const size = conviction === 2n ? " Doubling down — the crowd is decisive." : "";
+      return { outcomeKey: pick.outcomeKey, amountMotes: staked, reason: `${label(market, pick.outcomeKey)} is the favourite — riding the crowd.${size}` };
     }
     case "contrarian": {
       const pick = byProb[byProb.length - 1];
@@ -80,8 +86,15 @@ export function decide(
       // Best payout multiple among plausible outcomes (implied prob ≥ 15%); fall back to favourite.
       const plausible = odds.filter((o) => o.impliedProbability >= 0.15);
       const pool = plausible.length > 0 ? plausible : odds;
-      const pick = [...pool].sort((a, b) => b.payoutMultiple - a.payoutMultiple)[0];
-      return { outcomeKey: pick.outcomeKey, amountMotes, reason: `${label(market, pick.outcomeKey)} is under-priced at ${pick.payoutMultiple.toFixed(2)}× — taking the value.` };
+      const best = [...pool].sort((a, b) => b.payoutMultiple - a.payoutMultiple)[0];
+      // Only chase the longshot if it actually pays for the risk (≥ 1.8×). Otherwise there's no
+      // real edge, so Value takes the favourite — this stops it from rubber-stamping Contrarian on
+      // near-even binaries, keeping the four strategies genuinely distinct.
+      const pick = best.payoutMultiple >= 1.8 ? best : byProb[0];
+      const why = pick === best
+        ? `${label(market, pick.outcomeKey)} is under-priced at ${pick.payoutMultiple.toFixed(2)}× — taking the value.`
+        : `no outcome pays enough for the risk — ${label(market, pick.outcomeKey)} is the value-safe favourite.`;
+      return { outcomeKey: pick.outcomeKey, amountMotes, reason: why };
     }
     case "chaos": {
       const pick = market.outcomes[hash(`${market.id}:${seq}`) % market.outcomes.length];

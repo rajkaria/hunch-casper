@@ -40,6 +40,12 @@ interface Decision {
   rationale: string;
   /** Whether this was a meta-market resolved from the economy's own state. */
   meta: boolean;
+  /**
+   * Whether the call was accurate against ground truth — recorded on the Arbiter's reputation so a
+   * wrong external read genuinely costs it accuracy. Meta-markets settle deterministically from the
+   * boards (no external datum to be wrong about) so they are accurate by construction.
+   */
+  accurate: boolean;
 }
 
 /** Decide a market's outcome: internal meta-markets read the boards; everything else the oracle. */
@@ -52,10 +58,16 @@ async function decide(container: Container, market: Market): Promise<Decision> {
       winningOutcomeKey: key ?? null,
       rationale: def.resolver.description,
       meta: true,
+      accurate: true, // deterministic board math — nothing external to be wrong about
     };
   }
   const reading = await container.oracle.read(market.id);
-  return { winningOutcomeKey: reading.winningOutcomeKey, rationale: reading.rationale, meta: false };
+  return {
+    winningOutcomeKey: reading.winningOutcomeKey,
+    rationale: reading.rationale,
+    meta: false,
+    accurate: reading.accurate ?? true,
+  };
 }
 
 /**
@@ -71,7 +83,7 @@ export async function resolveMarket(container: Container, slug: string): Promise
   const existing = await container.store.settlementFor(market.id);
   if (existing) return null;
 
-  const { winningOutcomeKey, rationale, meta } = await decide(container, market);
+  const { winningOutcomeKey, rationale, meta, accurate } = await decide(container, market);
 
   // Post the resolution on-chain. A void (null) has no winning outcome → no on-chain resolve tx
   // (the vault's `void()` path is a distinct call; off-chain we still refund via the engine).
@@ -90,9 +102,11 @@ export async function resolveMarket(container: Container, slug: string): Promise
   // Settle off-chain through the pure engine — the exact numbers the on-chain claim() mirrors.
   await container.store.settle(market.id, winningOutcomeKey);
 
-  // Record the resolution against the Arbiter's reputation. The deterministic reader read the data
-  // correctly → accurate; a dispute layer could later revise a contested call.
-  await container.oracle.recordResolution(ARBITER_ID, market.id, true);
+  // Record the resolution against the Arbiter's reputation. External reads can be wrong (the mock
+  // marks a deterministic minority inaccurate), so a bad call genuinely costs accuracy — the
+  // reputation has two-sided teeth. Meta-markets resolve from board math and are accurate by
+  // construction. A dispute layer could later revise a contested call.
+  await container.oracle.recordResolution(ARBITER_ID, market.id, accurate);
 
   const label = winningOutcomeKey
     ? market.outcomes.find((o) => o.key === winningOutcomeKey)?.label ?? winningOutcomeKey

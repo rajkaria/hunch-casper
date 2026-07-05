@@ -11,12 +11,21 @@
  * x402 is the settlement rail for the whole agent economy: every agent bet is an HTTP payment
  * carrying a Casper proof. The mock PaymentPort settles deterministically for CI/demo; the real
  * adapter swaps in native Casper x402 (or an HTTP-402 + CSPR-transfer proof) behind the same port.
+ *
+ * ⚠️ REAL-MODE SAFETY: in `CASPER_CHAIN_MODE=real` the chain adapter submits a real, operator-funded
+ * on-chain bet, but the composition root still wires the MOCK PaymentPort — its `verify` is a
+ * nonce-match, NOT a check that the proof corresponds to an unspent CSPR transfer from the payer. So
+ * the real agent x402 rail is OFF by default in real mode: an operator must set
+ * `CASPER_REAL_AGENT_X402=true` to opt in, explicitly acknowledging that x402 verification is not yet
+ * trustless (a real on-chain-transfer-verifying PaymentPort + persisted `consumedPayments` is S4/S7
+ * work). This keeps the mock-vs-real mismatch explicit and safe-by-default rather than a silent gap.
  */
 
 import type { Container } from "@/lib/container";
 import type { X402PaymentProof, X402PaymentRequirement } from "@/ports/payment";
 import { previewPayoutMotes } from "@/core/market-payout";
 import { exceedsBetCap, isCasperNetwork, maxBetCspr } from "@/config/network";
+import { chainMode } from "@/config/chain-mode";
 import { motesToCspr } from "@/core/types";
 
 /**
@@ -62,6 +71,18 @@ const MOTES = /^\d+$/;
 /** Run the x402 bet exchange for an agent against a container's ports. */
 export async function agentBet(container: Container, input: AgentBetInput): Promise<AgentBetResult> {
   const { marketId, outcomeKey, amountMotes, bettor, paymentProof } = input;
+
+  // Real-mode safety (see file header): the mock PaymentPort's proof verification is nonce-match
+  // only, so a real, operator-funded on-chain bet must NOT be reachable via the agent x402 rail
+  // unless an operator explicitly opts in and accepts that x402 verification isn't yet trustless.
+  if (chainMode() === "real" && process.env.CASPER_REAL_AGENT_X402 !== "true") {
+    return {
+      status: "error",
+      error:
+        "real-mode x402 payment verification is not enabled — set CASPER_REAL_AGENT_X402=true to opt in (mock proof verification only)",
+      code: 503,
+    };
+  }
 
   if (typeof marketId !== "string" || marketId.length === 0) {
     return { status: "error", error: "marketId is required", code: 400 };

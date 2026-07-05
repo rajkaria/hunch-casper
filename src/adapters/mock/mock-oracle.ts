@@ -29,6 +29,17 @@ function stablePick(marketId: string, outcomeKeys: string[]): string {
   return outcomeKeys[n % outcomeKeys.length];
 }
 
+/**
+ * Deterministically decide whether a reading is accurate. A minority (~12%) of external readings
+ * are marked inaccurate — a stable function of the market id, so it's reproducible for tests/demos.
+ * This is what gives the Arbiter's reputation genuine two-sided risk: without it every resolution
+ * would be accurate, accuracy could only rise, and `arbiter-accuracy-95` could never resolve NO.
+ */
+export function isAccurateReading(marketId: string): boolean {
+  const hash = pseudoDeployHash(`accuracy:${marketId}`);
+  return parseInt(hash.slice(0, 8), 16) % 100 >= 12;
+}
+
 export function createMockOracle(): OraclePort {
   return {
     async read(marketId: string): Promise<OracleReading> {
@@ -42,6 +53,7 @@ export function createMockOracle(): OraclePort {
         winningOutcomeKey,
         rationale: `Resolved from observed data: "${winningOutcomeKey}" met the criterion.`,
         observedAtIso: "2026-08-01T00:00:00.000Z",
+        accurate: isAccurateReading(marketId),
       };
     },
     async reputationOf(oracleId: string): Promise<OracleReputation> {

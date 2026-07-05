@@ -59,13 +59,14 @@ describe("The full economy loop (the recursion runs unattended)", () => {
     const duelWinnerPnl = BigInt(board.find((a) => a.agent === `agent:${duel!.winningOutcomeKey}`)!.realizedPnlMotes);
     expect(duelWinnerPnl).toBe(momPnl > conPnl ? momPnl : conPnl);
 
-    // 5. arbiter-accuracy-95 settles against the Arbiter's live accuracy (seeded ≥ 95, only
-    //    accurate resolutions added → stays YES).
+    // 5. arbiter-accuracy-95 settles against the Arbiter's LIVE accuracy — the recursive twist. The
+    //    reader can miss (a deterministic minority of external reads are inaccurate), so accuracy is
+    //    two-sided; the meta-market must follow it, YES iff accuracy ≥ 95 at decision time.
+    const repAtDecision = await container.oracle.reputationOf("arbiter");
+    const expectYes = repAtDecision.accuracyBps / 100 >= 95;
     await resolveMarket(container, "arbiter-accuracy-95");
     const acc = await container.store.settlementFor("testnet:arbiter-accuracy-95");
-    const rep = await container.oracle.reputationOf("arbiter");
-    expect(rep.accuracyBps / 100).toBeGreaterThanOrEqual(95);
-    expect(acc!.winningOutcomeKey).toBe("yes");
+    expect(acc!.winningOutcomeKey).toBe(expectYes ? "yes" : "no");
   });
 
   it("runEconomyTick advances the economy and returns both boards", async () => {
