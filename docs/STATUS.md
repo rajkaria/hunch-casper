@@ -5,9 +5,15 @@ _Resume point for the next session. Full plan: [`BUILD_SPEC.md`](./BUILD_SPEC.md
 **Updated:** 2026-07-05
 
 ## Live
-- **Repo:** https://github.com/rajkaria/hunch-casper (public, `main`)
-- **Deploy:** https://hunch-casper.vercel.app (Vercel prod, public 200) — Vercel team `rajkaria67-1831s-projects`, project `hunch-casper`
+- **Repo:** https://github.com/rajkaria/hunch-casper (public, `main` @ `eeedf52`)
+- **Deploy:** https://hunch-casper.vercel.app (Vercel prod, public 200) — Vercel team `rajkaria67-1831s-projects`, project `hunch-casper` (CLI authed+linked via `.vercel/`)
 - **Domain:** `casper.playhunch.xyz` **attached on Vercel** (2026-07-05). No main-Hunch-repo change needed.
+- **⛓️ TESTNET CONTRACTS DEPLOYED (2026-07-05)** via `contracts/bin/cli.rs` — real on-chain txs, in README "On-chain proof" table:
+  - MarketFactory pkg `hash-7f63a93187d4aa3ae7629ce1b15fcf49197d86cda7985ebfcb8a8a494f43d777`
+  - OracleRegistry pkg `hash-269834fd371596eacd0ff72c29cc45a4c175601185f33b7583a157bcf80c6282` (Arbiter registered on-chain)
+  - ParimutuelMarket (vault) pkg `hash-c6a1afd3208ffe878802d8df71665c4b70b4365b70c5e6d87dec646090964529` (sample coin-flip, registered in factory)
+- **Vercel prod envs SET (2026-07-05):** `NEXT_PUBLIC_TESTNET_MARKET_FACTORY` / `_ORACLE_REGISTRY` / `_VAULT` (the 3 pkg hashes above, `hash-` prefixed). **Site still MOCK mode** — `CASPER_CHAIN_MODE` NOT set (so the rich demo seed stays on; real mode would disable it). Adapter (`real-chain.ts:105`) strips `hash-`/`contract-package-`/`contract-` prefixes, so raw hex also works.
+- **⚠️ DECISION (recommended): keep the judged site in MOCK mode.** Real mode disables the cold-start demo seed (empty `/agents` boards by design), single-custodians + caps betting, and needs the funded key in Vercel. The deploy txs above + one optional real bet (run locally with the key via CLI or `next start`) are the on-chain proof — no need to degrade the live demo.
 
 ## Current state — S3–S13 DONE + green (Phase 1 core + Phase 2 agent economy + Phase 3 mainnet + polish + judge loop, loop closed)
 
