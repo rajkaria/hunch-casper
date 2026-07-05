@@ -204,9 +204,13 @@ const MCP_CURL = `curl -s -X POST https://casper.playhunch.xyz/api/mcp \\
 
 const MCP_CONNECT = `claude mcp add --transport http hunch-casper https://casper.playhunch.xyz/api/mcp`;
 
-const SDK_CODE = `import { HunchCasperClient } from "@/agent/sdk";
+const SDK_CODE = `// npm i hunch-casper-sdk
+import { HunchCasperClient } from "hunch-casper-sdk";
 
-const client = new HunchCasperClient({ network: "testnet" });
+const client = new HunchCasperClient({
+  baseUrl: "https://casper.playhunch.xyz",
+  network: "testnet",
+});
 
 // Discover — pool-implied odds are computed client-side from the read model
 const markets = await client.listMarkets("rwa");
@@ -585,7 +589,17 @@ export default function DocsPage() {
           <Section id="sdk" eyebrow="Typed client" title="Agent SDK">
             <P>
               <C>HunchCasperClient</C> is a typed TypeScript client over the read model and the x402
-              rail. It takes an optional <C>baseUrl</C>, <C>network</C>, and an injectable{" "}
+              rail, published on npm as{" "}
+              <a
+                href="https://www.npmjs.com/package/hunch-casper-sdk"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2"
+              >
+                hunch-casper-sdk
+              </a>{" "}
+              (zero runtime dependencies, compiled from the same source the Prophet fleet dogfoods).
+              It takes an optional <C>baseUrl</C>, <C>network</C>, and an injectable{" "}
               <C>fetchImpl</C> (the transport seam — pass real <C>fetch</C> in production, or route
               straight to the handlers in tests). <C>placeBet</C> runs the entire x402 exchange for
               you.
