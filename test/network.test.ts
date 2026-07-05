@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   CASPER_NETWORKS,
   NETWORKS,
+  exceedsBetCap,
   explorerTransactionUrl,
   isCasperNetwork,
+  maxBetCspr,
 } from "@/config/network";
 
 describe("network config", () => {
@@ -33,5 +35,19 @@ describe("network config", () => {
     expect(isCasperNetwork("mainnet")).toBe(true);
     expect(isCasperNetwork("l2")).toBe(false);
     expect(isCasperNetwork(null)).toBe(false);
+  });
+
+  it("exposes the mainnet cap as a shared helper (one source for every surface)", () => {
+    expect(maxBetCspr("testnet")).toBeNull();
+    expect(maxBetCspr("mainnet")).toBe(NETWORKS.mainnet.guardrails.maxBetCspr);
+  });
+
+  it("enforces the per-bet cap only on mainnet, at the boundary", () => {
+    const cap = NETWORKS.mainnet.guardrails.maxBetCspr!;
+    expect(exceedsBetCap("mainnet", cap)).toBe(false); // exactly at the cap is allowed
+    expect(exceedsBetCap("mainnet", cap + 0.0001)).toBe(true);
+    expect(exceedsBetCap("mainnet", cap * 4)).toBe(true);
+    // Testnet is uncapped — no amount is ever over the cap.
+    expect(exceedsBetCap("testnet", cap * 1000)).toBe(false);
   });
 });

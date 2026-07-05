@@ -16,7 +16,7 @@
 import type { Container } from "@/lib/container";
 import type { X402PaymentProof, X402PaymentRequirement } from "@/ports/payment";
 import { previewPayoutMotes } from "@/core/market-payout";
-import { getNetworkConfig, isCasperNetwork } from "@/config/network";
+import { exceedsBetCap, isCasperNetwork, maxBetCspr } from "@/config/network";
 import { motesToCspr } from "@/core/types";
 
 /**
@@ -78,9 +78,12 @@ export async function agentBet(container: Container, input: AgentBetInput): Prom
 
   // Mainnet guardrail — the same real-money cap the human bet route enforces. Agents must not be
   // able to route around it via the x402 rail.
-  const cap = getNetworkConfig(container.network).guardrails.maxBetCspr;
-  if (cap != null && motesToCspr(amountMotes) > cap) {
-    return { status: "error", error: `bet exceeds the ${container.network} cap of ${cap} CSPR`, code: 400 };
+  if (exceedsBetCap(container.network, motesToCspr(amountMotes))) {
+    return {
+      status: "error",
+      error: `bet exceeds the ${container.network} cap of ${maxBetCspr(container.network)} CSPR`,
+      code: 400,
+    };
   }
 
   // A `network:slug` marketId must be on this container's network — reject a cross-network id

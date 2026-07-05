@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Market } from "@/core/types";
 import { csprToMotes, motesToCspr } from "@/core/types";
 import { previewPayoutMotes } from "@/core/market-payout";
+import { exceedsBetCap, maxBetCspr } from "@/config/network";
 import { useWallet } from "@/components/wallet-context";
 
 interface ChainResult {
@@ -111,6 +112,8 @@ export function BetPanel({ market }: { market: Market }) {
   }
 
   const amountValid = Number(amount) > 0 && Number.isFinite(Number(amount));
+  const betCap = maxBetCspr(market.network);
+  const overCap = amountValid && exceedsBetCap(market.network, Number(amount));
   const previewCspr =
     amountValid && outcomeKey
       ? motesToCspr(previewPayoutMotes(market.poolByOutcomeMotes, outcomeKey, csprToMotes(Number(amount)), market.feeBps))
@@ -155,14 +158,26 @@ export function BetPanel({ market }: { market: Market }) {
         <button
           type="button"
           onClick={placeBet}
-          disabled={betting || (connected && (!amountValid || !outcomeKey))}
+          disabled={betting || (connected && (!amountValid || !outcomeKey || overCap))}
           className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition-opacity disabled:opacity-40"
         >
           {betting ? "Placing…" : connected ? "Place bet" : "Connect wallet"}
         </button>
       </div>
 
-      {amountValid && outcomeKey && (
+      {betCap != null && (
+        <p className="mt-2 text-[11px] text-muted">
+          Mainnet is capped at <span className="text-foreground">{betCap} CSPR</span> per bet — an unaudited
+          hackathon build holding real value.
+        </p>
+      )}
+      {overCap && (
+        <p className="mt-1 text-xs text-down">
+          Over the {betCap} CSPR mainnet cap — lower the stake or switch to testnet.
+        </p>
+      )}
+
+      {amountValid && !overCap && outcomeKey && (
         <p className="mt-2 text-xs text-muted">
           If <span className="text-foreground">{market.outcomes.find((o) => o.key === outcomeKey)?.label ?? outcomeKey}</span>{" "}
           wins, this stake pays ~<span className="font-semibold text-up">{previewCspr.toFixed(2)} CSPR</span>{" "}

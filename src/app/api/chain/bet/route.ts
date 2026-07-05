@@ -8,7 +8,7 @@
 
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
-import { getNetworkConfig, isCasperNetwork } from "@/config/network";
+import { exceedsBetCap, isCasperNetwork, maxBetCspr } from "@/config/network";
 import { isSimulated } from "@/config/chain-mode";
 import { motesToCspr } from "@/core/types";
 
@@ -41,11 +41,9 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // Mainnet guardrail: fresh unaudited contracts hold real value, so bets are capped.
-  const cfg = getNetworkConfig(network);
-  const cap = cfg.guardrails.maxBetCspr;
-  if (cap != null && motesToCspr(amountMotes) > cap) {
+  if (exceedsBetCap(network, motesToCspr(amountMotes))) {
     return NextResponse.json(
-      { error: `bet exceeds the ${network} cap of ${cap} CSPR` },
+      { error: `bet exceeds the ${network} cap of ${maxBetCspr(network)} CSPR` },
       { status: 400 },
     );
   }

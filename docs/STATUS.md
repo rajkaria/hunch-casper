@@ -7,11 +7,11 @@ _Resume point for the next session. Full plan: [`BUILD_SPEC.md`](./BUILD_SPEC.md
 ## Live
 - **Repo:** https://github.com/rajkaria/hunch-casper (public, `main`)
 - **Deploy:** https://hunch-casper.vercel.app (Vercel prod, public 200) — Vercel team `rajkaria67-1831s-projects`, project `hunch-casper`
-- **Domain:** `casper.playhunch.xyz` **not yet attached** — user will connect the domain in the Vercel dashboard (TXT-verify if `playhunch.xyz` DNS is on a different Vercel team). No main-Hunch-repo change needed.
+- **Domain:** `casper.playhunch.xyz` **attached on Vercel** (2026-07-05). No main-Hunch-repo change needed.
 
-## Current state — S3–S10 DONE + green (Phase 1 core + Phase 2 agent economy, loop closed)
+## Current state — S3–S11 DONE + green (Phase 1 core + Phase 2 agent economy + Phase 3 mainnet, loop closed)
 
-**S3–S10 shipped** (tags `s3`…`s10`; 483 TS tests + 22 OdraVM tests; gate
+**S3–S11 shipped** (tags `s3`…`s11`; 493 TS tests + 22 OdraVM tests; gate
 `typecheck && lint && test && build` green each sprint; every sprint adversarially reviewed
 before commit and money-path findings fixed).
 
@@ -66,8 +66,36 @@ before commit and money-path findings fixed).
     `scripts/economy-loop.mjs` (POSTs the tick on an interval). Tighten the cron to `*/5 * * * *`
     on Pro.
 
-**Next: S11 — mainnet.** Deploy all contracts + full catalogue to mainnet; wire the network toggle
-end-to-end; mainnet caps + unaudited disclosure banner. Then S12 polish, S13–S14 judge loop + submit.
+- **S11 — Mainnet (Phase 3).** Same code, same contracts, second network — the toggle now flips
+  both networks live off one build:
+  - **Mainnet caps enforced on *every* surface.** The 25-CSPR per-bet cap is now a single shared
+    rule (`exceedsBetCap`/`maxBetCspr` in `src/config/network.ts`) used by the human bet route, the
+    agent x402 rail (`lib/agent-bet.ts`), **and** the trade panel — which surfaces the cap and
+    blocks over-cap stakes client-side (previously only a server 400). The unaudited-build banner
+    stays on mainnet.
+  - **Full-catalogue deploy manifest** (`core/deploy-manifest.ts` + `GET /api/deploy-plan?network=`):
+    the credential-free, address-free description of everything a network needs on-chain — both
+    singleton infra contracts (`MarketFactory` + `OracleRegistry`) + one `ParimutuelMarket` per
+    catalogue market (init/register args + house seed liquidity). The market plans are **byte-identical
+    across networks** (proven in `test/deploy-manifest.test.ts`) — the "same contracts, both networks"
+    identity behind the toggle. The catalogue stays the single source of truth for on-chain state; the
+    mainnet deploy is driven from this manifest.
+  - **Deploy CLI now stands up all THREE contracts.** `contracts/bin/cli.rs` deploys
+    `MarketFactory` + `OracleRegistry` (registering the deployer as the on-chain "Arbiter" oracle) +
+    the sample market (was factory + market only). Idempotent (`is_registered` guard, matches
+    `load_or_deploy`).
+  - **Mainnet runbook** (`contracts/DEPLOY.md` §6): fund a real-CSPR key → bootstrap singletons →
+    deploy the full catalogue from the manifest → wire `NEXT_PUBLIC_MAINNET_*` → optional
+    `NEXT_PUBLIC_DEFAULT_NETWORK=mainnet`. Caps + banner stay on. Fixed the stale `/deploy/<hash>`
+    explorer path → Casper-2.0 `/transaction/<hash>`; added `OracleRegistry` to the contract table.
+
+**Next: S12 — landing + dashboard + polish.** Landing page, live `/agents` dashboard, `/docs`,
+branding/logo/favicon, mobile responsive, loading/error states. Then S13–S14 judge loop + submit.
+
+**⚠️ S11 tail (credential-gated, human/ops):** the *actual* mainnet contract deploy needs a
+mainnet key funded with **real CSPR** — run `contracts/DEPLOY.md` §6, then set the
+`NEXT_PUBLIC_MAINNET_*` addresses + `CASPER_CHAIN_MODE=real` in Vercel. All S11 *code* (toggle
+wiring, caps on every surface, deploy manifest, all-contracts CLI, runbook) is DONE + green.
 
 ## Prior state — S2 (End-to-end thin slice) DONE, green
 
