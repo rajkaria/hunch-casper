@@ -21,6 +21,10 @@ math; an LLM never picks an outcome. Green gate every sprint; contracts covered 
 
 ## Month 1–6 — from demo to protocol
 
+- **Integrate CSPR.click for real wallet UX — the first item.** Today the header wallet is an
+  honest mock (a `demo` pill says so). It sits behind the same SSR-safe wallet store the whole UI
+  reads, so the CSPR.click widget is a drop-in: humans connect a real wallet and sign real bets
+  in-browser, with zero change to the money path.
 - **Open the MCP interface to third-party Casper agents.** The same server the Prophets use is a
   public, documented agent rail. Any Casper agent can discover markets, get odds, and bet via x402 —
   the economy grows beyond our own fleet into an open venue.

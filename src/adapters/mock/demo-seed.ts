@@ -108,7 +108,7 @@ function seedActivity(network: CasperNetwork): void {
   const at = (): number => (t += 34_000); // ~34s between actions
   const link = (seed: string) => {
     const deployHash = pseudoDeployHash(seed);
-    return { deployHash, explorerUrl: explorerTransactionUrl(network, deployHash) };
+    return { deployHash, explorerUrl: explorerTransactionUrl(network, deployHash), simulated: true };
   };
 
   for (const m of SEED) {
@@ -157,6 +157,18 @@ export function ensureDemoSeed(network: CasperNetwork = DEFAULT_NETWORK): void {
   if (!shouldSeed()) return;
   settleDemoMarkets(network);
   seedActivity(network);
+}
+
+/**
+ * Mark the demo seed as already applied — called when a persisted economy snapshot hydrates a
+ * fresh instance (see `adapters/persist/economy-state.ts`). The hydrated state IS the real recent
+ * history, so fabricating a second demo history on top would double-count the boards and duplicate
+ * the feed; flipping the guards makes every later `ensureDemoSeed` a no-op on this instance.
+ */
+export function markDemoSeeded(): void {
+  settledNetworks.add("testnet");
+  settledNetworks.add("mainnet");
+  activitySeeded = true;
 }
 
 /** Test-only: reset the seed guards so a suite can exercise the seeder in isolation. */

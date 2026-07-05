@@ -87,6 +87,27 @@ export interface BuildPlanOptions {
   gasMotes?: string;
 }
 
+/**
+ * Resolve which deployed `ParimutuelMarket` contract a market lives at. The full catalogue
+ * deploys one contract per market (S11 manifest), mapped by slug in `marketAddresses`
+ * (`NEXT_PUBLIC_*_MARKET_ADDRS`); markets not in the map fall back to the single vault address
+ * so a thin-slice deploy keeps working. Pure + offline-tested — a mis-routed bet is a money bug.
+ */
+export function resolveMarketContract(
+  marketId: string,
+  opts: { marketAddresses?: Record<string, string>; fallback?: string },
+): string {
+  const colon = marketId.indexOf(":");
+  const slug = colon >= 0 ? marketId.slice(colon + 1) : marketId;
+  const target = opts.marketAddresses?.[slug] ?? opts.fallback;
+  if (!target) {
+    throw new Error(
+      `no on-chain contract for market '${marketId}' — add it to NEXT_PUBLIC_*_MARKET_ADDRS or set NEXT_PUBLIC_*_VAULT`,
+    );
+  }
+  return target;
+}
+
 const DECIMAL = /^\d+$/;
 
 function assertPositiveMotes(label: string, motes: string): void {

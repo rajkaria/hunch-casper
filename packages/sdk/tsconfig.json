@@ -1,0 +1,20 @@
+{
+  // Standalone build of the SAME source the app ships (src/agent/sdk.ts + its import graph —
+  // pure, dependency-free modules only). `include` lists just the entry; tsc pulls the rest.
+  // No `paths` alias on purpose: the source uses relative imports so the emitted .js/.d.ts
+  // resolve for npm consumers. lib DOM + types node mirrors the app's ambient environment
+  // (fetch/btoa from DOM, Buffer/process from node).
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "../../src",
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["../../src/agent/sdk.ts"]
+}

@@ -15,6 +15,7 @@ import { computeOdds } from "@/core/parimutuel-odds";
 import { appendAction } from "@/adapters/mock/activity-log";
 import type { AgentAction } from "@/adapters/mock/activity-log";
 import type { X402PaymentProof } from "@/ports/payment";
+import { chainMode } from "@/config/chain-mode";
 
 /** Mock x402 settlement — form the payer-bound proof. Each round produces a distinct settlement id
  * (a real agent's CSPR transfer is naturally unique per payment). Real agents transfer to `payTo`. */
@@ -70,6 +71,7 @@ export async function runProphet(
     narration: narration || decision.reason,
     deployHash: placed.deployHash,
     explorerUrl: placed.explorerUrl,
+    simulated: chainMode() !== "real",
   });
 }
 

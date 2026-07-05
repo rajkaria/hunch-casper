@@ -84,6 +84,19 @@ NEXT_PUBLIC_TESTNET_VAULT=hash-<sample-market>
 
 The real `CasperChainPort` adapter (S2) reads these to place bets + resolve end-to-end.
 
+**Full-catalogue routing.** When you deploy one `ParimutuelMarket` per catalogue market (§6
+step 3), give the app the slug → package-hash map so each bet/resolve targets the market's OWN
+contract (unmapped slugs fall back to `_VAULT`):
+
+```bash
+# JSON object keyed by catalogue slug (slugs listed by /api/deploy-plan?network=testnet)
+NEXT_PUBLIC_TESTNET_MARKET_ADDRS={"the-flip":"hash-<...>","cspr-above-5c-aug1":"hash-<...>"}
+```
+
+**On-chain proof for judges.** Paste the deploy/bet/resolve tx hashes you just minted into
+`NEXT_PUBLIC_ONCHAIN_RECEIPTS` (see `.env.example`) — the landing page + docs render them as a
+"Live on Casper" section with real cspr.live links.
+
 ## 6. Mainnet — deploy the full catalogue (S11)
 
 Same code, same contracts, second network. The app's Testnet ⇄ Mainnet toggle already routes
@@ -126,6 +139,8 @@ Rust holds real value here — the cap + banner are the safety envelope, never r
    NEXT_PUBLIC_MAINNET_MARKET_FACTORY=hash-<factory>
    NEXT_PUBLIC_MAINNET_ORACLE_REGISTRY=hash-<oracle-registry>
    NEXT_PUBLIC_MAINNET_VAULT=hash-<a-deployed-market-package>
+   # per-market routing for the full catalogue (slug → package hash, JSON — see §5)
+   NEXT_PUBLIC_MAINNET_MARKET_ADDRS={"the-flip":"hash-<...>", ...}
    # optional: default the site to mainnet (the toggle still flips to testnet)
    # NEXT_PUBLIC_DEFAULT_NETWORK=mainnet
    ```

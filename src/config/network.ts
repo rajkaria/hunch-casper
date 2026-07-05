@@ -35,6 +35,12 @@ export interface NetworkConfig {
   /** Deployed contract addresses (populated as sprints land them on-chain). */
   contracts: ContractAddresses;
   /**
+   * Per-market deployed `ParimutuelMarket` package hashes (slug → `hash-<64hex>`), from the
+   * full-catalogue deploy manifest (`NEXT_PUBLIC_*_MARKET_ADDRS`, JSON). Markets not in the map
+   * fall back to `contracts.vault` so a single-contract thin-slice deploy keeps working.
+   */
+  marketAddresses: Record<string, string>;
+  /**
    * Real-money guardrails. Mainnet holds the full catalogue too, but bets are capped and
    * the UI carries an "unaudited hackathon build" disclosure. Testnet is unconstrained.
    */
@@ -60,6 +66,29 @@ function envAddr(key: string): string | undefined {
   return v && v.length > 0 ? v : undefined;
 }
 
+const CONTRACT_HASH = /^(hash-|contract-package-)?[0-9a-fA-F]{64}$/;
+
+/**
+ * Parse a `NEXT_PUBLIC_*_MARKET_ADDRS` value — a JSON object of catalogue slug → deployed
+ * `ParimutuelMarket` package hash. Defensive: unset/malformed JSON or non-hash values yield an
+ * empty/partial map rather than throwing (a bad ops env must never take the app down).
+ */
+export function parseMarketAddresses(raw: string | undefined): Record<string, string> {
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+  const out: Record<string, string> = {};
+  for (const [slug, hash] of Object.entries(parsed)) {
+    if (typeof hash === "string" && CONTRACT_HASH.test(hash)) out[slug] = hash;
+  }
+  return out;
+}
+
 export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
   testnet: {
     network: "testnet",
@@ -73,6 +102,7 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
       oracleRegistry: envAddr("NEXT_PUBLIC_TESTNET_ORACLE_REGISTRY"),
       vault: envAddr("NEXT_PUBLIC_TESTNET_VAULT"),
     },
+    marketAddresses: parseMarketAddresses(process.env.NEXT_PUBLIC_TESTNET_MARKET_ADDRS),
     guardrails: { maxBetCspr: null, showUnauditedBanner: false },
   },
   mainnet: {
@@ -87,6 +117,7 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
       oracleRegistry: envAddr("NEXT_PUBLIC_MAINNET_ORACLE_REGISTRY"),
       vault: envAddr("NEXT_PUBLIC_MAINNET_VAULT"),
     },
+    marketAddresses: parseMarketAddresses(process.env.NEXT_PUBLIC_MAINNET_MARKET_ADDRS),
     guardrails: { maxBetCspr: 25, showUnauditedBanner: true },
   },
 };

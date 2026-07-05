@@ -48,6 +48,7 @@ import { explorerTransactionUrl, getNetworkConfig } from "@/config/network";
 import {
   buildBetPlan,
   buildResolvePlan,
+  resolveMarketContract,
   type CasperCallArg,
   type CasperCallPlan,
 } from "./deploy-plan";
@@ -65,8 +66,10 @@ export interface RealChainOptions {
   bettorKey: string;
   /** Ed25519 secret key for the oracle's `resolve`. Falls back to `bettorKey` (single-key demo). */
   oracleKey?: string;
-  /** The `ParimutuelMarket` **package** hash the market lives at (`hash-<64hex>`). */
+  /** Fallback `ParimutuelMarket` **package** hash for markets not in `marketAddresses`. */
   marketPackageHash: string;
+  /** Per-market package hashes (catalogue slug → `hash-<64hex>`), from the deploy manifest. */
+  marketAddresses?: Record<string, string>;
   /** Filesystem path to Odra's `proxy_caller_with_return.wasm` (required for payable bets). */
   proxyWasmPath: string;
 }
@@ -75,20 +78,26 @@ export interface RealChainOptions {
 const BUNDLED_PROXY_WASM = "src/adapters/casper/resources/proxy_caller_with_return.wasm";
 
 /** Read the real adapter's options from the environment for a given network config. */
-export function realChainOptionsFromEnv(marketPackageHash: string | undefined): RealChainOptions {
+export function realChainOptionsFromEnv(
+  marketPackageHash: string | undefined,
+  marketAddresses?: Record<string, string>,
+): RealChainOptions {
   const bettorKey = process.env.CASPER_BETTOR_KEY;
   if (!bettorKey) {
     throw new CasperConfigError("CASPER_BETTOR_KEY is required to submit real Casper transactions");
   }
-  if (!marketPackageHash) {
-    throw new CasperConfigError("no market package hash configured for this network (set NEXT_PUBLIC_*_VAULT)");
+  if (!marketPackageHash && Object.keys(marketAddresses ?? {}).length === 0) {
+    throw new CasperConfigError(
+      "no market contracts configured for this network (set NEXT_PUBLIC_*_VAULT or NEXT_PUBLIC_*_MARKET_ADDRS)",
+    );
   }
   // The proxy wasm ships in-repo; CASPER_PROXY_WASM_PATH overrides it only if needed.
   const proxyWasmPath = process.env.CASPER_PROXY_WASM_PATH ?? join(process.cwd(), BUNDLED_PROXY_WASM);
   return {
     bettorKey,
     oracleKey: process.env.CASPER_ORACLE_KEY,
-    marketPackageHash,
+    marketPackageHash: marketPackageHash ?? "",
+    marketAddresses,
     proxyWasmPath,
   };
 }
@@ -146,6 +155,13 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
   const cfg = getNetworkConfig(network);
   const rpc = new RpcClient(new HttpHandler(cfg.nodeRpcUrl));
 
+  /** The deployed contract this market lives at — per-market map first, vault fallback. */
+  const contractFor = (marketId: string): string =>
+    resolveMarketContract(marketId, {
+      marketAddresses: opts.marketAddresses,
+      fallback: opts.marketPackageHash || undefined,
+    });
+
   async function submit(tx: Transaction, key: PrivateKey): Promise<DeployResult> {
     tx.sign(key);
     const res = await rpc.putTransaction(tx);
@@ -169,7 +185,7 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
      */
     async placeBet(input: PlaceBetInput): Promise<DeployResult> {
       const key = loadKey(opts.bettorKey);
-      const plan = buildBetPlan(input, { marketContract: opts.marketPackageHash });
+      const plan = buildBetPlan(input, { marketContract: contractFor(input.marketId) });
       const proxyArgs = buildBetProxyArgs(plan);
       const tx = new SessionBuilder()
         .from(key.publicKey)
@@ -184,7 +200,7 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
     /** Non-payable `resolve` → a direct package-targeting transaction, signed by the oracle key. */
     async resolveMarket(input: ResolveMarketInput): Promise<DeployResult> {
       const key = loadKey(opts.oracleKey ?? opts.bettorKey);
-      const plan = buildResolvePlan(input, { marketContract: opts.marketPackageHash });
+      const plan = buildResolvePlan(input, { marketContract: contractFor(input.marketId) });
       const tx = new ContractCallBuilder()
         .from(key.publicKey)
         .byPackageHash(toHexHash(plan.targetContract))

@@ -6,6 +6,7 @@
  */
 
 import { ensureDemoSeed } from "./demo-seed";
+import { fireEconomyPersistHook } from "@/adapters/persist/economy-persist-hook";
 
 export type AgentActionKind = "market_created" | "bet_placed" | "market_resolved";
 
@@ -23,6 +24,12 @@ export interface AgentAction {
   narration?: string;
   deployHash?: string;
   explorerUrl?: string;
+  /**
+   * Whether the deploy hash is simulated (mock chain / demo seed) rather than a real on-chain
+   * transaction. The feed renders simulated hashes with a "simulated" chip and never links them
+   * to the live explorer (a pseudo hash would land a judge on "transaction not found").
+   */
+  simulated?: boolean;
   /** Epoch ms the action was recorded — the feed renders it as relative time ("2m ago"). */
   ts: number;
 }
@@ -36,6 +43,7 @@ export function appendAction(action: Omit<AgentAction, "seq" | "ts"> & { ts?: nu
   const withSeq: AgentAction = { ...action, seq: counter++, ts: action.ts ?? Date.now() };
   log.unshift(withSeq);
   if (log.length > CAP) log.length = CAP;
+  fireEconomyPersistHook(); // snapshot to KV when configured (no-op otherwise) — see adapters/persist
   return withSeq;
 }
 
@@ -49,4 +57,24 @@ export function listActions(limit = 50): AgentAction[] {
 export function __resetActivity(): void {
   log.length = 0;
   counter = 0;
+}
+
+/** JSON-safe snapshot of the FULL feed state — the ring buffer AND the seq counter, so actions
+ * appended after a restore never collide with restored seqs. For KV persistence. */
+export interface ActivitySnapshot {
+  counter: number;
+  actions: AgentAction[];
+}
+
+/** Export the feed, cloned so later appends never leak into a captured snapshot. */
+export function exportActivityState(): ActivitySnapshot {
+  return { counter, actions: log.map((a) => ({ ...a })) };
+}
+
+/** Restore a snapshot, REPLACING (not merging) current state. Idempotent. */
+export function importActivityState(snapshot: ActivitySnapshot): void {
+  log.length = 0;
+  for (const a of snapshot.actions) log.push({ ...a });
+  if (log.length > CAP) log.length = CAP;
+  counter = snapshot.counter;
 }

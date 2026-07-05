@@ -20,6 +20,7 @@ import { listActions } from "@/adapters/mock/activity-log";
 import { isCasperNetwork, DEFAULT_NETWORK } from "@/config/network";
 import { chainMode } from "@/config/chain-mode";
 import type { CasperNetwork } from "@/config/network";
+import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
 
 function authorized(req: Request): boolean {
   const secret = process.env.CRON_SECRET ?? process.env.TICK_CRON_SECRET;
@@ -32,6 +33,9 @@ function authorized(req: Request): boolean {
 
 async function tick(network: CasperNetwork, seq: number, resolveSlugs?: string[]): Promise<Response> {
   const report = await runEconomyTick(createContainer(network), { seq, resolveSlugs });
+  // Await the KV flush: a serverless instance may freeze the moment the response returns, and the
+  // cron tick is the economy's heartbeat — its bets + resolutions must land before the freeze.
+  await persistEconomyState();
   return NextResponse.json({
     network,
     round: report.seq,
@@ -48,6 +52,7 @@ export async function GET(req: Request): Promise<Response> {
   if (!authorized(req)) {
     return NextResponse.json({ error: "unauthorized: the tick is gated by the cron secret" }, { status: 401 });
   }
+  await hydrateEconomyState(); // tick on top of the persisted economy, not a fresh instance's seed
   const param = new URL(req.url).searchParams.get("network");
   const network = isCasperNetwork(param) ? param : DEFAULT_NETWORK;
   return tick(network, listActions().length);
@@ -57,6 +62,7 @@ export async function POST(req: Request): Promise<Response> {
   if (!authorized(req)) {
     return NextResponse.json({ error: "unauthorized: the tick is gated by the cron secret" }, { status: 401 });
   }
+  await hydrateEconomyState(); // tick on top of the persisted economy, not a fresh instance's seed
   let body: Record<string, unknown> = {};
   try {
     body = (await req.json()) as Record<string, unknown>;
