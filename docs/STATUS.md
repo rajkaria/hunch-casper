@@ -15,7 +15,42 @@ _Resume point for the next session. Full plan: [`BUILD_SPEC.md`](./BUILD_SPEC.md
 - **Vercel prod envs SET (2026-07-05):** `NEXT_PUBLIC_TESTNET_MARKET_FACTORY` / `_ORACLE_REGISTRY` / `_VAULT` (the 3 pkg hashes above, `hash-` prefixed). **Site still MOCK mode** — `CASPER_CHAIN_MODE` NOT set (so the rich demo seed stays on; real mode would disable it). Adapter (`real-chain.ts:105`) strips `hash-`/`contract-package-`/`contract-` prefixes, so raw hex also works.
 - **⚠️ DECISION (recommended): keep the judged site in MOCK mode.** Real mode disables the cold-start demo seed (empty `/agents` boards by design), single-custodians + caps betting, and needs the funded key in Vercel. The deploy txs above + one optional real bet (run locally with the key via CLI or `next start`) are the on-chain proof — no need to degrade the live demo.
 
-## Current state — S3–S13 DONE + green (Phase 1 core + Phase 2 agent economy + Phase 3 mainnet + polish + judge loop, loop closed)
+## Current state — S3–S14 DONE + green
+
+- **S14 — "Best on Casper" hardening (14-item review fix pass, multi-agent).** A full judge-lens
+  review produced 14 findings; all fixed:
+  1. **Feed honesty** — `AgentAction.simulated` threaded through Prophets/Arbiter/Genesis/demo-seed;
+     the feed shows a `simulated` chip and never links pseudo hashes to cspr.live (real txs get an
+     `on-chain` chip + link).
+  2. **On-chain proof surface** — `src/config/onchain-proof.ts` + `<OnchainProofSection>` on the
+     landing page and `/docs#onchain`: deployed contract packages + tx receipts
+     (`NEXT_PUBLIC_ONCHAIN_RECEIPTS` JSON) render as real explorer links; hidden until wired.
+  3. **Per-market routing** — `NEXT_PUBLIC_*_MARKET_ADDRS` (slug→package hash JSON) routes each
+     real-mode bet/resolve to its own ParimutuelMarket (`resolveMarketContract`); vault = fallback.
+  4. **Live Genesis signals** — `adapters/casper/chain-signals.ts`: CSPR.cloud validators (keyed) →
+     keyless node-RPC block height → deterministic rotation; subtitles carry the true source label.
+  5. **Real x402 PaymentPort** — `adapters/casper/real-payment.ts` verifies proofs against actual
+     on-chain CSPR transfers (payer/target/amount/success, TxV1 + legacy Deploy shapes); enabled in
+     real mode via `CASPER_X402_PAYTO`; `CASPER_REAL_AGENT_X402` remains the weaker opt-in.
+  6. **Claims audit** — CSPR.click claims corrected everywhere (mock wallet, honest "demo" pill,
+     first roadmap item); README gained a "What's real vs simulated" table.
+  7. **24/7 ticks** — `.github/workflows/economy.yml` POSTs `/api/agent/tick` every 10 min
+     (repo var `ECONOMY_BASE_URL`, optional secret `CRON_SECRET`; fires on `main` only).
+  8. **KV persistence** — `adapters/persist/economy-state.ts` (Upstash/Vercel-KV REST, env-gated):
+     hydrate-on-read + debounced persist-on-mutate of all four economy singletons; a judge's bet
+     survives cold starts; hydration suppresses the demo seed (`markDemoSeeded`).
+  9. **Abuse guards** — Genesis creation cap (`GENESIS_MAX_CREATED`, default 12) + 20s cooldown
+     (409/429 + retry-after) on the open demo trigger.
+  10. **API DX** — `GET /api/markets[/slug]` defaults to `DEFAULT_NETWORK` (invalid still 400s).
+  11. **README** — CI badge + real screenshot (`docs/assets/screenshot.png`).
+  12. **MCP recipe** — `claude mcp add --transport http hunch-casper https://casper.playhunch.xyz/api/mcp`
+      in `/docs` + README ("Connect your agent in 60 seconds").
+  13. **SDK package** — `packages/sdk` (npm `hunch-casper-sdk`) compiles `src/agent/sdk.ts` verbatim
+      (no fork); `pnpm sdk:build`; publish: `cd packages/sdk && npm publish --access public`.
+  14. **Submission pack** — `docs/SUBMISSION.md` (ready-to-paste description, judge quickstart,
+      final checklist); video recording remains the one human step (`docs/DEMO_SCRIPT.md`).
+
+## Prior state — S3–S13 DONE + green (Phase 1 core + Phase 2 agent economy + Phase 3 mainnet + polish + judge loop, loop closed)
 
 **S3–S13 shipped** (tags `s3`…`s13`; **501 TS tests + 22 OdraVM tests**; gate
 `typecheck && lint && test && build` green each sprint; every sprint adversarially reviewed

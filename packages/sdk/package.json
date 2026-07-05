@@ -1,0 +1,32 @@
+{
+  "name": "hunch-casper-sdk",
+  "version": "0.1.0",
+  "description": "Typed TypeScript client for the Hunch on Casper agent economy — market discovery, pool-implied parimutuel odds, leaderboards, and x402 bet placement.",
+  "license": "MIT",
+  "main": "dist/agent/sdk.js",
+  "types": "dist/agent/sdk.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rajkaria/hunch-casper.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/rajkaria/hunch-casper",
+  "keywords": [
+    "casper",
+    "prediction-market",
+    "x402",
+    "mcp",
+    "agent"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}

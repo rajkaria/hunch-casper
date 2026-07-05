@@ -1,0 +1,56 @@
+# Economy heartbeat — GitHub Actions as the 24/7 cron.
+#
+# Why: the app deploys on Vercel's Hobby plan, whose cron fires at most once per day —
+# useless for an economy whose loop (Prophets bet → Arbiter resolves → boards update) is
+# meant to run continuously. This workflow POSTs /api/agent/tick every 10 minutes, making
+# "the economy never sleeps" literally true on the free plan.
+#
+# Config:
+#   - Repo variable ECONOMY_BASE_URL overrides the target (default https://casper.playhunch.xyz).
+#   - Repo secret CRON_SECRET is only needed when the deploy runs in real chain mode
+#     (CASPER_CHAIN_MODE=real gates the tick because it moves the money path). The
+#     credential-free demo accepts unauthenticated ticks; the header is omitted when unset.
+#
+# Notes:
+#   - GitHub only fires `schedule` triggers from the DEFAULT branch, so this file must land
+#     on main before the loop starts. `workflow_dispatch` works from any branch for a manual kick.
+#   - To stop the loop, delete this file (or disable the workflow in the Actions tab).
+name: Economy tick
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Casper network to tick"
+        required: false
+        default: "testnet"
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST /api/agent/tick
+        env:
+          BASE_URL: ${{ vars.ECONOMY_BASE_URL || 'https://casper.playhunch.xyz' }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          NETWORK: ${{ inputs.network || 'testnet' }}
+        run: |
+          args=(-H 'content-type: application/json')
+          # Only send the auth header when a secret is configured (real mode).
+          if [ -n "${CRON_SECRET}" ]; then
+            args+=(-H "x-cron-secret: ${CRON_SECRET}")
+          fi
+          body=$(mktemp)
+          status=$(curl -sS -m 60 -o "$body" -w '%{http_code}' -X POST \
+            "${BASE_URL}/api/agent/tick" "${args[@]}" \
+            -d "{\"network\":\"${NETWORK}\"}")
+          echo "HTTP ${status} from ${BASE_URL}/api/agent/tick (network=${NETWORK})"
+          cat "$body"
+          echo
+          case "$status" in
+            2*) ;;
+            *) echo "::error::economy tick failed with HTTP ${status}"; exit 1 ;;
+          esac

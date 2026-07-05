@@ -9,12 +9,14 @@
  * endpoints with no server. The demo/Prophets thus dogfood the exact interface external agents use.
  */
 
-import type { CasperNetwork } from "@/config/network";
-import type { Market, OutcomeOdds } from "@/core/types";
-import { computeOdds } from "@/core/parimutuel-odds";
-import type { AgentPnl } from "@/core/agent-leaderboard";
-import type { OracleReputation } from "@/ports/oracle";
-import type { X402PaymentProof } from "@/ports/payment";
+// Relative imports (not `@/` aliases) so this file compiles unchanged as the publishable
+// `hunch-casper-sdk` package (packages/sdk), whose standalone tsconfig has no alias map.
+import type { CasperNetwork } from "../config/network";
+import type { Market, OutcomeOdds } from "../core/types";
+import { computeOdds } from "../core/parimutuel-odds";
+import type { AgentPnl } from "../core/agent-leaderboard";
+import type { OracleReputation } from "../ports/oracle";
+import type { X402PaymentProof } from "../ports/payment";
 
 /** The economy's two leaderboards, as returned by `GET /api/agent/leaderboard`. */
 export interface EconomyLeaderboard {

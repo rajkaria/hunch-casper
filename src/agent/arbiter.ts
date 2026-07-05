@@ -23,6 +23,7 @@ import type { EconomyBoards } from "@/core/meta-resolution";
 import { findDefinition } from "@/adapters/mock/market-source";
 import { appendAction } from "@/adapters/mock/activity-log";
 import type { AgentAction } from "@/adapters/mock/activity-log";
+import { chainMode } from "@/config/chain-mode";
 
 const ARBITER_ID = "arbiter";
 
@@ -128,6 +129,7 @@ export async function resolveMarket(container: Container, slug: string): Promise
     narration: narration || rationale,
     deployHash,
     explorerUrl,
+    simulated: chainMode() !== "real",
   });
 }
 
