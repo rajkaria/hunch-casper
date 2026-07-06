@@ -81,6 +81,12 @@ export function onchainProof(network: CasperNetwork, cfg: NetworkConfig = getNet
     const url = explorerContractPackageUrl(network, address);
     if (url) contracts.push({ label, hash: address, url });
   }
+  // Per-market ParimutuelMarket packages from the catalogue deploy (NEXT_PUBLIC_*_MARKET_ADDRS).
+  for (const slug of Object.keys(cfg.marketAddresses).sort()) {
+    const address = cfg.marketAddresses[slug];
+    const url = explorerContractPackageUrl(network, address);
+    if (url) contracts.push({ label: `ParimutuelMarket — ${slug}`, hash: address, url });
+  }
   const receipts = parseReceipts(network);
   return { network, contracts, receipts, hasAny: contracts.length > 0 || receipts.length > 0 };
 }

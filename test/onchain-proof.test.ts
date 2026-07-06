@@ -45,6 +45,24 @@ describe("onchainProof", () => {
     ]);
   });
 
+  it("renders per-market catalogue packages after the singletons, sorted by slug", () => {
+    const proof = onchainProof("testnet", {
+      ...getNetworkConfig("testnet"),
+      contracts: { marketFactory: `hash-${HASH_A}` },
+      marketAddresses: {
+        "cspr-price-05-aug": `contract-package-${HASH_B}`,
+        "btc-150k-aug": `hash-${HASH_A}`,
+      },
+    });
+    expect(proof.contracts.map((c) => c.label)).toEqual([
+      "MarketFactory",
+      "ParimutuelMarket — btc-150k-aug",
+      "ParimutuelMarket — cspr-price-05-aug",
+    ]);
+    expect(proof.contracts[1].url).toBe(`https://testnet.cspr.live/contract-package/${HASH_A}`);
+    expect(proof.contracts[2].url).toBe(`https://testnet.cspr.live/contract-package/${HASH_B}`);
+  });
+
   it("parses receipts from env JSON, filters to the network, and skips malformed entries", () => {
     vi.stubEnv(
       "NEXT_PUBLIC_ONCHAIN_RECEIPTS",

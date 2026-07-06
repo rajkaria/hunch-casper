@@ -1,0 +1,16 @@
+last_updated = "2026-07-05T16:03:56Z"
+
+[[contracts]]
+name = "MarketFactory"
+package_name = "MarketFactory"
+package_hash = "hash-7f63a93187d4aa3ae7629ce1b15fcf49197d86cda7985ebfcb8a8a494f43d777"
+
+[[contracts]]
+name = "OracleRegistry"
+package_name = "OracleRegistry"
+package_hash = "hash-269834fd371596eacd0ff72c29cc45a4c175601185f33b7583a157bcf80c6282"
+
+[[contracts]]
+name = "ParimutuelMarket"
+package_name = "ParimutuelMarket"
+package_hash = "hash-c6a1afd3208ffe878802d8df71665c4b70b4365b70c5e6d87dec646090964529"
