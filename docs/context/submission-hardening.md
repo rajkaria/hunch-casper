@@ -16,14 +16,26 @@ fast resume point for the submission push._
 
 ## Current state — what's working, deployed, broken
 
-- **S3–S14 done, gate green**: `pnpm typecheck && pnpm lint && pnpm test && pnpm build` — 573 TS
-  tests (38 files) + 22 OdraVM contract tests. Committed as `e0fa11b` on branch
-  `claude/gracious-jemison-69e02b` (worktree). **NOT yet merged to `main` / pushed** — that is the
-  first next step; the scheduled economy workflow and CI badge only run from the default branch.
-- Live site: https://casper.playhunch.xyz (Vercel project `hunch-casper`, mock chain mode) —
-  markets/agents/docs all serve; tick + MCP verified live this session.
-- **User is running the testnet contract deploy** (contracts/DEPLOY.md) in parallel — code-side
-  wiring for it (per-market routing, proof surface, receipts env) is ready and waiting on hashes.
+- **S3–S14 done + on-chain go-live (2026-07-06), gate green**: 574 TS tests (38 files) + 22
+  OdraVM contract tests. `main` is pushed; site auto-deploys from it.
+- **Testnet is live for real.** 27 real transactions minted 2026-07-06 via the new
+  `contracts_catalogue` driver (contracts/bin/catalogue.rs, runbook in contracts/DEPLOY.md §4b):
+  - Singletons (Jul 5 bootstrap): MarketFactory `hash-7f63a931…`, OracleRegistry
+    `hash-269834fd…`, sample vault `hash-c6a1afd3…`.
+  - 5 flagship catalogue markets deployed + registered + seeded with real ratio-preserving CSPR
+    pools (seeds ÷ 100): cspr-price-05-aug, cspr-hourly-updown, btc-150k-aug,
+    prophet-race-weekly, arbiter-accuracy-95 → package hashes in Vercel
+    `NEXT_PUBLIC_TESTNET_MARKET_ADDRS`.
+  - Full money-path receipts on a dedicated market: install → 120 CSPR bet YES → 80 CSPR bet
+    NO → oracle resolve (fee sweep) → 198.4 CSPR claim → hashes in Vercel
+    `NEXT_PUBLIC_ONCHAIN_RECEIPTS`; the "Live on Casper" section now renders them plus every
+    per-market package (onchain-proof.ts extension).
+- Live site: https://casper.playhunch.xyz (mock chain mode **by design** — the demo economy is
+  simulated and labelled; on-chain reality is proven via the receipts/proof surface).
+- **Deployer key** (contracts/keys, human-faucet-refill only): ~392 CSPR left. Each further
+  market deploy ≈ 386 CSPR — the remaining 10 catalogue markets need ~4k CSPR more.
+- **Mainnet: nothing deployed** — blocked on funding a mainnet key with real CSPR (~2.5k CSPR
+  for the same 5-market + receipts footprint). Same commands, mainnet .env (DEPLOY.md §6).
 - The one remaining human deliverable is the **demo video** (docs/DEMO_SCRIPT.md, <3 min).
 
 ## Recent changes — files touched and why (all in commit `e0fa11b`)
@@ -82,16 +94,17 @@ fast resume point for the submission push._
 
 ## Next steps — specific, actionable
 
-1. **Merge `claude/gracious-jemison-69e02b` → `main` and push** (enables CI badge + 10-min economy
-   workflow). Optionally set repo variable `ECONOMY_BASE_URL` and secret `CRON_SECRET` (only needed
-   in real mode).
-2. **After the testnet deploy finishes** (user is running it): in Vercel env set
-   `NEXT_PUBLIC_TESTNET_MARKET_FACTORY/_ORACLE_REGISTRY/_VAULT`, `NEXT_PUBLIC_TESTNET_MARKET_ADDRS`
-   (slug→hash JSON; slugs from `/api/deploy-plan?network=testnet`), and
-   `NEXT_PUBLIC_ONCHAIN_RECEIPTS` (real bet/resolve tx hashes) → redeploy → "Live on Casper"
-   section appears. Keep `CASPER_CHAIN_MODE=mock` on the public deploy.
-3. Optional hardening: Upstash Redis env pair (persistent boards), `CSPR_CLOUD_API_KEY` (live
-   validator signal), `npm publish --access public` from packages/sdk.
-4. **Record + upload the demo video** (docs/DEMO_SCRIPT.md), paste link into README Demo section,
+1. **Record + upload the demo video** (docs/DEMO_SCRIPT.md), paste link into README Demo section,
    docs/SUBMISSION.md, and the submission form; finish SUBMISSION.md checklist.
+2. **Finish the testnet catalogue (needs faucet, human)**: refill the deployer at
+   https://testnet.cspr.live/tools/faucet (~4k CSPR), then
+   `HUNCH_FACTORY=hash-7f63a931… contracts_catalogue catalogue <deploy-plan.json> all 100`
+   (already-deployed slugs must be excluded from the selector — re-deploying duplicates the
+   contract; re-registering reverts) and merge the new hashes into
+   `NEXT_PUBLIC_TESTNET_MARKET_ADDRS`.
+3. **Mainnet (user decision — real money)**: fund a mainnet key (~2.5k CSPR minimum), point
+   contracts/.env at mainnet (DEPLOY.md §6), run `contracts_cli deploy` + `contracts_catalogue`,
+   wire `NEXT_PUBLIC_MAINNET_*` envs. Guardrails (25 CSPR cap + unaudited banner) already ship.
+4. Optional hardening: Upstash Redis env pair (persistent boards), `CSPR_CLOUD_API_KEY` (live
+   validator signal), repo var `ECONOMY_BASE_URL` for the 10-min economy workflow.
 5. Nice-to-have if time: real CSPR.click widget integration (first VISION roadmap item).

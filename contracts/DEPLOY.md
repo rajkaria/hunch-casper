@@ -71,6 +71,33 @@ cargo run --bin contracts_cli -- deploy      # deploy + register (livenet from .
 Each transaction prints a hash → view at `https://testnet.cspr.live/transaction/<hash>`
 (Casper 2.0 / Condor serves `TransactionV1` under `/transaction/`, not the legacy `/deploy/`).
 
+### 4b. Deploy the full catalogue + mint receipts (`contracts_catalogue`)
+
+`bin/catalogue.rs` finishes what `deploy` bootstraps — it reads the app's deploy-plan manifest
+and pushes the whole catalogue on-chain, then mints the receipt transactions the site links to:
+
+```bash
+curl -s "https://casper.playhunch.xyz/api/deploy-plan?network=testnet" > /tmp/deploy-plan.json
+
+cargo run --bin contracts_catalogue -- balance      # free config + funds sanity check
+
+# Full money path on a dedicated receipts market: deploy → bet yes → bet no →
+# resolve (fee sweep) → claim. Five real transactions; paste the hashes into
+# NEXT_PUBLIC_ONCHAIN_RECEIPTS.
+cargo run --bin contracts_catalogue -- lifecycle
+
+# One ParimutuelMarket per catalogue market, registered into the factory, seeded with
+# ratio-preserving house bets (manifest seedBets ÷ divisor; 0 = skip seeding).
+# `all` or a csv of slugs; `coin-flip-5m` deploys but skips registration (the bootstrap
+# already registered that id → re-registering reverts with DuplicateId).
+HUNCH_FACTORY=hash-<factory> \
+  cargo run --bin contracts_catalogue -- catalogue /tmp/deploy-plan.json all 100
+```
+
+Machine-readable `HUNCH_MARKET slug=<slug> package=<hash>` lines make up the
+`NEXT_PUBLIC_*_MARKET_ADDRS` map; each Odra log line prints the tx hash + explorer link. The
+driver aborts before any market install that would run the deployer below ~650 CSPR.
+
 ## 5. Wire the addresses into the Next.js app
 
 Put the deployed package/contract hashes into the app env (Vercel + `.env.local`) — the
