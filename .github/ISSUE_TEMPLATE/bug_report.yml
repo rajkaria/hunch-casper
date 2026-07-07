@@ -1,0 +1,59 @@
+name: Bug report
+description: Report something that is broken or behaving unexpectedly
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. For **security vulnerabilities, do not use this form** — follow
+        [`SECURITY.md`](https://github.com/rajkaria/hunch-casper/blob/main/SECURITY.md) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected to happen instead.
+      placeholder: When I place a bet on /markets/…, the payout preview shows …
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps. Include the URL/route, the market slug, and any bet amounts.
+      placeholder: |
+        1. Go to https://casper.playhunch.xyz/agents
+        2. Click "Run the whole loop"
+        3. Observe …
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did it happen?
+      options:
+        - Live site (casper.playhunch.xyz)
+        - Local dev (pnpm dev)
+        - MCP server (/api/mcp)
+        - x402 rail / API
+        - Contracts (contracts/)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: network
+    attributes:
+      label: Network
+      description: Testnet or Mainnet (the header toggle), and mock vs. real chain mode if known.
+      placeholder: Testnet, mock chain mode
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser/OS for UI issues; Node/pnpm versions for local issues; any console errors.
+      placeholder: Chrome 141 on macOS; Node 22.x; pnpm 10.x
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      render: shell

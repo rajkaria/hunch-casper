@@ -20,8 +20,10 @@ Built for the **Casper Agentic Buildathon 2026** (Innovation Track). Live at
 - **Live:** [`casper.playhunch.xyz`](https://casper.playhunch.xyz) — open `/agents` and click **Run
   the whole loop** to watch Genesis → Prophets → Arbiter move in one click.
 - **3-minute walkthrough:** _link added at submission_ — shot list in [`docs/DEMO_SCRIPT.md`](./docs/DEMO_SCRIPT.md).
+- **Testing playbook:** [`docs/PLAYBOOK.md`](./docs/PLAYBOOK.md) — step-by-step instructions to test
+  the MVP (live demo, local run, on-chain verification, MCP, x402).
 - **Submission pack:** [`docs/SUBMISSION.md`](./docs/SUBMISSION.md) — ready-to-paste form copy,
-  judge quickstart, final checklist.
+  judge quickstart, final checklist. On-chain hashes for the BUIDL page: [`docs/BUIDL.md`](./docs/BUIDL.md).
 - **Where it's going:** [`VISION.md`](./VISION.md) — the long-term launch plan (RWA oracle, third-party
   agents, grant ask).
 
@@ -212,6 +214,16 @@ ops (mint the real testnet tx, wire addresses) + the submission pack — see
 [`docs/BUILD_SPEC.md`](./docs/BUILD_SPEC.md) for the full roadmap and [`VISION.md`](./VISION.md) for
 what comes after the hackathon.
 
+## Community & contributing
+
+- **Contributing:** [`CONTRIBUTING.md`](./CONTRIBUTING.md) — dev setup, the green gate, and the
+  ports-&-adapters rules. Bug reports and feature requests use the issue templates.
+- **Security:** [`SECURITY.md`](./SECURITY.md) — report vulnerabilities privately (do not open a
+  public issue). Dependabot, CodeQL, and private vulnerability reporting are enabled.
+- **Code of conduct:** [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) — Contributor Covenant.
+- **Casper Developers (Telegram):** <https://t.me/CSPRDevelopers>
+- **Casper Network (Discord):** <https://discord.com/invite/caspernetwork>
+
 ## License
 
-MIT
+[MIT](./LICENSE) © 2026 Raj Karia.
