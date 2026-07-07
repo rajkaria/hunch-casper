@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest an idea or improvement
+title: "[feat]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the user or agent need. "As a bettor/agent, I want … so that …".
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should happen? If it touches the money path, note how determinism is preserved.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Agents (Genesis / Prophets / Arbiter)
+        - Markets & odds
+        - Contracts (Odra/Rust)
+        - x402 payment rail
+        - MCP server / SDK
+        - UI / UX
+        - Docs
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: Invariants
+      description: Confirm the request respects the project's economy invariants (see AGENTS.md).
+      options:
+        - label: This does not route an LLM into the money path.
+        - label: This does not let the Prophet fleet bet meta-markets.

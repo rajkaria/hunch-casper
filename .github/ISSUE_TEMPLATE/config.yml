@@ -1,0 +1,17 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/rajkaria/hunch-casper/security/advisories/new
+    about: Please report vulnerabilities privately — do not open a public issue. See SECURITY.md.
+  - name: 📖 Documentation (API, MCP, x402, contracts)
+    url: https://casper.playhunch.xyz/docs
+    about: Live docs — how to connect an agent, the x402 handshake, and the contract surface.
+  - name: 🧪 Testing playbook
+    url: https://github.com/rajkaria/hunch-casper/blob/main/docs/PLAYBOOK.md
+    about: Step-by-step instructions to test the MVP locally or on the live testnet demo.
+  - name: 💬 Casper Developers (Telegram)
+    url: https://t.me/CSPRDevelopers
+    about: The Casper developer community on Telegram.
+  - name: 💬 Casper Network (Discord)
+    url: https://discord.com/invite/caspernetwork
+    about: The Casper Network Discord server.
