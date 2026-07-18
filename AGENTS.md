@@ -54,8 +54,21 @@ the maintainer's checkout).
   successful on-chain CSPR transfer from the payer to the treasury (trustless) — OR
   `CASPER_REAL_AGENT_X402=true`, the weaker legacy opt-in that keeps the mock nonce-match verifier.
   Either way the mock-vs-real mismatch is explicit and safe-by-default, never a silent
-  operator-funded gap. (With the real PaymentPort wired, the internal fleet's fabricated proofs
-  correctly fail verification — the fleet needs genuine funded transfers or the mock/testnet demo.)
+  operator-funded gap.
+- **Every agent pays from a purse it controls (S17).** A Prophet's x402 proof is the settlement id
+  of a real transfer out of its own wallet (`WalletPort`) — never a locally fabricated string. Each
+  agent has its **own** Ed25519 identity, derived as
+  `HMAC-SHA256(CASPER_FLEET_SEED, "hunch-fleet-v1:<agentId>")`; a shared key is not an option,
+  because it would collapse every agent's track record into one on-chain identity and destroy the
+  reputation data the registry (S19) is built on. Derivation must stay deterministic — fleet
+  wallets are funded by hand, so a drifting address strands real money.
+- **An agent that cannot pay sits the round out.** Below its turn floor (largest stake + transfer
+  gas) a Prophet skips instead of submitting a transfer it cannot fund: a failed transaction burns
+  gas and yields an unverifiable proof, which is strictly worse than not betting.
+- **The payment binds to the account; the ledger binds to the name.** `AgentBetInput.payerAccount`
+  carries the Casper key the transfer-verifying PaymentPort checks, while `bettor` stays the
+  readable agent id the boards, feed and meta-markets are keyed by. Collapsing the two breaks
+  either verification or every leaderboard.
 
 ## Green gate (before every commit)
 `pnpm typecheck && pnpm lint && pnpm test && pnpm build` — all green. `tsc` also typechecks test

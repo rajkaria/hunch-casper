@@ -54,8 +54,25 @@ export interface HealthInputs {
     /** Epoch ms of the newest action, or null when there is none. */
     newestActionTs: number | null;
   };
+  /** Per-agent purse balances. Empty when the fleet has no wallet wired. */
+  fleet: FleetBalance[];
+  /**
+   * Motes an agent needs to take its turn (largest stake + gas floor). Below this it sits out —
+   * which is correct behaviour, and also the thing an operator must be told about before the
+   * whole fleet goes quiet.
+   */
+  fleetMinBalanceMotes: string;
   /** Epoch ms "now" — injected so tests never race the wall clock. */
   now: number;
+}
+
+export interface FleetBalance {
+  agentId: string;
+  /** The agent's on-chain identity — public, and the account an operator refills. */
+  account: string;
+  /** The same identity in `account-hash-…` form, which is what the funding tools take. */
+  accountHash: string;
+  balanceMotes: string;
 }
 
 export interface HealthReport {
@@ -68,6 +85,8 @@ export interface HealthReport {
   /** Names of every non-ok, non-skip check, so an alert body can be one line. */
   problems: string[];
   economy: { actionCount: number; newestActionTs: number | null; ageMs: number | null };
+  /** Per-agent balances with their funded/unfunded verdict — the refill worklist. */
+  fleet: (FleetBalance & { funded: boolean })[];
   generatedAt: string;
 }
 
@@ -224,8 +243,37 @@ function economyCheck(i: HealthInputs): HealthCheck {
     : check("economy", "ok", `newest agent action ${mins}m ago across ${actionCount} recorded action(s)`);
 }
 
+/**
+ * Fleet funding. An underfunded agent is not an error — it sits the round out on purpose — but a
+ * fleet that is quietly starving looks exactly like a fleet that is quietly broken, so it warns
+ * loudly enough to prompt a refill and names the accounts to refill.
+ */
+function fleetCheck(i: HealthInputs, unfunded: FleetBalance[]): HealthCheck {
+  if (i.fleet.length === 0) {
+    return check("fleet", "skip", "no fleet wallet wired — agents are not paying from their own purses");
+  }
+  if (unfunded.length === 0) {
+    return check("fleet", "ok", `all ${i.fleet.length} agent purses are above the ${i.fleetMinBalanceMotes}-mote turn floor`);
+  }
+  if (unfunded.length === i.fleet.length) {
+    return check(
+      "fleet",
+      "fail",
+      `every agent purse is below the turn floor (${unfunded.map((f) => f.agentId).join(", ")}) — the fleet has stopped betting entirely; refill`,
+    );
+  }
+  return check(
+    "fleet",
+    "warn",
+    `${unfunded.length} of ${i.fleet.length} agent purses are below the turn floor (${unfunded.map((f) => f.agentId).join(", ")}) and are sitting rounds out`,
+  );
+}
+
 /** Evaluate every subsystem. Overall status is `degraded` iff any check failed. */
 export function buildHealthReport(i: HealthInputs): HealthReport {
+  const floor = BigInt(i.fleetMinBalanceMotes);
+  const fleet = i.fleet.map((f) => ({ ...f, funded: BigInt(f.balanceMotes) >= floor }));
+  const unfunded = fleet.filter((f) => !f.funded);
   const checks: HealthCheck[] = [
     ...contractChecks(i),
     persistenceCheck(i),
@@ -233,6 +281,7 @@ export function buildHealthReport(i: HealthInputs): HealthReport {
     ...signerChecks(i),
     cronCheck(i),
     signalsCheck(i),
+    fleetCheck(i, unfunded),
     economyCheck(i),
   ];
   const problems = checks.filter((c) => c.status === "fail" || c.status === "warn").map((c) => c.name);
@@ -248,6 +297,7 @@ export function buildHealthReport(i: HealthInputs): HealthReport {
       newestActionTs: i.economy.newestActionTs,
       ageMs: i.economy.newestActionTs === null ? null : i.now - i.economy.newestActionTs,
     },
+    fleet,
     generatedAt: new Date(i.now).toISOString(),
   };
 }

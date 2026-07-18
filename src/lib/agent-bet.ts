@@ -54,6 +54,19 @@ export interface AgentBetInput {
   outcomeKey: string;
   amountMotes: string;
   bettor: string;
+  /**
+   * The on-chain account that pays, when it differs from the ledger identity. Defaults to
+   * `bettor`.
+   *
+   * The two are the same thing for an external agent, which sends its public key as `bettor`.
+   * They differ for the internal fleet: a Prophet's ledger key is its NAME (`"momentum"` — what
+   * the boards, the feed, and the meta-markets are keyed by), while the account whose signature
+   * the transfer-verifying PaymentPort checks is its derived Casper key. Binding the requirement
+   * to the name would make every real-mode fleet proof unverifiable; renaming the ledger key to
+   * a public key would make every board unreadable. So the payment binds to the account and the
+   * ledger binds to the name.
+   */
+  payerAccount?: string;
   /** The x402 payment proof; omit on the first call to receive the 402 requirement. */
   paymentProof?: X402PaymentProof;
 }
@@ -75,7 +88,7 @@ const MOTES = /^\d+$/;
 
 /** Run the x402 bet exchange for an agent against a container's ports. */
 export async function agentBet(container: Container, input: AgentBetInput): Promise<AgentBetResult> {
-  const { marketId, outcomeKey, amountMotes, bettor, paymentProof } = input;
+  const { marketId, outcomeKey, amountMotes, bettor, payerAccount, paymentProof } = input;
 
   // Real-mode safety (see file header): a real, operator-funded on-chain bet is reachable via the
   // agent x402 rail only when payment verification is trustless (CASPER_X402_PAYTO wires the real
@@ -137,7 +150,12 @@ export async function agentBet(container: Container, input: AgentBetInput): Prom
     return { status: "error", error: `market ${marketId} is ${market.status}`, code: 409 };
   }
 
-  const requirement = await container.payment.quote({ marketId: market.id, outcomeKey, amountMotes, payer: bettor });
+  const requirement = await container.payment.quote({
+    marketId: market.id,
+    outcomeKey,
+    amountMotes,
+    payer: payerAccount && payerAccount.length > 0 ? payerAccount : bettor,
+  });
 
   // Step 1: no proof → hand back the 402 challenge + what this bet would pay if it wins.
   if (!paymentProof) {

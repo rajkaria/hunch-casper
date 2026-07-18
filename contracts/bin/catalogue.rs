@@ -158,6 +158,15 @@ fn main() {
                 .expect("approval flag must be true or false");
             approve_oracle(&env, oracle, approved);
         }
+        "fleet-fund" => {
+            let cspr_each: u64 = args
+                .get(2)
+                .expect("usage: fleet-fund <cspr-each> <account-hash-…,account-hash-…>")
+                .parse()
+                .expect("cspr-each must be a whole number of CSPR");
+            let accounts = args.get(3).expect("missing comma-separated account list");
+            fleet_fund(&env, cspr_each, accounts);
+        }
         "open-creation" => {
             let open: bool = args
                 .get(2)
@@ -170,12 +179,68 @@ fn main() {
             eprintln!(
                 "usage: contracts_catalogue <balance|lifecycle|catalogue|vault-deploy|\
                  catalogue-v2|lifecycle-v2|list-markets|approve-oracle|open-creation|\
-                 plan-cost> ..."
+                 fleet-fund|plan-cost> ..."
             );
             std::process::exit(2);
         }
     }
 }
+
+/// Top the fleet's agent wallets up from the deployer.
+///
+/// Accounts are passed in explicitly rather than derived here on purpose. The derivation
+/// (`HMAC-SHA256(seed, "hunch-fleet-v1:<agent>")`) lives in `src/adapters/casper/fleet-keys.ts`,
+/// and a second implementation in Rust would be a second thing to keep in sync — a divergence
+/// would silently fund addresses no agent signs for, which looks exactly like a successful
+/// refill until the fleet goes quiet anyway. Instead the running app is the source of truth:
+///
+/// ```bash
+/// curl -s https://casper.playhunch.xyz/api/health | jq -r '[.fleet[].accountHash] | join(",")'
+/// cargo run --bin contracts_catalogue -- fleet-fund 50 "<that list>"
+/// ```
+///
+/// Refuses to start unless the deployer can cover every transfer plus its gas, so a partial
+/// refill never leaves half the fleet funded and the operator guessing which half.
+fn fleet_fund(env: &HostEnv, cspr_each: u64, accounts: &str) {
+    let targets: Vec<&str> = accounts.split(',').map(str::trim).filter(|a| !a.is_empty()).collect();
+    if targets.is_empty() {
+        eprintln!("fleet-fund: no accounts given");
+        std::process::exit(2);
+    }
+    let each = U512::from(cspr_each) * U512::from(1_000_000_000u64);
+    let caller = env.caller();
+    let balance = env.balance_of(&caller);
+    // Each transfer costs its amount plus the native-transfer gas; check the whole run up front.
+    let per_transfer_gas = U512::from(TRANSFER_GAS);
+    let required = (each + per_transfer_gas) * U512::from(targets.len() as u64);
+    if balance < required {
+        eprintln!(
+            "fleet-fund needs {required} motes to fund {} account(s) with {cspr_each} CSPR each \
+             (plus transfer gas); the deployer holds {balance}. Top up at \
+             https://testnet.cspr.live/tools/faucet",
+            targets.len()
+        );
+        std::process::exit(1);
+    }
+
+    println!("HUNCH_BALANCE start {balance}");
+    for target in targets {
+        let address = Address::from_str(target)
+            .unwrap_or_else(|e| panic!("bad account '{target}': {e:?} (expected account-hash-<64 hex>)"));
+        println!("HUNCH_STEP fleet-fund {target}");
+        env.set_gas(TRANSFER_GAS);
+        match env.transfer(address, each) {
+            Ok(()) => println!("HUNCH_FUNDED account={target} motes={each}"),
+            Err(e) => println!("HUNCH_FUND_FAILED account={target} error={e:?}"),
+        }
+    }
+    println!("HUNCH_BALANCE end {}", env.balance_of(&caller));
+    println!("HUNCH_STEP done");
+}
+
+/// Native transfer gas limit. A native transfer is a fixed-cost operation; 0.1 CSPR is the
+/// standard limit and leaves the refund model no slack to shave.
+const TRANSFER_GAS: u64 = 100_000_000;
 
 // ── plan-cost: price a catalogue run before paying for it ───────────────────────────────────────
 //

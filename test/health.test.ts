@@ -34,6 +34,11 @@ function healthyReal(): HealthInputs {
     cronSecretConfigured: true,
     csprCloudKeyConfigured: true,
     economy: { actionCount: 12, newestActionTs: NOW - 60_000 },
+    fleet: [
+      { agentId: "Momentum", account: "01aa", accountHash: "account-hash-aa", balanceMotes: "40000000000" },
+      { agentId: "Contrarian", account: "01bb", accountHash: "account-hash-bb", balanceMotes: "40000000000" },
+    ],
+    fleetMinBalanceMotes: "3200000000",
     now: NOW,
   };
 }
@@ -149,6 +154,47 @@ describe("buildHealthReport — degraded-but-running warnings", () => {
     });
     expect(statusOf(r, "contracts.vaultV2")).toBe("warn");
     expect(statusOf(r, "contracts.routing")).toBe("ok"); // v1 vault still routes
+  });
+});
+
+describe("buildHealthReport — fleet funding", () => {
+  it("is ok when every purse clears the turn floor, and marks each funded", () => {
+    const r = buildHealthReport(healthyReal());
+    expect(statusOf(r, "fleet")).toBe("ok");
+    expect(r.fleet.every((f) => f.funded)).toBe(true);
+  });
+
+  it("warns when some agents are sitting rounds out, and names them", () => {
+    const base = healthyReal();
+    const r = buildHealthReport({
+      ...base,
+      fleet: [base.fleet[0], { ...base.fleet[1], balanceMotes: "1" }],
+    });
+    expect(statusOf(r, "fleet")).toBe("warn");
+    expect(r.checks.find((c) => c.name === "fleet")?.detail).toContain("Contrarian");
+    expect(r.fleet.find((f) => f.agentId === "Contrarian")?.funded).toBe(false);
+    expect(r.status).toBe("ok"); // a partly-funded fleet still bets
+  });
+
+  it("fails when every purse is empty — the fleet has stopped entirely", () => {
+    const base = healthyReal();
+    const r = buildHealthReport({ ...base, fleet: base.fleet.map((f) => ({ ...f, balanceMotes: "0" })) });
+    expect(statusOf(r, "fleet")).toBe("fail");
+    expect(r.status).toBe("degraded");
+  });
+
+  it("treats a balance exactly at the floor as funded (an agent can afford its turn)", () => {
+    const base = healthyReal();
+    const r = buildHealthReport({
+      ...base,
+      fleet: [{ ...base.fleet[0], balanceMotes: base.fleetMinBalanceMotes }],
+    });
+    expect(statusOf(r, "fleet")).toBe("ok");
+  });
+
+  it("skips when no fleet wallet is wired", () => {
+    const r = buildHealthReport({ ...healthyReal(), fleet: [] });
+    expect(statusOf(r, "fleet")).toBe("skip");
   });
 });
 

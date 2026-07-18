@@ -93,6 +93,8 @@ the browser. Everything in §2.3 is a secret.
 | `CASPER_RESOLVE_OPERATOR_TOKEN` | if the resolve route is enabled in real mode | `x-operator-token` header value |
 | `CASPER_X402_PAYTO` | real-mode agent x402 | Treasury account; wires the transfer-verifying PaymentPort |
 | `CASPER_REAL_AGENT_X402` | legacy alternative | `true` keeps the weaker nonce-match verifier |
+| `CASPER_FLEET_SEED` | real-mode fleet | Derives one Ed25519 identity per agent (§5) |
+| `CASPER_PROPHET_KEY_<AGENT>` | optional | Explicit key for one agent; overrides derivation |
 | `CSPR_CLOUD_API_KEY` | optional | Live validator signal for Genesis |
 | `LLM_API_KEY` | optional | Narration; absent ⇒ deterministic canned narration |
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | production | Economy persistence (Vercel KV names win) |
@@ -182,7 +184,65 @@ cd contracts && cargo run --bin contracts_catalogue -- balance
 
 ---
 
-## 5. Persistence
+## 5. The Prophet fleet's wallets
+
+Each Prophet is a funded Casper identity that pays its own x402 bills. Its bet is preceded by a
+genuine CSPR transfer to `CASPER_X402_PAYTO`, and that transfer's hash *is* the payment proof —
+verifiable by anyone against the chain, without trusting this server.
+
+### Key layout
+
+One secret, N identities: `HMAC-SHA256(CASPER_FLEET_SEED, "hunch-fleet-v1:<agentId>")` is each
+agent's Ed25519 secret key. Derivation is deterministic across restarts, redeploys, and
+instances — an address that drifted between deploys would strand its balance. A per-agent
+`CASPER_PROPHET_KEY_<AGENT>` overrides derivation for an agent whose key needs separate custody.
+
+**A single shared key is not supported, deliberately.** All four Prophets would be the same
+on-chain account, and every track record the reputation layer depends on — PnL, calibration,
+per-category expertise — would collapse into one indistinguishable blob.
+
+### Refilling
+
+```bash
+# 1. Who needs money? (also shows each agent's balance and funded verdict)
+curl -s https://casper.playhunch.xyz/api/health | jq '.fleet'
+
+# 2. Top them all up from the deployer, 50 CSPR each.
+ACCOUNTS=$(curl -s https://casper.playhunch.xyz/api/health | jq -r '[.fleet[].accountHash] | join(",")')
+cd contracts && cargo run --bin contracts_catalogue -- fleet-fund 50 "$ACCOUNTS"
+```
+
+`fleet-fund` refuses to start unless the deployer can cover every transfer plus gas, so a partial
+refill never leaves half the fleet funded and you guessing which half. Accounts are passed in
+explicitly rather than re-derived in Rust: a second implementation of the KDF would be a second
+thing to keep in sync, and a divergence would fund addresses no agent signs for — indistinguishable
+from a successful refill until the fleet goes quiet anyway.
+
+### Running dry
+
+An agent below its **turn floor** (largest stake + transfer gas) skips its turn and logs a
+warning. This is correct behaviour, not a fault: submitting a transfer it cannot pay for would
+burn gas to produce a failed transaction and an unverifiable proof. Health reflects it:
+
+| Health `fleet` | Means |
+|---|---|
+| `ok` | every purse clears the turn floor |
+| `warn` | some agents are sitting rounds out — named in the detail |
+| `fail` | **every** purse is below the floor; the fleet has stopped betting entirely |
+| `skip` | no fleet wallet wired (mock mode, or real mode with no seed) |
+
+### Why a bet costs two transactions
+
+The agent transfers its stake to the treasury (its x402 payment); the operator key escrows the
+same amount into the vault. Since the treasury and the escrow funder are the same operator
+account, the operator is reimbursed exactly and the agent pays exactly once. The agent's identity
+is proven by the *transfer*, which is what the reputation layer indexes — not by who submitted the
+escrow. See the decision journal for why the alternative (the agent signing its own escrow) would
+charge the agent twice.
+
+---
+
+## 6. Persistence
 
 The four economy ledgers (settlement, activity feed, oracle reputation, Genesis-created markets)
 are module singletons. Without KV they reset on every serverless cold start and diverge across
@@ -203,7 +263,7 @@ in-memory state. **KV downtime degrades durability, never availability.**
 
 ---
 
-## 6. Incident checklist
+## 7. Incident checklist
 
 1. **`curl /api/health`** — it names the failing subsystem. Start there, not in the logs.
 2. **Boards empty / history vanished** → `persistence`. Configured but unreachable is a rotated
@@ -222,7 +282,7 @@ in-memory state. **KV downtime degrades durability, never availability.**
 
 ---
 
-## 7. Deploy pipeline
+## 8. Deploy pipeline
 
 - **Production:** push to `main` → Vercel builds and promotes to `casper.playhunch.xyz`.
 - **CI gate:** `.github/workflows/ci.yml` runs `pnpm typecheck && lint && test && build`, plus

@@ -14,13 +14,63 @@ import { agentBet } from "@/lib/agent-bet";
 import { computeOdds } from "@/core/parimutuel-odds";
 import { appendAction } from "@/adapters/mock/activity-log";
 import type { AgentAction } from "@/adapters/mock/activity-log";
-import type { X402PaymentProof } from "@/ports/payment";
+import type { X402PaymentProof, X402PaymentRequirement } from "@/ports/payment";
 import { chainMode } from "@/config/chain-mode";
 
-/** Mock x402 settlement — form the payer-bound proof. Each round produces a distinct settlement id
- * (a real agent's CSPR transfer is naturally unique per payment). Real agents transfer to `payTo`. */
-function settle(nonce: string, seq: number): X402PaymentProof {
-  return { scheme: "casper-x402", deployHash: `x402-settled-${nonce}-${seq}`, nonce };
+/**
+ * Motes a Prophet must hold ABOVE its stake before it is allowed to bet: the native-transfer
+ * payment limit plus a margin. An agent that submits a transfer it cannot pay for burns gas to
+ * produce a failed transaction and an unverifiable proof — strictly worse than sitting the round
+ * out, which costs nothing and leaves the balance available for the next one.
+ */
+export const PROPHET_GAS_FLOOR_MOTES = 200_000_000n;
+
+/**
+ * Settle a Prophet's x402 requirement by moving real money from the Prophet's own purse.
+ *
+ * This is the sprint's whole point. The fleet used to hand back `x402-settled-<nonce>-<seq>` — a
+ * string shaped like a proof that no chain had ever seen, which the transfer-verifying
+ * PaymentPort correctly rejected, leaving the fleet unable to bet in real mode. Now the Prophet
+ * transfers to `requirement.payTo` from the account the requirement is bound to, and the
+ * resulting transaction hash IS the proof: verifiable by anyone, against the chain, without
+ * trusting this server.
+ *
+ * Against the mock wallet this is the same code path with a deterministic purse, so CI exercises
+ * the real control flow — including running out of money — with no credentials.
+ *
+ * Returns `null` when the agent cannot afford the payment or the transfer fails; the caller skips
+ * the turn.
+ */
+async function settleFromAgentPurse(
+  container: Container,
+  agentId: string,
+  requirement: X402PaymentRequirement,
+): Promise<X402PaymentProof | null> {
+  const needed = BigInt(requirement.amountMotes) + PROPHET_GAS_FLOOR_MOTES;
+  let balance: bigint;
+  try {
+    balance = BigInt(await container.wallet.balanceOf(agentId));
+  } catch {
+    return null;
+  }
+  if (balance < needed) {
+    console.warn(
+      `[prophet] ${agentId} sits out: balance ${balance} motes is below the ${needed} needed ` +
+        `(stake ${requirement.amountMotes} + gas floor ${PROPHET_GAS_FLOOR_MOTES}) — refill the fleet wallet`,
+    );
+    return null;
+  }
+  try {
+    const transfer = await container.wallet.transfer({
+      agentId,
+      toAccount: requirement.payTo,
+      amountMotes: requirement.amountMotes,
+    });
+    return { scheme: "casper-x402", deployHash: transfer.deployHash, nonce: requirement.nonce };
+  } catch (err) {
+    console.warn(`[prophet] ${agentId} could not settle its x402 payment:`, err);
+    return null;
+  }
 }
 
 /** Run one Prophet against one market (by slug), placing an x402 bet + logging the narrated action. */
@@ -43,21 +93,30 @@ export async function runProphet(
     })
   ).trim();
 
-  // x402 two-step: quote (get the payer-bound requirement) → settle → place.
+  // The Prophet's ledger identity is its name; the account that signs its payment is its own
+  // derived Casper key. Both travel with the bet — see `AgentBetInput.payerAccount`.
+  const account = await container.wallet.accountFor(prophet.id);
+
+  // x402 two-step: quote (get the account-bound requirement) → pay from the agent's purse → place.
   const quote = await agentBet(container, {
     marketId: market.id,
     outcomeKey: decision.outcomeKey,
     amountMotes: decision.amountMotes,
     bettor: prophet.id,
+    payerAccount: account.publicKeyHex,
   });
   if (quote.status !== "payment_required") return null;
+
+  const proof = await settleFromAgentPurse(container, prophet.id, quote.requirement);
+  if (!proof) return null; // unfunded or transfer failed — sit this round out
 
   const placed = await agentBet(container, {
     marketId: market.id,
     outcomeKey: decision.outcomeKey,
     amountMotes: decision.amountMotes,
     bettor: prophet.id,
-    paymentProof: settle(quote.requirement.nonce, seq),
+    payerAccount: account.publicKeyHex,
+    paymentProof: proof,
   });
   if (placed.status !== "placed") return null;
 
