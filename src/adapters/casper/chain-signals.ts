@@ -2,7 +2,7 @@
  * Live chain signals — the real data feed behind Genesis. Where the demo rotation fabricates a
  * plausible signal, this adapter reads a GENUINE chain datum, trying sources in a safe order:
  *
- *   1. CSPR.cloud `/validators` (needs `CSPR_CLOUD_API_KEY`) → live active-validator count;
+ *   1. CSPR.cloud `/auction-metrics` (needs `CSPR_CLOUD_API_KEY`) → live active-validator count;
  *   2. the network's public node RPC `chain_get_block` (keyless) → latest block height;
  *   3. null — the caller falls back to the deterministic demo rotation, so a flaky upstream can
  *      never take the Genesis route down.
@@ -34,8 +34,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 /** CSPR.cloud `/validators` response → an active-validator-count signal, or null. */
 export function parseValidatorSignal(json: unknown): LiveSignal | null {
-  const body = asRecord(json);
-  const count = body?.item_count ?? body?.itemCount;
+  // `/auction-metrics` answers with a single object: { data: { active_validator_number, … } }.
+  // (The older `/validators?page=…` read of `item_count` never worked — that endpoint requires
+  // an `era_id` and 400s without one, so every keyed request silently fell back to node RPC.)
+  const data = asRecord(asRecord(json)?.data);
+  const count = data?.active_validator_number;
   if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) return null;
   return { metric: "active_validators", value: String(count), unitLabel: "", sourceLabel: "CSPR.cloud" };
 }
@@ -84,7 +87,7 @@ export async function fetchLiveSignal(
   if (apiKey) {
     try {
       const res = await withTimeout((signal) =>
-        fetchImpl(`${cfg.csprCloudBaseUrl}/validators?page=1&page_size=1`, {
+        fetchImpl(`${cfg.csprCloudBaseUrl}/auction-metrics`, {
           headers: { authorization: apiKey },
           signal,
         }),

@@ -31,12 +31,34 @@ use odra::casper_types::U512;
 use odra::host::{Deployer, HostEnv, HostRef, HostRefLoader};
 use odra::prelude::*;
 
-/// Gas limits mirror bin/cli.rs.
+// Gas limits are NOT ceilings you get back — testnet runs `pricing_handling =
+// payment_limited` with `refund_handling = { refund_ratio = [75, 100] }`, so a transaction
+// costs `consumed + 0.25 * (limit - consumed)`. Over-setting a limit burns 25% of the slack,
+// and the full limit must be affordable up front or the node rejects the transaction.
+// Verified to the mote against the Jul 5 bootstrap transactions:
+//
+//   2b0cbe… install ParimutuelMarket  limit 400  consumed 299.023  net 324.2675 CSPR
+//   d179b6… register_market           limit  50  consumed   0.953  net  13.2148 CSPR
+//
+// That register_market burned 13.2 CSPR to do ~1 CSPR of work. Limits below are sized at
+// ~3x measured consumption, and generously where consumption is still unmeasured.
+
+/// Wasm installs. Measured: 249.08 CSPR consumed for a 274,781-byte contract, 299.02 for a
+/// 314,813-byte one — so ~350 for the 356,076-byte `HunchVault`. Kept at 400 deliberately:
+/// an install that runs out of gas burns the whole limit and strands the deployer, and the
+/// 75% refund caps the cost of the unused headroom at ~12 CSPR.
 const MARKET_GAS: u64 = 400_000_000_000;
-const CALL_GAS: u64 = 50_000_000_000;
+/// Registry writes (`register_market`, `register_vault_market`, `set_vault`). Measured at
+/// 0.953 CSPR consumed; 3 CSPR is a 3.1x margin and nets ~1.46 CSPR per call.
+const REGISTRY_GAS: u64 = 3_000_000_000;
+/// The money path (`bet`, `resolve`, `claim`) — native transfers plus pool math, and not yet
+/// measured on chain (the v1 lifecycle was never run). Held deliberately generous: a failed
+/// call burns its limit, but unlike an install it is re-runnable.
+const MONEY_GAS: u64 = 8_000_000_000;
 /// A v2 `create_market` is storage writes only — budget far below an install. The driver
-/// prints the measured balance delta per call (`HUNCH_GAS`) for the S16 "< 1 CSPR" gate.
-const CREATE_GAS: u64 = 15_000_000_000;
+/// prints the measured balance delta per call (`HUNCH_GAS`) for the S16 "< 1 CSPR" gate,
+/// so this limit must stay near actual consumption or it *becomes* the reported number.
+const CREATE_GAS: u64 = 6_000_000_000;
 
 /// Aug 1 2026 00:00 UTC — matches the catalogue's one-shot deadlines; far enough that bets
 /// stay open for the demo window (resolve is oracle-gated, not deadline-gated).
@@ -110,7 +132,22 @@ fn load_vault(env: &HostEnv) -> contracts::hunch_vault::HunchVaultHostRef {
 /// `create_market` entrypoint call.
 fn vault_deploy(env: &HostEnv, bond_motes: u64) {
     let caller = env.caller();
-    println!("HUNCH_BALANCE start {}", env.balance_of(&caller));
+    let balance = env.balance_of(&caller);
+    println!("HUNCH_BALANCE start {balance}");
+
+    // The node holds the FULL limit at acceptance, not the (refunded) net cost — submitting
+    // below it is rejected before execution. Fail loudly here instead of on a bare RPC error,
+    // and leave room for the `set_vault` call that follows the install.
+    let required = U512::from(MARKET_GAS) + U512::from(REGISTRY_GAS);
+    if balance < required {
+        println!("HUNCH_ABORT low-balance have={balance} need={required}");
+        eprintln!(
+            "vault-deploy needs {required} motes up front ({MARKET_GAS} install limit + \
+             {REGISTRY_GAS} set_vault limit); the deployer holds {balance}. Top up at \
+             https://testnet.cspr.live/tools/faucet before retrying."
+        );
+        std::process::exit(1);
+    }
 
     println!("HUNCH_STEP deploy-vault-v2 bond={bond_motes}");
     env.set_gas(MARKET_GAS);
@@ -128,7 +165,7 @@ fn vault_deploy(env: &HostEnv, bond_motes: u64) {
     let mut factory =
         MarketFactory::load(env, Address::from_str(&factory_addr).expect("bad HUNCH_FACTORY"));
     println!("HUNCH_STEP factory-set-vault");
-    env.set_gas(CALL_GAS);
+    env.set_gas(REGISTRY_GAS);
     factory.set_vault(vault.address());
     println!("HUNCH_FACTORY_VAULT_SET ok");
 
@@ -199,7 +236,7 @@ fn catalogue_v2(env: &HostEnv, manifest_path: &str, selector: &str, divisor: u64
             println!("HUNCH_SKIP_REGISTER slug={slug} (already in the registry)");
         } else {
             println!("HUNCH_STEP register-v2 {slug}");
-            env.set_gas(CALL_GAS);
+            env.set_gas(REGISTRY_GAS);
             factory.register_vault_market(slug.to_string(), question, category, deadline);
             println!("HUNCH_REGISTERED slug={slug}");
         }
@@ -217,7 +254,7 @@ fn catalogue_v2(env: &HostEnv, manifest_path: &str, selector: &str, divisor: u64
                         continue;
                     }
                     println!("HUNCH_STEP seed {slug} {outcome}");
-                    env.set_gas(CALL_GAS);
+                    env.set_gas(MONEY_GAS);
                     vault
                         .with_tokens(U512::from(stake))
                         .bet(slug.to_string(), outcome.to_string());
@@ -256,23 +293,23 @@ fn lifecycle_v2(env: &HostEnv) {
     println!("HUNCH_MARKET slug={slug} vault-entry (no install)");
 
     println!("HUNCH_STEP bet-yes");
-    env.set_gas(CALL_GAS);
+    env.set_gas(MONEY_GAS);
     vault
         .with_tokens(U512::from(120_000_000_000u64))
         .bet(slug.to_string(), "yes".to_string());
 
     println!("HUNCH_STEP bet-no");
-    env.set_gas(CALL_GAS);
+    env.set_gas(MONEY_GAS);
     vault
         .with_tokens(U512::from(80_000_000_000u64))
         .bet(slug.to_string(), "no".to_string());
 
     println!("HUNCH_STEP resolve");
-    env.set_gas(CALL_GAS);
+    env.set_gas(MONEY_GAS);
     vault.resolve(slug.to_string(), "yes".to_string());
 
     println!("HUNCH_STEP claim");
-    env.set_gas(CALL_GAS);
+    env.set_gas(MONEY_GAS);
     vault.claim(slug.to_string());
 
     println!("HUNCH_STEP done");
@@ -304,19 +341,19 @@ fn lifecycle(env: &HostEnv) {
     );
 
     println!("HUNCH_STEP bet-yes");
-    env.set_gas(CALL_GAS);
+    env.set_gas(MONEY_GAS);
     market.with_tokens(U512::from(120_000_000_000u64)).bet("yes".to_string());
 
     println!("HUNCH_STEP bet-no");
-    env.set_gas(CALL_GAS);
+    env.set_gas(MONEY_GAS);
     market.with_tokens(U512::from(80_000_000_000u64)).bet("no".to_string());
 
     println!("HUNCH_STEP resolve");
-    env.set_gas(CALL_GAS);
+    env.set_gas(MONEY_GAS);
     market.resolve("yes".to_string());
 
     println!("HUNCH_STEP claim");
-    env.set_gas(CALL_GAS);
+    env.set_gas(MONEY_GAS);
     market.claim();
 
     println!("HUNCH_STEP done");
@@ -391,7 +428,7 @@ fn catalogue(env: &HostEnv, manifest_path: &str, selector: &str, divisor: u64) {
             println!("HUNCH_SKIP_REGISTER slug={slug} (already in the registry)");
         } else {
             println!("HUNCH_STEP register {slug}");
-            env.set_gas(CALL_GAS);
+            env.set_gas(REGISTRY_GAS);
             factory.register_market(
                 slug.to_string(),
                 question,
@@ -415,7 +452,7 @@ fn catalogue(env: &HostEnv, manifest_path: &str, selector: &str, divisor: u64) {
                         continue;
                     }
                     println!("HUNCH_STEP seed {slug} {outcome}");
-                    env.set_gas(CALL_GAS);
+                    env.set_gas(MONEY_GAS);
                     market.with_tokens(U512::from(stake)).bet(outcome.to_string());
                     println!("HUNCH_SEEDED slug={slug} outcome={outcome} motes={stake}");
                 }

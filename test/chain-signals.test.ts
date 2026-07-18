@@ -14,19 +14,33 @@ import {
 } from "@/adapters/casper/chain-signals";
 
 describe("parseValidatorSignal (CSPR.cloud)", () => {
-  it("reads the validator count from item_count", () => {
-    expect(parseValidatorSignal({ data: [], item_count: 142 })).toEqual({
+  // Verbatim shape from GET https://api.testnet.cspr.cloud/auction-metrics (2026-07-18).
+  const AUCTION_METRICS = {
+    data: {
+      current_era_id: 22988,
+      active_validator_number: 83,
+      total_bids_number: 18546,
+      active_bids_number: 83,
+      total_active_era_stake: "355134116068779222",
+    },
+  };
+
+  it("reads the active validator count from /auction-metrics", () => {
+    expect(parseValidatorSignal(AUCTION_METRICS)).toEqual({
       metric: "active_validators",
-      value: "142",
+      value: "83",
       unitLabel: "",
       sourceLabel: "CSPR.cloud",
     });
   });
 
   it("returns null for payloads without a usable count", () => {
-    expect(parseValidatorSignal({ data: [] })).toBeNull();
+    expect(parseValidatorSignal({ data: {} })).toBeNull();
     expect(parseValidatorSignal(null)).toBeNull();
-    expect(parseValidatorSignal({ item_count: "many" })).toBeNull();
+    expect(parseValidatorSignal({ data: { active_validator_number: "many" } })).toBeNull();
+    // The pre-2026-07-18 `/validators?page=1&page_size=1` shape. That endpoint 400s without an
+    // `era_id`, so this payload never actually arrives — it must not be mistaken for a signal.
+    expect(parseValidatorSignal({ data: [], item_count: 142 })).toBeNull();
   });
 });
 
@@ -65,7 +79,9 @@ describe("fetchLiveSignal", () => {
     const calls: string[] = [];
     const fetchImpl: typeof fetch = async (url) => {
       calls.push(String(url));
-      return new Response(JSON.stringify({ data: [], item_count: 98 }), { status: 200 });
+      return new Response(JSON.stringify({ data: { active_validator_number: 98 } }), {
+        status: 200,
+      });
     };
     const signal = await fetchLiveSignal("testnet", { apiKey: "k", fetchImpl });
     expect(signal).toEqual({
@@ -74,7 +90,29 @@ describe("fetchLiveSignal", () => {
       unitLabel: "",
       sourceLabel: "CSPR.cloud",
     });
+    // Regression: `/validators` without an `era_id` 400s, which silently demoted every keyed
+    // request to the RPC fallback. Pin the endpoint that actually answers.
+    expect(calls[0]).toContain("/auction-metrics");
     expect(calls[0]).toContain("cspr.cloud");
+  });
+
+  it("falls back to node RPC when CSPR.cloud rejects the request", async () => {
+    const calls: string[] = [];
+    const fetchImpl: typeof fetch = async (url) => {
+      calls.push(String(url));
+      if (String(url).includes("cspr.cloud")) {
+        return new Response(JSON.stringify({ error: { code: "invalid_input" } }), { status: 400 });
+      }
+      return new Response(
+        JSON.stringify({
+          result: { block_with_signatures: { block: { Version2: { header: { height: 77 } } } } },
+        }),
+        { status: 200 },
+      );
+    };
+    const signal = await fetchLiveSignal("testnet", { apiKey: "k", fetchImpl });
+    expect(signal?.metric).toBe("latest_block_height");
+    expect(signal?.sourceLabel).toBe("Casper RPC");
   });
 
   it("falls back to node RPC block height without a key", async () => {
