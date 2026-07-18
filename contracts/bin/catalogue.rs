@@ -113,11 +113,67 @@ fn main() {
             catalogue_v2(&env, manifest, selector, divisor);
         }
         "lifecycle-v2" => lifecycle_v2(&env),
+        "approve-oracle" => {
+            let oracle = args
+                .get(2)
+                .expect("usage: approve-oracle <oracle-address> <true|false>");
+            let approved: bool = args
+                .get(3)
+                .expect("missing approval flag (true|false)")
+                .parse()
+                .expect("approval flag must be true or false");
+            approve_oracle(&env, oracle, approved);
+        }
+        "open-creation" => {
+            let open: bool = args
+                .get(2)
+                .expect("usage: open-creation <true|false>")
+                .parse()
+                .expect("flag must be true or false");
+            open_creation(&env, open);
+        }
         _ => {
-            eprintln!("usage: contracts_catalogue <balance|lifecycle|catalogue|vault-deploy|catalogue-v2|lifecycle-v2> ...");
+            eprintln!(
+                "usage: contracts_catalogue <balance|lifecycle|catalogue|vault-deploy|\
+                 catalogue-v2|lifecycle-v2|approve-oracle|open-creation> ..."
+            );
             std::process::exit(2);
         }
     }
+}
+
+/// S19: add/remove an oracle on the vault's public-creation allowlist. A permissionlessly
+/// created market must bind an approved oracle — that binding is what stops a creator from
+/// resolving their own market in their own favour.
+fn approve_oracle(env: &HostEnv, oracle: &str, approved: bool) {
+    let mut vault = load_vault(env);
+    let addr = Address::from_str(oracle).expect("bad oracle address");
+    println!("HUNCH_STEP approve-oracle oracle={oracle} approved={approved}");
+    env.set_gas(REGISTRY_GAS);
+    vault.approve_oracle(addr, approved);
+    println!(
+        "HUNCH_ORACLE_APPROVED oracle={oracle} approved={}",
+        vault.is_oracle_approved(addr)
+    );
+}
+
+/// S19: open (or re-close) permissionless market creation on the vault.
+///
+/// Approve at least one oracle FIRST — the allowlist is not enumerable on chain, so the
+/// driver cannot verify it for you, and opening with an empty allowlist makes every public
+/// `create_market` revert `OracleNotApproved`.
+fn open_creation(env: &HostEnv, open: bool) {
+    let mut vault = load_vault(env);
+    if open {
+        println!(
+            "HUNCH_NOTE opening creation — confirm at least one `approve-oracle` has landed, \
+             or every public create_market will revert OracleNotApproved"
+        );
+    }
+    println!("HUNCH_STEP open-creation open={open}");
+    env.set_gas(REGISTRY_GAS);
+    vault.set_open_creation(open);
+    println!("HUNCH_OPEN_CREATION {}", vault.open_creation());
 }
 
 /// Load the singleton vault from `HUNCH_VAULT_V2`.

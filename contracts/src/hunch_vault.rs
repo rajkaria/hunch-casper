@@ -18,9 +18,34 @@
 //! market A can never pay market B (see the isolation tests).
 //!
 //! Creation bond: `create_market` is payable and must attach `creation_bond` motes
-//! (spam pricing for the S19+ permissionless registry). The bond is held by the vault
-//! and refunded to the creator when the market settles. While `open_creation` is
-//! false (the default), only the admin (Genesis key) may create.
+//! (spam pricing for the permissionless registry). The bond is held by the vault
+//! and refunded to the creator when the market settles.
+//!
+//! # Permissionless creation (S19)
+//!
+//! `open_creation` is false at init — only the admin (Genesis key) may create. Flipping
+//! it with `set_open_creation(true)` opens creation to anyone, so the guardrails below
+//! exist to make that flip safe. **They bind non-admin creators only**; the admin keeps
+//! the full parameter range so the curated catalogue is unaffected.
+//!
+//! * **Approved oracles only.** The oracle bound at creation is the only address that can
+//!   resolve the market, i.e. it decides who gets paid. An unconstrained creator would
+//!   name themselves, take the other side's money and self-resolve — so a public market's
+//!   oracle must be on the admin-curated allowlist (`approve_oracle`), and may never be
+//!   the creator. This is the guardrail the whole flip hinges on.
+//! * **Fee cap** (`MAX_PUBLIC_FEE_BPS`) — the raw check only bars ≥ 100%, which still
+//!   permits a 99% honeypot.
+//! * **Deadline horizon** (`MAX_PUBLIC_DEADLINE_HORIZON_MS`) — bettor funds are escrowed
+//!   until settlement, so an unbounded deadline is an unbounded lockup.
+//! * **Reserved `meta` category** — meta-markets score the agent leaderboards, so letting
+//!   the public mint them would contaminate the self-scoring board (see AGENTS.md).
+//! * **Concurrent-market cap per creator** (`max_open_markets_per_creator`) — bounds spam
+//!   by open markets, not lifetime ones, so the counter frees on settlement alongside the
+//!   bond and an honest creator never hits a permanent ceiling.
+//!
+//! Structural field bounds (id/question/category/outcome lengths, outcome count,
+//! duplicate outcome keys) apply to **every** creator, admin included: they are input
+//! sanity, not policy, and unbounded strings are a storage-griefing vector.
 use odra::casper_types::U512;
 use odra::prelude::*;
 
@@ -30,6 +55,23 @@ const STATUS_RESOLVED: u8 = 1;
 const STATUS_VOIDED: u8 = 2;
 
 const BPS_DENOMINATOR: u32 = 10_000;
+
+/// Largest fee a non-admin creator may set (5%). The catalogue ships 200 bps.
+const MAX_PUBLIC_FEE_BPS: u32 = 500;
+/// Furthest out a non-admin creator may set a deadline (180 days, in ms).
+const MAX_PUBLIC_DEADLINE_HORIZON_MS: u64 = 180 * 24 * 60 * 60 * 1_000;
+/// Default cap on simultaneously-open markets per non-admin creator.
+const DEFAULT_MAX_OPEN_MARKETS_PER_CREATOR: u32 = 5;
+/// Category reserved to the admin — meta-markets score the agent boards.
+const RESERVED_CATEGORY_META: &str = "meta";
+
+/// Structural field bounds (every creator). Sized well clear of the real catalogue,
+/// whose longest slug is 29 chars, longest question 49, and widest market 4 outcomes.
+const MAX_MARKET_ID_LEN: usize = 64;
+const MAX_QUESTION_LEN: usize = 200;
+const MAX_CATEGORY_LEN: usize = 32;
+const MAX_OUTCOME_LEN: usize = 32;
+const MAX_OUTCOMES: usize = 8;
 
 /// Errors surfaced by the vault.
 #[odra::odra_error]
@@ -68,6 +110,22 @@ pub enum Error {
     NotAdmin = 16,
     /// `refund` only applies to voided markets — winners use `claim`.
     NotVoided = 17,
+    /// Public creation must bind an admin-approved oracle.
+    OracleNotApproved = 18,
+    /// A public creator may not be their own market's oracle (self-resolution).
+    SelfOracle = 19,
+    /// Fee exceeds the public creation cap.
+    FeeTooHigh = 20,
+    /// Deadline is beyond the public creation horizon.
+    DeadlineTooFar = 21,
+    /// `meta` is reserved to the admin — it scores the agent boards.
+    ReservedCategory = 22,
+    /// Creator already holds the maximum number of simultaneously-open markets.
+    CreatorMarketCapReached = 23,
+    /// A field exceeded its length/count bound, or was empty.
+    InvalidField = 24,
+    /// Outcome keys must be unique.
+    DuplicateOutcome = 25,
 }
 
 /// Emitted when a market is created in the vault.
@@ -133,6 +191,22 @@ pub struct PayoutClaimed {
     pub amount: U512,
 }
 
+/// Emitted when the admin adds or removes an oracle from the public-creation allowlist.
+#[odra::event]
+pub struct OracleApproved {
+    /// Oracle whose approval changed.
+    pub oracle: Address,
+    /// Whether it may now back public markets.
+    pub approved: bool,
+}
+
+/// Emitted when the admin opens or closes permissionless creation.
+#[odra::event]
+pub struct CreationOpened {
+    /// Whether non-admin addresses may now create markets.
+    pub open: bool,
+}
+
 /// Emitted when a creator's bond is returned at settlement.
 #[odra::event]
 pub struct BondRefunded {
@@ -165,7 +239,10 @@ pub struct MarketConfig {
 
 /// The singleton multi-market vault.
 #[odra::module(
-    events = [MarketCreated, BetPlaced, MarketResolved, MarketVoided, PayoutClaimed, BondRefunded],
+    events = [
+        MarketCreated, BetPlaced, MarketResolved, MarketVoided, PayoutClaimed, BondRefunded,
+        OracleApproved, CreationOpened
+    ],
     errors = Error
 )]
 pub struct HunchVault {
@@ -173,6 +250,12 @@ pub struct HunchVault {
     treasury: Var<Address>,
     creation_bond: Var<U512>,
     open_creation: Var<bool>,
+    /// Oracles the admin has cleared to back permissionless markets (S19).
+    approved_oracles: Mapping<Address, bool>,
+    /// creator -> markets they currently hold open (freed at settlement).
+    open_markets_of: Mapping<Address, u32>,
+    /// Cap on `open_markets_of` for non-admin creators.
+    max_open_markets_per_creator: Var<u32>,
     /// Insertion-ordered market ids (enumeration for indexers/MCP).
     ids: List<String>,
     exists: Mapping<String, bool>,
@@ -205,12 +288,20 @@ impl HunchVault {
         self.treasury.set(treasury);
         self.creation_bond.set(creation_bond);
         self.open_creation.set(false);
+        self.max_open_markets_per_creator
+            .set(DEFAULT_MAX_OPEN_MARKETS_PER_CREATOR);
     }
 
     /// Create a market as a state entry — a cheap entrypoint call, not a Wasm install.
     ///
     /// Payable: must attach at least `creation_bond` motes (held, refunded to the
-    /// creator at settlement). Admin-only until `set_open_creation(true)` (S19+).
+    /// creator at settlement).
+    ///
+    /// Admin-only until `set_open_creation(true)`. Once open, non-admin creators are
+    /// additionally bound by the S19 guardrails documented on the module — approved
+    /// non-self oracle, capped fee, bounded deadline, no `meta` category, and a limit on
+    /// simultaneously-open markets. The admin is exempt from those policy caps but not
+    /// from the structural field bounds.
     #[odra(payable)]
     pub fn create_market(
         &mut self,
@@ -223,9 +314,8 @@ impl HunchVault {
         outcomes: Vec<String>,
     ) {
         let caller = self.env().caller();
-        if !self.open_creation.get_or_default()
-            && caller != self.admin.get().unwrap_or_revert(self)
-        {
+        let is_admin = caller == self.admin.get().unwrap_or_revert(self);
+        if !is_admin && !self.open_creation.get_or_default() {
             self.env().revert(Error::CreationClosed);
         }
         if self.exists.get_or_default(&market_id) {
@@ -237,14 +327,21 @@ impl HunchVault {
         if fee_bps >= BPS_DENOMINATOR {
             self.env().revert(Error::InvalidFee);
         }
-        if deadline <= self.env().get_block_time() {
+        let now = self.env().get_block_time();
+        if deadline <= now {
             self.env().revert(Error::InvalidDeadline);
+        }
+        self.assert_valid_shape(&market_id, &question, &category, &outcomes);
+        if !is_admin {
+            self.assert_public_creation_allowed(caller, &category, oracle, fee_bps, deadline, now);
         }
         let bond = self.env().attached_value();
         if bond < self.creation_bond.get_or_default() {
             self.env().revert(Error::InsufficientBond);
         }
 
+        let open_now = self.open_markets_of.get_or_default(&caller);
+        self.open_markets_of.set(&caller, open_now + 1);
         self.exists.set(&market_id, true);
         self.ids.push(market_id.clone());
         self.status.set(&market_id, STATUS_OPEN);
@@ -441,12 +538,31 @@ impl HunchVault {
 
     // ---- admin ----
 
-    /// Admin-only: open (or re-close) permissionless market creation (S19+).
+    /// Admin-only: open (or re-close) permissionless market creation.
+    ///
+    /// Approve at least one oracle first — with an empty allowlist every public
+    /// `create_market` reverts `OracleNotApproved`, so the flip would open nothing.
     pub fn set_open_creation(&mut self, open: bool) {
-        if self.env().caller() != self.admin.get().unwrap_or_revert(self) {
-            self.env().revert(Error::NotAdmin);
-        }
+        self.assert_admin();
         self.open_creation.set(open);
+        self.env().emit_event(CreationOpened { open });
+    }
+
+    /// Admin-only: add or remove an oracle from the public-creation allowlist.
+    ///
+    /// Only affects markets created *after* the change — a market's oracle is bound at
+    /// creation and immutable, so revoking here cannot strand an existing market's
+    /// resolution.
+    pub fn approve_oracle(&mut self, oracle: Address, approved: bool) {
+        self.assert_admin();
+        self.approved_oracles.set(&oracle, approved);
+        self.env().emit_event(OracleApproved { oracle, approved });
+    }
+
+    /// Admin-only: retune the per-creator cap on simultaneously-open markets.
+    pub fn set_max_open_markets_per_creator(&mut self, max: u32) {
+        self.assert_admin();
+        self.max_open_markets_per_creator.set(max);
     }
 
     // ---- reads (used by the off-chain adapter / MCP / UI / indexers) ----
@@ -464,6 +580,21 @@ impl HunchVault {
     /// Whether non-admin creation is open.
     pub fn open_creation(&self) -> bool {
         self.open_creation.get_or_default()
+    }
+
+    /// Whether `oracle` may back permissionlessly-created markets.
+    pub fn is_oracle_approved(&self, oracle: Address) -> bool {
+        self.approved_oracles.get_or_default(&oracle)
+    }
+
+    /// Cap on simultaneously-open markets per non-admin creator.
+    pub fn max_open_markets_per_creator(&self) -> u32 {
+        self.max_open_markets_per_creator.get_or_default()
+    }
+
+    /// Markets `creator` currently holds open (freed as each one settles).
+    pub fn open_markets_of(&self, creator: Address) -> u32 {
+        self.open_markets_of.get_or_default(&creator)
     }
 
     /// Number of markets ever created in the vault.
@@ -563,14 +694,89 @@ impl HunchVault {
         }
     }
 
+    fn assert_admin(&self) {
+        if self.env().caller() != self.admin.get().unwrap_or_revert(self) {
+            self.env().revert(Error::NotAdmin);
+        }
+    }
+
     fn get_config_or_revert(&self, market_id: &String) -> MarketConfig {
         self.config
             .get(market_id)
             .unwrap_or_revert_with(self, Error::UnknownMarket)
     }
 
-    /// Return the creation bond to the creator exactly once, at settlement.
+    /// Structural input bounds, applied to every creator (admin included): unbounded
+    /// strings and outcome lists are a storage-griefing vector, and duplicate outcome
+    /// keys would collapse two pools into one storage slot.
+    fn assert_valid_shape(
+        &self,
+        market_id: &String,
+        question: &String,
+        category: &String,
+        outcomes: &[String],
+    ) {
+        if market_id.is_empty()
+            || market_id.len() > MAX_MARKET_ID_LEN
+            || question.is_empty()
+            || question.len() > MAX_QUESTION_LEN
+            || category.is_empty()
+            || category.len() > MAX_CATEGORY_LEN
+            || outcomes.len() > MAX_OUTCOMES
+        {
+            self.env().revert(Error::InvalidField);
+        }
+        for (i, outcome) in outcomes.iter().enumerate() {
+            if outcome.is_empty() || outcome.len() > MAX_OUTCOME_LEN {
+                self.env().revert(Error::InvalidField);
+            }
+            if outcomes[i + 1..].contains(outcome) {
+                self.env().revert(Error::DuplicateOutcome);
+            }
+        }
+    }
+
+    /// The S19 policy guardrails that make `open_creation` safe. Non-admin creators only.
+    fn assert_public_creation_allowed(
+        &self,
+        caller: Address,
+        category: &str,
+        oracle: Address,
+        fee_bps: u32,
+        deadline: u64,
+        now: u64,
+    ) {
+        if category.trim().eq_ignore_ascii_case(RESERVED_CATEGORY_META) {
+            self.env().revert(Error::ReservedCategory);
+        }
+        // The oracle decides who gets paid; a creator who is their own oracle can take
+        // the other side's stake and resolve in their own favour.
+        if oracle == caller {
+            self.env().revert(Error::SelfOracle);
+        }
+        if !self.approved_oracles.get_or_default(&oracle) {
+            self.env().revert(Error::OracleNotApproved);
+        }
+        if fee_bps > MAX_PUBLIC_FEE_BPS {
+            self.env().revert(Error::FeeTooHigh);
+        }
+        if deadline.saturating_sub(now) > MAX_PUBLIC_DEADLINE_HORIZON_MS {
+            self.env().revert(Error::DeadlineTooFar);
+        }
+        let open_now = self.open_markets_of.get_or_default(&caller);
+        if open_now >= self.max_open_markets_per_creator.get_or_default() {
+            self.env().revert(Error::CreatorMarketCapReached);
+        }
+    }
+
+    /// Return the creation bond to the creator and free their open-market slot. Called
+    /// exactly once per market: every call site sits behind `assert_open`, which reverts
+    /// once the status has left `STATUS_OPEN`.
     fn refund_bond(&mut self, market_id: &String, config: &MarketConfig) {
+        let open_now = self.open_markets_of.get_or_default(&config.creator);
+        self.open_markets_of
+            .set(&config.creator, open_now.saturating_sub(1));
+
         let bond = self.bond_of.get_or_default(market_id);
         if bond.is_zero() {
             return;
@@ -588,8 +794,9 @@ impl HunchVault {
 #[cfg(test)]
 mod tests {
     use super::{
-        BondRefunded, Error, HunchVault, HunchVaultHostRef, HunchVaultInitArgs, MarketCreated,
-        MarketResolved, PayoutClaimed, STATUS_OPEN, STATUS_RESOLVED, STATUS_VOIDED,
+        BondRefunded, CreationOpened, Error, HunchVault, HunchVaultHostRef, HunchVaultInitArgs,
+        MarketCreated, MarketResolved, OracleApproved, PayoutClaimed, STATUS_OPEN, STATUS_RESOLVED,
+        STATUS_VOIDED,
     };
     use odra::casper_types::U512;
     use odra::host::{Deployer, HostEnv, HostRef};
@@ -1146,6 +1353,7 @@ mod tests {
         let env = odra_test::env();
         let mut vault = deploy(&env, 0);
         let alice = env.get_account(1);
+        let arbiter = env.get_account(2);
 
         env.set_caller(alice);
         assert_eq!(
@@ -1153,11 +1361,11 @@ mod tests {
                 .try_create_market(
                     "m1".to_string(),
                     "q".to_string(),
-                    "meta".to_string(),
-                    alice,
+                    "casper-native".to_string(),
+                    arbiter,
                     200,
                     1_000_000,
-                    super::tests::yes_no(),
+                    yes_no(),
                 )
                 .unwrap_err(),
             Error::CreationClosed.into()
@@ -1169,20 +1377,470 @@ mod tests {
             Error::NotAdmin.into()
         );
         env.set_caller(env.get_account(0));
+        vault.approve_oracle(arbiter, true);
         vault.set_open_creation(true);
+        assert!(env.emitted_event(&vault, CreationOpened { open: true }));
 
         // Now Alice can create — and she is the creator/bond recipient.
         env.set_caller(alice);
         vault.create_market(
             "m1".to_string(),
             "q".to_string(),
-            "meta".to_string(),
-            alice,
+            "casper-native".to_string(),
+            arbiter,
             200,
             1_000_000,
-            super::tests::yes_no(),
+            yes_no(),
         );
         assert_eq!(vault.creator_of("m1".to_string()), alice);
+        assert_eq!(vault.open_markets_of(alice), 1);
+    }
+
+    // ---- S19: guardrails that make permissionless creation safe ----
+
+    /// Deploy with creation open and `account(2)` approved as a public oracle.
+    fn deploy_open(env: &HostEnv, creation_bond: u64) -> HunchVaultHostRef {
+        let mut vault = deploy(env, creation_bond);
+        env.set_caller(env.get_account(0));
+        vault.approve_oracle(env.get_account(2), true);
+        vault.set_open_creation(true);
+        vault
+    }
+
+    /// A well-formed public creation by `creator`, bound to the approved oracle.
+    fn public_create(
+        vault: &mut HunchVaultHostRef,
+        env: &HostEnv,
+        creator: Address,
+        id: &str,
+    ) -> Result<(), OdraError> {
+        env.set_caller(creator);
+        vault.try_create_market(
+            id.to_string(),
+            "Will it happen?".to_string(),
+            "casper-native".to_string(),
+            env.get_account(2),
+            200,
+            1_000_000,
+            yes_no(),
+        )
+    }
+
+    /// The vector the whole flip hinges on: a public creator who names themselves oracle
+    /// could take the other side's stake and resolve in their own favour.
+    #[test]
+    fn public_creator_cannot_be_their_own_oracle() {
+        let env = odra_test::env();
+        let mut vault = deploy_open(&env, 0);
+        let mallory = env.get_account(1);
+
+        env.set_caller(mallory);
+        assert_eq!(
+            vault
+                .try_create_market(
+                    "rug".to_string(),
+                    "Will I pay myself?".to_string(),
+                    "casper-native".to_string(),
+                    mallory, // <- self-resolution
+                    200,
+                    1_000_000,
+                    yes_no(),
+                )
+                .unwrap_err(),
+            Error::SelfOracle.into()
+        );
+        assert!(!vault.market_exists("rug".to_string()));
+    }
+
+    /// Even a third-party oracle must be admin-approved — otherwise Mallory just uses a
+    /// second address she controls.
+    #[test]
+    fn public_creation_requires_an_approved_oracle() {
+        let env = odra_test::env();
+        let mut vault = deploy_open(&env, 0);
+        let mallory = env.get_account(1);
+        let sockpuppet = env.get_account(4);
+
+        env.set_caller(mallory);
+        assert_eq!(
+            vault
+                .try_create_market(
+                    "rug".to_string(),
+                    "Will my alt pay me?".to_string(),
+                    "casper-native".to_string(),
+                    sockpuppet,
+                    200,
+                    1_000_000,
+                    yes_no(),
+                )
+                .unwrap_err(),
+            Error::OracleNotApproved.into()
+        );
+
+        // Admin approves it → the same call now succeeds.
+        env.set_caller(env.get_account(0));
+        vault.approve_oracle(sockpuppet, true);
+        assert!(env.emitted_event(
+            &vault,
+            OracleApproved {
+                oracle: sockpuppet,
+                approved: true,
+            }
+        ));
+        assert!(vault.is_oracle_approved(sockpuppet));
+
+        env.set_caller(mallory);
+        vault.create_market(
+            "rug".to_string(),
+            "Will my alt pay me?".to_string(),
+            "casper-native".to_string(),
+            sockpuppet,
+            200,
+            1_000_000,
+            yes_no(),
+        );
+        assert!(vault.market_exists("rug".to_string()));
+    }
+
+    #[test]
+    fn approve_oracle_is_admin_only_and_revocable() {
+        let env = odra_test::env();
+        let mut vault = deploy_open(&env, 0);
+        let alice = env.get_account(1);
+        let arbiter = env.get_account(2);
+
+        env.set_caller(alice);
+        assert_eq!(
+            vault.try_approve_oracle(alice, true).unwrap_err(),
+            Error::NotAdmin.into()
+        );
+
+        env.set_caller(env.get_account(0));
+        vault.approve_oracle(arbiter, false);
+        assert!(!vault.is_oracle_approved(arbiter));
+        assert_eq!(
+            public_create(&mut vault, &env, alice, "m1").unwrap_err(),
+            Error::OracleNotApproved.into()
+        );
+    }
+
+    /// Revoking an oracle must not strand markets it already backs — the binding is
+    /// captured in the market config at creation and is immutable.
+    #[test]
+    fn revoking_an_oracle_does_not_strand_existing_markets() {
+        let env = odra_test::env();
+        let mut vault = deploy_open(&env, 0);
+        let alice = env.get_account(1);
+        let arbiter = env.get_account(2);
+
+        public_create(&mut vault, &env, alice, "m1").unwrap();
+
+        env.set_caller(env.get_account(0));
+        vault.approve_oracle(arbiter, false);
+
+        // The bound oracle can still settle the market it already backs.
+        env.set_caller(arbiter);
+        vault.resolve("m1".to_string(), "YES".to_string());
+        assert_eq!(vault.status("m1".to_string()), STATUS_VOIDED); // no winners → void
+    }
+
+    /// `meta` markets score the Prophet/Arbiter boards, so the public may not mint them.
+    #[test]
+    fn public_creation_rejects_the_reserved_meta_category() {
+        let env = odra_test::env();
+        let mut vault = deploy_open(&env, 0);
+        let alice = env.get_account(1);
+        let arbiter = env.get_account(2);
+
+        for (i, category) in ["meta", "META", "Meta", " meta "].iter().enumerate() {
+            env.set_caller(alice);
+            assert_eq!(
+                vault
+                    .try_create_market(
+                        format!("m{i}"),
+                        "Which Prophet wins?".to_string(),
+                        category.to_string(),
+                        arbiter,
+                        200,
+                        1_000_000,
+                        yes_no(),
+                    )
+                    .unwrap_err(),
+                Error::ReservedCategory.into(),
+                "category {category:?} should be reserved"
+            );
+        }
+    }
+
+    /// The admin is exempt from the policy caps — the curated catalogue still ships
+    /// meta-markets, and Genesis is legitimately its own oracle.
+    #[test]
+    fn admin_is_exempt_from_the_public_policy_caps() {
+        let env = odra_test::env();
+        let mut vault = deploy_open(&env, 0);
+        let admin = env.get_account(0);
+
+        env.set_caller(admin);
+        vault.create_market(
+            "prophet-race-weekly".to_string(),
+            "Which Prophet leads the week?".to_string(),
+            "meta".to_string(),
+            admin, // own oracle, unapproved, and a meta category
+            9_000, // far above MAX_PUBLIC_FEE_BPS
+            super::MAX_PUBLIC_DEADLINE_HORIZON_MS * 4,
+            yes_no(),
+        );
+        assert!(vault.market_exists("prophet-race-weekly".to_string()));
+    }
+
+    #[test]
+    fn public_fee_is_capped() {
+        let env = odra_test::env();
+        let mut vault = deploy_open(&env, 0);
+        let alice = env.get_account(1);
+        let arbiter = env.get_account(2);
+
+        env.set_caller(alice);
+        assert_eq!(
+            vault
+                .try_create_market(
+                    "honeypot".to_string(),
+                    "Will the house take 90%?".to_string(),
+                    "casper-native".to_string(),
+                    arbiter,
+                    9_000,
+                    1_000_000,
+                    yes_no(),
+                )
+                .unwrap_err(),
+            Error::FeeTooHigh.into()
+        );
+
+        // Exactly at the cap is allowed.
+        vault.create_market(
+            "atcap".to_string(),
+            "Fee exactly at the cap?".to_string(),
+            "casper-native".to_string(),
+            arbiter,
+            super::MAX_PUBLIC_FEE_BPS,
+            1_000_000,
+            yes_no(),
+        );
+        assert!(vault.market_exists("atcap".to_string()));
+    }
+
+    /// Stakes are escrowed until settlement, so an unbounded deadline is an unbounded
+    /// lockup of other people's money.
+    #[test]
+    fn public_deadline_horizon_is_bounded() {
+        let env = odra_test::env();
+        let mut vault = deploy_open(&env, 0);
+        let alice = env.get_account(1);
+        let arbiter = env.get_account(2);
+
+        env.set_caller(alice);
+        assert_eq!(
+            vault
+                .try_create_market(
+                    "forever".to_string(),
+                    "Locked until the heat death?".to_string(),
+                    "casper-native".to_string(),
+                    arbiter,
+                    200,
+                    super::MAX_PUBLIC_DEADLINE_HORIZON_MS * 2,
+                    yes_no(),
+                )
+                .unwrap_err(),
+            Error::DeadlineTooFar.into()
+        );
+    }
+
+    /// The cap bounds *concurrently open* markets, so settling one frees the slot — an
+    /// honest creator never hits a permanent ceiling.
+    #[test]
+    fn open_market_cap_is_enforced_and_freed_on_settlement() {
+        let env = odra_test::env();
+        let mut vault = deploy_open(&env, 0);
+        let alice = env.get_account(1);
+        let arbiter = env.get_account(2);
+        let cap = super::DEFAULT_MAX_OPEN_MARKETS_PER_CREATOR;
+        assert_eq!(vault.max_open_markets_per_creator(), cap);
+
+        for i in 0..cap {
+            public_create(&mut vault, &env, alice, &format!("m{i}")).unwrap();
+        }
+        assert_eq!(vault.open_markets_of(alice), cap);
+        assert_eq!(
+            public_create(&mut vault, &env, alice, "one-too-many").unwrap_err(),
+            Error::CreatorMarketCapReached.into()
+        );
+
+        // A different creator is unaffected — the cap is per-address.
+        public_create(&mut vault, &env, env.get_account(4), "bobs").unwrap();
+
+        // Settling one of Alice's frees exactly one slot.
+        env.set_caller(arbiter);
+        vault.void("m0".to_string());
+        assert_eq!(vault.open_markets_of(alice), cap - 1);
+        public_create(&mut vault, &env, alice, "one-too-many").unwrap();
+        assert_eq!(vault.open_markets_of(alice), cap);
+    }
+
+    #[test]
+    fn admin_can_retune_the_open_market_cap() {
+        let env = odra_test::env();
+        let mut vault = deploy_open(&env, 0);
+        let alice = env.get_account(1);
+
+        env.set_caller(alice);
+        assert_eq!(
+            vault.try_set_max_open_markets_per_creator(1).unwrap_err(),
+            Error::NotAdmin.into()
+        );
+
+        env.set_caller(env.get_account(0));
+        vault.set_max_open_markets_per_creator(1);
+        assert_eq!(vault.max_open_markets_per_creator(), 1);
+
+        public_create(&mut vault, &env, alice, "m1").unwrap();
+        assert_eq!(
+            public_create(&mut vault, &env, alice, "m2").unwrap_err(),
+            Error::CreatorMarketCapReached.into()
+        );
+    }
+
+    /// Structural bounds are input sanity, not policy — they bind the admin too.
+    #[test]
+    fn structural_field_bounds_apply_to_every_creator() {
+        let env = odra_test::env();
+        let mut vault = deploy(&env, 0);
+        let admin = env.get_account(0);
+        env.set_caller(admin);
+
+        let long_id = "x".repeat(super::MAX_MARKET_ID_LEN + 1);
+        let long_question = "q".repeat(super::MAX_QUESTION_LEN + 1);
+        let long_category = "c".repeat(super::MAX_CATEGORY_LEN + 1);
+        let long_outcome = "o".repeat(super::MAX_OUTCOME_LEN + 1);
+        let too_many: Vec<String> = (0..=super::MAX_OUTCOMES).map(|i| format!("o{i}")).collect();
+
+        let cases: Vec<(&str, String, String, String, Vec<String>)> = vec![
+            ("long id", long_id, "q".to_string(), "c".to_string(), yes_no()),
+            ("empty id", String::new(), "q".to_string(), "c".to_string(), yes_no()),
+            ("long question", "m".to_string(), long_question, "c".to_string(), yes_no()),
+            ("empty question", "m".to_string(), String::new(), "c".to_string(), yes_no()),
+            ("long category", "m".to_string(), "q".to_string(), long_category, yes_no()),
+            ("empty category", "m".to_string(), "q".to_string(), String::new(), yes_no()),
+            (
+                "long outcome",
+                "m".to_string(),
+                "q".to_string(),
+                "c".to_string(),
+                vec!["YES".to_string(), long_outcome],
+            ),
+            (
+                "empty outcome",
+                "m".to_string(),
+                "q".to_string(),
+                "c".to_string(),
+                vec!["YES".to_string(), String::new()],
+            ),
+            ("too many outcomes", "m".to_string(), "q".to_string(), "c".to_string(), too_many),
+        ];
+
+        for (label, id, question, category, outcomes) in cases {
+            assert_eq!(
+                vault
+                    .try_create_market(id, question, category, admin, 200, 1_000_000, outcomes)
+                    .unwrap_err(),
+                Error::InvalidField.into(),
+                "{label} should be rejected"
+            );
+        }
+    }
+
+    /// Duplicate keys would collapse two outcome pools into one storage slot.
+    #[test]
+    fn duplicate_outcome_keys_are_rejected() {
+        let env = odra_test::env();
+        let mut vault = deploy(&env, 0);
+        let admin = env.get_account(0);
+        env.set_caller(admin);
+
+        assert_eq!(
+            vault
+                .try_create_market(
+                    "dupe".to_string(),
+                    "q".to_string(),
+                    "casper-native".to_string(),
+                    admin,
+                    200,
+                    1_000_000,
+                    vec!["YES".to_string(), "NO".to_string(), "YES".to_string()],
+                )
+                .unwrap_err(),
+            Error::DuplicateOutcome.into()
+        );
+    }
+
+    /// End-to-end money-path proof: with creation open, Mallory has no path to a market
+    /// she can both take bets on and resolve herself.
+    #[test]
+    fn self_resolution_theft_is_unreachable_end_to_end() {
+        let env = odra_test::env();
+        let mut vault = deploy_open(&env, 0);
+        let mallory = env.get_account(1);
+        let arbiter = env.get_account(2);
+        let victim = env.get_account(4);
+
+        // Every route to naming herself resolver is closed.
+        env.set_caller(mallory);
+        for (oracle, expected) in [
+            (mallory, Error::SelfOracle),
+            (env.get_account(5), Error::OracleNotApproved),
+        ] {
+            assert_eq!(
+                vault
+                    .try_create_market(
+                        "rug".to_string(),
+                        "Will Mallory pay herself?".to_string(),
+                        "casper-native".to_string(),
+                        oracle,
+                        200,
+                        1_000_000,
+                        yes_no(),
+                    )
+                    .unwrap_err(),
+                expected.into()
+            );
+        }
+
+        // The only market she can create is bound to the approved arbiter.
+        public_create(&mut vault, &env, mallory, "fair").unwrap();
+        env.set_caller(victim);
+        vault
+            .with_tokens(U512::from(100u64))
+            .bet("fair".to_string(), "YES".to_string());
+
+        // She cannot resolve it in her own favour.
+        env.set_caller(mallory);
+        assert_eq!(
+            vault
+                .try_resolve("fair".to_string(), "NO".to_string())
+                .unwrap_err(),
+            Error::NotOracle.into()
+        );
+        assert_eq!(
+            vault.try_void("fair".to_string()).unwrap_err(),
+            Error::NotOracle.into()
+        );
+
+        // Only the bound arbiter settles it, and the victim's stake is intact.
+        env.set_caller(arbiter);
+        vault.resolve("fair".to_string(), "YES".to_string());
+        let victim_before = env.balance_of(&victim);
+        env.set_caller(victim);
+        vault.claim("fair".to_string());
+        assert_eq!(env.balance_of(&victim), victim_before + U512::from(100u64));
     }
 
     #[test]

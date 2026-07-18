@@ -136,6 +136,40 @@ winning_outcome)`. Record the measured `HUNCH_GAS` numbers here after the run:
 | `create_market` (first) | _fill after deploy_ | |
 | `create_market` (typical) | _fill after deploy_ | |
 
+### 4d. S19 — open permissionless creation
+
+`create_market` is admin-only until the vault's `open_creation` flag is flipped. Opening it
+lets any address (human or agent) mint a market, so the vault enforces guardrails on
+**non-admin creators only** — the admin keeps the full parameter range and the curated
+catalogue is unaffected:
+
+| guardrail | why |
+|---|---|
+| oracle must be admin-**approved** and **not the creator** | the oracle decides who gets paid; a self-appointed one takes the other side's stake and resolves in its own favour |
+| fee ≤ 500 bps | the raw check only bars ≥ 100%, which still permits a 99% honeypot |
+| deadline ≤ 180 days out | stakes are escrowed until settlement, so an unbounded deadline is an unbounded lockup |
+| `meta` category reserved | meta-markets score the agent leaderboards — public minting would contaminate the self-scoring board (AGENTS.md) |
+| ≤ 5 simultaneously-open markets per creator | bounds spam; the slot frees at settlement alongside the bond, so honest creators face no lifetime ceiling |
+
+Field bounds (id ≤ 64, question ≤ 200, category ≤ 32, outcome key ≤ 32, ≤ 8 unique
+outcomes) are input sanity and apply to **every** creator, admin included.
+
+```bash
+# 1. Approve the oracle(s) that may back public markets FIRST — the allowlist is not
+#    enumerable on chain, so opening with an empty one makes every public create_market
+#    revert OracleNotApproved.
+HUNCH_VAULT_V2=hash-<vault-v2> \
+  cargo run --bin contracts_catalogue -- approve-oracle account-hash-<arbiter> true
+
+# 2. Then flip creation open (re-runnable; pass false to close it again).
+HUNCH_VAULT_V2=hash-<vault-v2> \
+  cargo run --bin contracts_catalogue -- open-creation true
+```
+
+Both are cheap registry-shaped calls (`REGISTRY_GAS`). Revoking an oracle later affects only
+*future* creations — a market's oracle is bound at creation and immutable, so a revocation
+can never strand an open market's resolution.
+
 ## 5. Wire the addresses into the Next.js app
 
 Put the deployed package/contract hashes into the app env (Vercel + `.env.local`) — the

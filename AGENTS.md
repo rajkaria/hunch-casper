@@ -35,6 +35,16 @@ the maintainer's checkout).
   (`core/meta-resolution.ts`) — a participation floor so a single manipulated pool can't hand a
   chosen Prophet the win. Combined with the weekly window, it bounds oracle-manipulation of the
   self-scoring board.
+- **`meta` is a reserved category, enforced on chain (S19).** Once `HunchVault.open_creation`
+  is flipped, anyone may mint a market — so `create_market` reverts `ReservedCategory` for a
+  non-admin creator passing `meta` (case/whitespace-insensitive). Without it, the public could
+  mint the very markets that score the Prophet/Arbiter boards. The admin (Genesis) is exempt,
+  because the curated catalogue legitimately ships meta-markets.
+- **A permissionless market's oracle must be admin-approved and never its creator.** The
+  oracle is the only address that can resolve, i.e. it decides who gets paid; an
+  unconstrained creator would name themselves, take the other side's stake and self-resolve.
+  This is the guardrail the whole `open_creation` flip hinges on — do not relax it to "any
+  address in OracleRegistry" without re-checking who can write to that registry.
 - **The Arbiter's accuracy is two-sided.** The mock oracle marks a deterministic minority of external
   reads inaccurate, so a wrong call genuinely lowers reputation and `arbiter-accuracy-95` can resolve
   NO. Meta-markets resolve from board math and are accurate by construction.
