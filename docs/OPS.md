@@ -1,0 +1,237 @@
+# Operations runbook — Hunch on Casper
+
+Everything needed to run this deployment without reading the source: what each environment
+variable does, how to tell whether the system is healthy, what to do when it is not, and what
+each on-chain action costs before you pay for it.
+
+Contract deployment itself is covered by [`contracts/DEPLOY.md`](../contracts/DEPLOY.md); this
+document is about keeping the running system alive.
+
+---
+
+## 1. The one command that tells you everything
+
+```bash
+curl -s https://casper.playhunch.xyz/api/health | jq
+```
+
+`GET /api/health` reports mode, contract wiring, KV reachability, x402 posture, signing keys,
+cron authorisation, and how long ago an agent last acted. It returns **200** when everything
+passes or only warns, and **503** when any check fails — so an uptime monitor can page on the
+status code alone, with no body parsing.
+
+| Verdict | Means |
+|---|---|
+| `ok` | wired and working |
+| `skip` | not applicable in this mode (e.g. signing keys in mock mode) |
+| `warn` | running, but degraded or on a fallback — worth knowing, not worth paging |
+| `fail` | this deployment cannot do its job; overall status becomes `degraded` |
+
+The report never contains a secret's value — only whether one is configured. It is safe to
+leave unauthenticated and safe to paste into an issue.
+
+**The four `fail` conditions, and what each one actually breaks:**
+
+| Check | Fails when | Consequence |
+|---|---|---|
+| `cron` | real mode, no `CRON_SECRET` | every scheduled tick 401s — **the economy stops advancing** |
+| `signer.bettor` | real mode, no `CASPER_BETTOR_KEY` | nothing can be signed; every bet and resolve errors |
+| `contracts.routing` | real mode, no vault and no per-market addresses | bets and resolves have no on-chain destination |
+| `persistence` | KV configured but unreachable (usually a rotated token) | boards silently stop surviving cold starts |
+
+That last one is the trap worth naming: env looks perfect, writes 401 in the background, and
+nothing appears broken until an instance recycles. `persistenceConfigured()` only reads env;
+the health probe actually calls KV.
+
+---
+
+## 2. Environment matrix
+
+Server-only variables must never be prefixed `NEXT_PUBLIC_` — that prefix ships the value to
+the browser. Everything in §2.3 is a secret.
+
+### 2.1 Public network config (`NEXT_PUBLIC_*`)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `NEXT_PUBLIC_DEFAULT_NETWORK` | `testnet` | Network the UI opens on |
+| `NEXT_PUBLIC_CASPER_TESTNET_RPC` | public node | JSON-RPC endpoint |
+| `NEXT_PUBLIC_CSPR_CLOUD_TESTNET` | `api.testnet.cspr.cloud` | CSPR.cloud base |
+| `NEXT_PUBLIC_CASPER_TESTNET_EXPLORER` | `testnet.cspr.live` | Explorer link base |
+| `NEXT_PUBLIC_TESTNET_MARKET_FACTORY` | — | MarketFactory package hash |
+| `NEXT_PUBLIC_TESTNET_ORACLE_REGISTRY` | — | OracleRegistry package hash |
+| `NEXT_PUBLIC_TESTNET_VAULT` | — | v1 ParimutuelMarket vault (fallback routing) |
+| `NEXT_PUBLIC_TESTNET_VAULT_V2` | — | **HunchVault v2** singleton — cheap `create_market` entries |
+| `NEXT_PUBLIC_TESTNET_MARKET_ADDRS` | — | JSON `{slug: "hash-…"}`; per-market packages, **outrank** the vault |
+| `NEXT_PUBLIC_ONCHAIN_RECEIPTS` | — | JSON `[{label, hash, network}]` rendered as explorer links |
+| `NEXT_PUBLIC_SHOW_DEMO_RESOLVE` | off | Shows the manual operator resolve control |
+
+`NEXT_PUBLIC_MAINNET_*` mirrors every testnet key.
+
+> **Routing order matters.** `NEXT_PUBLIC_*_MARKET_ADDRS` wins over `_VAULT_V2` for any slug it
+> contains. Dropping a slug from that map silently re-routes its bets to the vault, where the
+> market may not exist. When rebuilding the map, use `contracts_catalogue list-markets` (free
+> reads) as the source of truth rather than a saved copy.
+
+### 2.2 Mode and behaviour
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CASPER_CHAIN_MODE` | `mock` | `real` signs and submits live transactions |
+| `CASPER_LIVE_SIGNALS` | unset | `false` forces the deterministic Genesis rotation |
+| `CASPER_ENABLE_RESOLVE_ROUTE` | `true` | Operator resolve route; **fail-closed in real mode** |
+| `GENESIS_MAX_CREATED` | `12` | Cap on demo-triggered Genesis creations |
+| `LLM_MODEL` | `anthropic/claude-sonnet-5` | Narration model (never the money path) |
+
+### 2.3 Secrets
+
+| Variable | Required when | Purpose |
+|---|---|---|
+| `CASPER_BETTOR_KEY` | real mode | Ed25519 PEM or hex seed that signs and funds transactions |
+| `CASPER_ORACLE_KEY` | recommended in real mode | Separate resolve signer; falls back to the bettor key (shared custody) |
+| `CRON_SECRET` | real mode | Authorises the scheduled tick; **without it the economy stops** |
+| `CASPER_RESOLVE_OPERATOR_TOKEN` | if the resolve route is enabled in real mode | `x-operator-token` header value |
+| `CASPER_X402_PAYTO` | real-mode agent x402 | Treasury account; wires the transfer-verifying PaymentPort |
+| `CASPER_REAL_AGENT_X402` | legacy alternative | `true` keeps the weaker nonce-match verifier |
+| `CSPR_CLOUD_API_KEY` | optional | Live validator signal for Genesis |
+| `LLM_API_KEY` | optional | Narration; absent ⇒ deterministic canned narration |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | production | Economy persistence (Vercel KV names win) |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | production | Same, plain Upstash names |
+
+**Vercel gotcha (cost us a session once):** this project's variables are *sensitive-type*.
+`vercel env pull` renders them as `""` on CLI ≤ 54 and `[SENSITIVE]` on ≥ 56 — **never** trust a
+pull to tell you whether a variable is set. Ask `/api/health` instead; it reports presence from
+inside the running deployment.
+
+### 2.4 Repository-level (GitHub)
+
+| Setting | Kind | Purpose |
+|---|---|---|
+| `ECONOMY_BASE_URL` | repo *variable* | Target for the 10-minute tick (default `https://casper.playhunch.xyz`) |
+| `CRON_SECRET` | repo *secret* | Sent as `x-cron-secret`; omitted when unset |
+
+---
+
+## 3. The economy heartbeat
+
+`.github/workflows/economy.yml` POSTs `/api/agent/tick` every 10 minutes — GitHub Actions rather
+than Vercel cron, because the Hobby plan fires cron at most once a day.
+
+- `schedule` only fires from the **default branch**. The workflow must be on `main` to run.
+- `workflow_dispatch` works from any branch for a manual kick.
+- To stop the loop: disable the workflow in the Actions tab (or delete the file).
+
+**Symptom → cause:**
+
+| Symptom | Likely cause |
+|---|---|
+| Health `economy` warns "tick looks stalled" | workflow disabled, `ECONOMY_BASE_URL` wrong, or every run 401ing |
+| Every workflow run logs HTTP 401 | real mode with `CRON_SECRET` missing or mismatched between repo and deploy |
+| Ticks succeed but boards reset | KV unconfigured or unreachable — check `persistence` in health |
+
+A tick is idempotent in the sense that matters: it places the round's bets and resolves matured
+markets. Re-running one produces another round, not a duplicate of the last.
+
+---
+
+## 4. Costing an on-chain action before paying for it
+
+Casper testnet runs `payment_limited` pricing with 75 % refund of the unused limit, so a
+transaction costs **`consumed + 0.25 × (limit − consumed)`**. Over-setting a limit is not free,
+and the *whole* limit must be affordable when the transaction is submitted.
+
+`plan-cost` prices a catalogue run with no node, no key, and no deployed contracts — it is pure
+arithmetic over measured consumption:
+
+```bash
+curl -s 'https://casper.playhunch.xyz/api/deploy-plan?network=testnet' > /tmp/plan.json
+cd contracts
+cargo run --bin contracts_catalogue -- plan-cost /tmp/plan.json v2 all 100
+# modes: v2 (vault exists) | v2-fresh (also installs the vault) | v1 (per-market installs)
+# args:  <manifest> <mode> <slug,...|all> <seed-divisor> [bond-motes]
+```
+
+It prints a per-step table plus five machine-readable lines:
+
+| Line | Meaning |
+|---|---|
+| `HUNCH_PLAN_COST_EXPECTED_MOTES` | what the run should actually cost |
+| `HUNCH_PLAN_COST_WORST_MOTES` | every call reverts and burns its full limit |
+| `HUNCH_PLAN_BOND_ESCROW_MOTES` | creation bonds — escrowed, refunded at clean settlement |
+| `HUNCH_PLAN_PEAK_TX_LIMIT_MOTES` | balance floor the node enforces on the largest single call |
+| `HUNCH_PLAN_RECOMMENDED_BALANCE_MOTES` | expected + bonds + one peak limit of headroom |
+
+Fund to the **recommended** figure, not the expected one. Running dry mid-catalogue strands
+half-created on-chain state (a created market with no registration, a bond posted against
+nothing) that then has to be reconciled by hand.
+
+Measured per-transaction costs (net CSPR, from the Jul 5 bootstrap and Jul 18 vault-v2 runs) live
+in [`contracts/DEPLOY.md` §4c](../contracts/DEPLOY.md) and in the constants at the top of
+`contracts/bin/catalogue.rs`. The estimator derives from those constants, so retuning a gas limit
+updates the estimate automatically.
+
+### Faucet refill
+
+The Casper testnet faucet is **human-only** (no API). Refill at
+<https://testnet.cspr.live/tools/faucet> with the deployer public key from
+`contracts/keys/public_key_hex`, then confirm:
+
+```bash
+cd contracts && cargo run --bin contracts_catalogue -- balance
+```
+
+---
+
+## 5. Persistence
+
+The four economy ledgers (settlement, activity feed, oracle reputation, Genesis-created markets)
+are module singletons. Without KV they reset on every serverless cold start and diverge across
+instances — a visitor's bet can vanish when the next request lands elsewhere.
+
+With KV configured, all four fold into one versioned envelope under `hunch:economy:v1`:
+hydrated once per instance before the first read, snapshotted after every mutation (debounced,
+coalesced), last-write-wins across instances. The chain remains the source of truth for money;
+this is durability for the *presentation* layer.
+
+Failure behaviour is deliberate: a 3-second timeout, one warning, then the app continues on
+in-memory state. **KV downtime degrades durability, never availability.**
+
+- Verify: `curl -s .../api/health | jq '.checks[] | select(.name=="persistence")'`
+- Hydration marks the demo seed as done, so a hydrated instance never fabricates demo history on
+  top of real history.
+- To wipe demo state, delete the `hunch:economy:v1` key; the next cold instance re-seeds.
+
+---
+
+## 6. Incident checklist
+
+1. **`curl /api/health`** — it names the failing subsystem. Start there, not in the logs.
+2. **Boards empty / history vanished** → `persistence`. Configured but unreachable is a rotated
+   token; unconfigured in production is a missing setup step.
+3. **Economy frozen** → `cron`. Check the Actions tab for red runs; 401s mean the secret does not
+   match between the repo and the deployment.
+4. **Agent bets return 402** → `x402`. In real mode the rail is fail-closed unless
+   `CASPER_X402_PAYTO` (preferred, transfer-verifying) or `CASPER_REAL_AGENT_X402=true` (weaker)
+   is set. A 402 here is correct behaviour, not a fault.
+5. **Bets error in real mode** → `signer.bettor` or `contracts.routing`. No key means nothing can
+   be signed; no routing target means there is nowhere to send it.
+6. **Transactions rejected for funds** → run `balance`, then `plan-cost`, then refill (§4).
+7. **Roll back fast:** set `CASPER_CHAIN_MODE=mock` and redeploy. The surface returns to the
+   deterministic, credential-free demo — labelled `simulated`, honest, and always available.
+   This is the safe state, and reaching for it is not a failure.
+
+---
+
+## 7. Deploy pipeline
+
+- **Production:** push to `main` → Vercel builds and promotes to `casper.playhunch.xyz`.
+- **CI gate:** `.github/workflows/ci.yml` runs `pnpm typecheck && lint && test && build`, plus
+  `cargo odra test` and a wasm build in a second job.
+- **SDK:** `pnpm sdk:build`, then `cd packages/sdk && npm publish --access public`.
+
+The local pre-commit gate is the same command CI runs:
+
+```bash
+pnpm typecheck && pnpm lint && pnpm test && pnpm build
+cd contracts && cargo odra test   # only when contracts/ changed
+```

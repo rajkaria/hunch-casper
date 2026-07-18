@@ -85,6 +85,29 @@ const SKIP_REGISTER: &[&str] = &["coin-flip-5m"];
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let command = args.get(1).map(String::as_str).unwrap_or("help");
+
+    // `plan-cost` is a pure arithmetic dry run: it must work with no node, no key, and no
+    // deployed contracts, because its whole job is to answer "what will this cost?" BEFORE
+    // any of that is set up. Dispatch it before touching the livenet env, which needs a
+    // secret-key path and an RPC endpoint just to construct.
+    if command == "plan-cost" {
+        let manifest = args
+            .get(2)
+            .expect("usage: plan-cost <deploy-plan.json> <v1|v2|v2-fresh> <slug,...|all> <seed-divisor> [bond-motes]");
+        let mode = args.get(3).map(String::as_str).unwrap_or("v2");
+        let selector = args.get(4).map(String::as_str).unwrap_or("all");
+        let divisor: u64 = args
+            .get(5)
+            .map(|d| d.parse().expect("seed divisor must be a u64"))
+            .unwrap_or(0);
+        let bond: u64 = args
+            .get(6)
+            .map(|b| b.parse().expect("bond must be u64 motes"))
+            .unwrap_or(DEFAULT_BOND_MOTES);
+        plan_cost(manifest, mode, selector, divisor, bond);
+        return;
+    }
+
     let env = odra_casper_livenet_env::env();
 
     match command {
@@ -146,10 +169,185 @@ fn main() {
         _ => {
             eprintln!(
                 "usage: contracts_catalogue <balance|lifecycle|catalogue|vault-deploy|\
-                 catalogue-v2|lifecycle-v2|list-markets|approve-oracle|open-creation> ..."
+                 catalogue-v2|lifecycle-v2|list-markets|approve-oracle|open-creation|\
+                 plan-cost> ..."
             );
             std::process::exit(2);
         }
+    }
+}
+
+// ── plan-cost: price a catalogue run before paying for it ───────────────────────────────────────
+//
+// The failure this prevents: a catalogue expansion is kicked off, the deployer runs dry six
+// markets in, and the run strands half-created state on chain (a created market with no
+// registration, a bond posted against nothing). Every number below is measured from real
+// transactions, so the estimate is chain truth arithmetic, not a guess.
+
+/// Testnet `refund_handling` returns this fraction of the UNUSED gas limit. Net cost is
+/// therefore `consumed + (1 - ratio) * (limit - consumed)` — over-setting a limit is not free.
+const REFUND_NUMERATOR: u64 = 75;
+const REFUND_DENOMINATOR: u64 = 100;
+
+/// Measured consumption, in motes, from the transactions cited in the gas-constant comments
+/// above. Paired with the `*_GAS` limits, these reproduce the observed net cost to the mote.
+const CONSUMED_INSTALL_VAULT: u64 = 364_099_000_000;
+const CONSUMED_INSTALL_MARKET: u64 = 299_023_000_000;
+const CONSUMED_CREATE_FIRST: u64 = 4_958_000_000;
+const CONSUMED_CREATE_TYPICAL: u64 = 2_323_000_000;
+const CONSUMED_REGISTER: u64 = 976_000_000;
+const CONSUMED_BET: u64 = 1_439_000_000;
+
+/// The vault's creation bond as deployed on testnet (1 CSPR). Escrowed, not spent — it comes
+/// back at clean settlement — so it is reported separately from cost.
+const DEFAULT_BOND_MOTES: u64 = 1_000_000_000;
+
+/// Net cost of one transaction: what is consumed, plus the unrefunded share of the slack.
+fn net_cost(consumed: u64, limit: u64) -> u64 {
+    let slack = limit.saturating_sub(consumed);
+    consumed + slack * (REFUND_DENOMINATOR - REFUND_NUMERATOR) / REFUND_DENOMINATOR
+}
+
+fn cspr(motes: u64) -> String {
+    format!("{:.3}", motes as f64 / 1_000_000_000.0)
+}
+
+struct CostLine {
+    step: &'static str,
+    count: u64,
+    /// Net motes per call under the refund model.
+    each_net: u64,
+    /// Gas limit per call — the amount that must be affordable up front, and the worst case
+    /// if the call reverts (a reverted transaction refunds nothing).
+    each_limit: u64,
+}
+
+/// Price a deploy-plan manifest without touching the chain. Prints an itemised table, the
+/// expected total, the revert-everything worst case, the peak single-transaction limit (the
+/// balance floor the node enforces at submit time), and the escrowed bond total.
+fn plan_cost(manifest_path: &str, mode: &str, selector: &str, divisor: u64, bond: u64) {
+    let raw = fs::read_to_string(manifest_path).expect("cannot read manifest");
+    let manifest: serde_json::Value = serde_json::from_str(&raw).expect("manifest is not JSON");
+    let markets = manifest["markets"].as_array().expect("manifest has no markets[]");
+
+    let selected: Option<Vec<&str>> = (selector != "all").then(|| selector.split(',').collect());
+    let mut market_count: u64 = 0;
+    let mut seed_bets: u64 = 0;
+    for m in markets {
+        let slug = m["slug"].as_str().expect("market without slug");
+        if let Some(ref only) = selected {
+            if !only.contains(&slug) {
+                continue;
+            }
+        }
+        market_count += 1;
+        if divisor > 0 {
+            if let Some(seeds) = m["seedBets"].as_object() {
+                for (_, motes) in seeds {
+                    let motes: u64 = motes
+                        .as_str()
+                        .expect("seed motes must be a string")
+                        .parse()
+                        .expect("seed motes must be numeric");
+                    if motes / divisor > 0 {
+                        seed_bets += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let v2 = mode != "v1";
+    // `v2-fresh` prices a bootstrap on a network with no vault yet: the wasm install is by far
+    // the largest single line, and leaving it out is exactly how a top-up gets under-ordered.
+    let fresh_vault = mode == "v2-fresh";
+    let mut lines: Vec<CostLine> = Vec::new();
+    if fresh_vault {
+        lines.push(CostLine {
+            step: "install HunchVault v2 (wasm, one-off)",
+            count: 1,
+            each_net: net_cost(CONSUMED_INSTALL_VAULT, MARKET_GAS),
+            each_limit: MARKET_GAS,
+        });
+    }
+    if v2 {
+        // The first create on a fresh vault initialises its dictionaries and costs roughly
+        // double; charging every market the typical rate would under-quote a fresh vault.
+        if market_count > 0 {
+            lines.push(CostLine {
+                step: "create_market (first, dictionary init)",
+                count: 1,
+                each_net: net_cost(CONSUMED_CREATE_FIRST, CREATE_GAS),
+                each_limit: CREATE_GAS,
+            });
+        }
+        if market_count > 1 {
+            lines.push(CostLine {
+                step: "create_market (typical)",
+                count: market_count - 1,
+                each_net: net_cost(CONSUMED_CREATE_TYPICAL, CREATE_GAS),
+                each_limit: CREATE_GAS,
+            });
+        }
+    } else {
+        lines.push(CostLine {
+            step: "install ParimutuelMarket (wasm)",
+            count: market_count,
+            each_net: net_cost(CONSUMED_INSTALL_MARKET, MARKET_GAS),
+            each_limit: MARKET_GAS,
+        });
+    }
+    lines.push(CostLine {
+        step: "register_market",
+        count: market_count,
+        each_net: net_cost(CONSUMED_REGISTER, REGISTRY_GAS),
+        each_limit: REGISTRY_GAS,
+    });
+    if seed_bets > 0 {
+        lines.push(CostLine {
+            step: "bet (house seed)",
+            count: seed_bets,
+            each_net: net_cost(CONSUMED_BET, BET_GAS),
+            each_limit: BET_GAS,
+        });
+    }
+
+    println!("HUNCH_PLAN mode={mode} markets={market_count} seed_bets={seed_bets}");
+    println!("{:<40} {:>5} {:>14} {:>14}", "step", "count", "each (CSPR)", "total (CSPR)");
+    let mut total_net: u64 = 0;
+    let mut total_worst: u64 = 0;
+    let mut peak_limit: u64 = 0;
+    for l in &lines {
+        let line_total = l.each_net * l.count;
+        total_net += line_total;
+        total_worst += l.each_limit * l.count;
+        peak_limit = peak_limit.max(l.each_limit);
+        println!(
+            "{:<40} {:>5} {:>14} {:>14}",
+            l.step,
+            l.count,
+            cspr(l.each_net),
+            cspr(line_total)
+        );
+    }
+    // The creation bond is a vault mechanism; a v1 per-market install posts no bond.
+    let bond_total = if v2 { bond * market_count } else { 0 };
+    println!("{:-<76}", "");
+    println!("HUNCH_PLAN_COST_EXPECTED_MOTES {total_net}   ({} CSPR)", cspr(total_net));
+    println!("HUNCH_PLAN_COST_WORST_MOTES {total_worst}   ({} CSPR, every call reverts and burns its limit)", cspr(total_worst));
+    println!("HUNCH_PLAN_BOND_ESCROW_MOTES {bond_total}   ({} CSPR, refunded at clean settlement)", cspr(bond_total));
+    println!("HUNCH_PLAN_PEAK_TX_LIMIT_MOTES {peak_limit}   ({} CSPR must be affordable when the largest single call is submitted)", cspr(peak_limit));
+    let recommended = total_net + bond_total + peak_limit;
+    println!(
+        "HUNCH_PLAN_RECOMMENDED_BALANCE_MOTES {recommended}   ({} CSPR = expected + bonds + one peak limit of headroom)",
+        cspr(recommended)
+    );
+    if !v2 {
+        println!(
+            "HUNCH_PLAN_NOTE v1 installs a wasm package per market. The same catalogue through the \
+             v2 vault costs ~{}x less — prefer `catalogue-v2` unless a slug needs its own contract.",
+            (net_cost(CONSUMED_INSTALL_MARKET, MARKET_GAS) / net_cost(CONSUMED_CREATE_TYPICAL, CREATE_GAS)).max(1)
+        );
     }
 }
 

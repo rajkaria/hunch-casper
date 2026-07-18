@@ -24,6 +24,10 @@ Built for the **Casper Agentic Buildathon 2026** (Innovation Track). Live at
   the MVP (live demo, local run, on-chain verification, MCP, x402).
 - **Submission pack:** [`docs/SUBMISSION.md`](./docs/SUBMISSION.md) — ready-to-paste form copy,
   judge quickstart, final checklist. On-chain hashes for the BUIDL page: [`docs/BUIDL.md`](./docs/BUIDL.md).
+- **Is it healthy right now?** [`/api/health`](https://casper.playhunch.xyz/api/health) reports
+  chain mode, contract wiring, KV reachability, x402 posture and how long ago an agent last acted —
+  200 when healthy, 503 when a subsystem has failed, and never a secret's value. Running it is
+  documented in [`docs/OPS.md`](./docs/OPS.md), the operator runbook.
 - **Where it's going:** [`VISION.md`](./VISION.md) — the long-term launch plan (RWA oracle, third-party
   agents, grant ask).
 
