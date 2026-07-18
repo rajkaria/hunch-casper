@@ -20,7 +20,10 @@ import type {
   ResolveMarketInput,
 } from "@/ports";
 import type { AgentAccount, TransferInput, TransferResult, WalletPort } from "@/ports/wallet";
+import type { EventsPort } from "@/ports/events";
 import { createMockChain } from "@/adapters/mock/mock-chain";
+import { createMockEvents } from "@/adapters/mock/mock-events";
+import { createStreamEvents } from "@/adapters/casper/stream-events";
 import { createMockWallet } from "@/adapters/mock/mock-wallet";
 import { createMockPayment } from "@/adapters/mock/mock-payment";
 import { fleetConfigured } from "@/adapters/casper/fleet-keys";
@@ -37,6 +40,8 @@ export interface Container {
   payment: PaymentPort;
   /** Per-agent on-chain identity + purse — how an agent pays its own x402 bill. */
   wallet: WalletPort;
+  /** The chain's event stream — the auditable source the boards rebuild from. */
+  events: EventsPort;
   oracle: OraclePort;
   llm: LlmClient;
   store: MarketStorePort;
@@ -130,6 +135,17 @@ export function createContainer(network: CasperNetwork = DEFAULT_NETWORK): Conta
     chainMode() === "real" && x402PayTo
       ? createRealPayment(network, x402PayTo)
       : createMockPayment(network, vaultAddress);
+  // Events go real only when real mode also knows which contract to follow. Without a v2 vault
+  // there is no single contract whose events describe the economy, so the deterministic fixture
+  // stream stays — an empty real stream would look identical to a working one.
+  const events =
+    chainMode() === "real" && cfg.contracts.vaultV2
+      ? createStreamEvents(network, {
+          contractHash: cfg.contracts.vaultV2,
+          apiKey: process.env.CSPR_CLOUD_API_KEY,
+        })
+      : createMockEvents(network);
+
   // The fleet wallet goes real only when real mode ALSO has key material. Real mode without a
   // fleet seed keeps the mock wallet, so the fleet's proofs stay obviously-fake and get rejected
   // by the transfer-verifying PaymentPort — a visible, safe failure. The alternative (a real
@@ -141,6 +157,7 @@ export function createContainer(network: CasperNetwork = DEFAULT_NETWORK): Conta
     chain,
     payment,
     wallet,
+    events,
     oracle: createMockOracle(),
     llm: createMockLlm(),
     store: createMockMarketStore(),

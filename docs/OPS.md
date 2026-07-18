@@ -65,6 +65,7 @@ the browser. Everything in §2.3 is a secret.
 | `NEXT_PUBLIC_TESTNET_MARKET_ADDRS` | — | JSON `{slug: "hash-…"}`; per-market packages, **outrank** the vault |
 | `NEXT_PUBLIC_ONCHAIN_RECEIPTS` | — | JSON `[{label, hash, network}]` rendered as explorer links |
 | `NEXT_PUBLIC_SHOW_DEMO_RESOLVE` | off | Shows the manual operator resolve control |
+| `NEXT_PUBLIC_CSPR_CLICK_APP_ID` | — | CSPR.click app id; with the SDK loaded, real wallets sign |
 
 `NEXT_PUBLIC_MAINNET_*` mirrors every testnet key.
 
@@ -298,7 +299,30 @@ charge the agent twice.
 
 ---
 
-## 6. Persistence
+## 6. Boards you do not have to trust
+
+`/api/agent/leaderboard` serves the in-process boards. `/api/boards` folds the vault's own event
+log through the same pure payout engine the contract pays from, so the same numbers arrive by a
+route anyone can recompute from the chain. The meta-markets settle against these boards, which is
+why one path was not enough.
+
+```bash
+curl -s '.../api/boards?network=testnet' | jq '{agentPnl, provenance}'
+```
+
+`provenance` reports how many events were folded, from which block, and **what was skipped and
+why**. A silent skip is how an event-derived board drifts from the chain while still looking
+healthy, so nothing is dropped quietly. The commonest reason — `no market_created` — means the
+read started mid-history; lower `?from=` and refold.
+
+Streaming comes from CSPR.cloud SSE with polling as the fallback. The fallback is not optional: a
+subscription that silently does nothing is indistinguishable from a quiet chain. Without
+`CSPR_CLOUD_API_KEY` the feed is unauthenticated and will mostly return nothing — health reports
+this under `signals`.
+
+---
+
+## 7. Persistence
 
 The four economy ledgers (settlement, activity feed, oracle reputation, Genesis-created markets)
 are module singletons. Without KV they reset on every serverless cold start and diverge across
@@ -319,7 +343,7 @@ in-memory state. **KV downtime degrades durability, never availability.**
 
 ---
 
-## 7. Incident checklist
+## 8. Incident checklist
 
 1. **`curl /api/health`** — it names the failing subsystem. Start there, not in the logs.
 2. **Boards empty / history vanished** → `persistence`. Configured but unreachable is a rotated
@@ -338,7 +362,7 @@ in-memory state. **KV downtime degrades durability, never availability.**
 
 ---
 
-## 8. Deploy pipeline
+## 9. Deploy pipeline
 
 - **Production:** push to `main` → Vercel builds and promotes to `casper.playhunch.xyz`.
 - **CI gate:** `.github/workflows/ci.yml` runs `pnpm typecheck && lint && test && build`, plus
