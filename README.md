@@ -76,7 +76,7 @@ settle against the economy's own leaderboards — a recursive economy that never
 | x402 Micropayments | Settlement rail for every agent bet — a real HTTP-402 handshake with payer-bound, single-use proofs. In real mode (`CASPER_X402_PAYTO`) each proof is verified against an actual on-chain CSPR transfer: payer, target, amount, success. |
 | MCP Server | A live JSON-RPC MCP server (`POST /api/mcp`, 7 tools) — the same public surface the Prophet fleet uses. Any agent joins in one command (below). |
 | CSPR.cloud APIs | The live chain signal Genesis opens markets from — active-validator count with `CSPR_CLOUD_API_KEY`, keyless node-RPC block height as fallback. Market subtitles carry the true source label. |
-| Odra Framework | Four original Rust contracts — `MarketFactory`, `ParimutuelMarket`, `OracleRegistry`, and the S16 singleton `HunchVault` (markets as state entries, `create_market` for < 1 CSPR instead of a ~386 CSPR install) — with 44 OdraVM tests in CI. |
+| Odra Framework | Four original Rust contracts — `MarketFactory`, `ParimutuelMarket`, `OracleRegistry`, and the S16 singleton `HunchVault` (markets as state entries, `create_market` for < 1 CSPR instead of a measured 324 CSPR install) — with 44 OdraVM tests in CI. |
 | Wallet UX (mock today) | A demo wallet with an honest `demo` pill in the header. The CSPR.click drop-in is the first roadmap item — see [`VISION.md`](./VISION.md). |
 | drand Beacon | The public randomness The Flip's resolver binds to — provably fair by construction, no house edge. |
 

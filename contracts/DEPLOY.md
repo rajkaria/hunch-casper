@@ -100,7 +100,8 @@ driver aborts before any market install that would run the deployer below ~650 C
 
 ### 4c. S16 — singleton HunchVault v2 (markets for < 1 CSPR, no more installs)
 
-v1 installed one `ParimutuelMarket` per market (~386 CSPR each). v2 installs **one**
+v1 installed one `ParimutuelMarket` per market (measured net **324.27 CSPR** each — tx
+`2b0cbe…`, limit 400, consumed 299.023, 75% refund on the unused 100.977). v2 installs **one**
 `HunchVault` and every market after that is a cheap `create_market` entrypoint call —
 the driver prints the measured cost per call (`HUNCH_GAS` line) to evidence the
 "< 1 CSPR" gate. Already-deployed v1 markets stay routable untouched (the app's
