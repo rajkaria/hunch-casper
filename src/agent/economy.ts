@@ -12,8 +12,14 @@ import type { AgentAction } from "@/adapters/mock/activity-log";
 import type { AgentPnl } from "@/core/agent-leaderboard";
 import { computeAgentLeaderboard } from "@/core/agent-leaderboard";
 import type { OracleReputation } from "@/ports/oracle";
-import { runProphetFleet } from "@/agent/prophet";
+import { runProphetFleet, PROPHET_GAS_FLOOR_MOTES } from "@/agent/prophet";
 import { runArbiterSweep, resolveMarket } from "@/agent/arbiter";
+import { PROPHETS } from "@/core/prophet-strategies";
+import { planCadence, type CadencePlan } from "@/core/cadence";
+import { OPERATOR_AGENT_ID } from "@/adapters/casper/fleet-keys";
+import { csprToMotes } from "@/core/types";
+import { chainMode } from "@/config/chain-mode";
+import { DEFAULT_BET_GAS_MOTES, DEFAULT_CREATE_GAS_MOTES } from "@/adapters/casper/deploy-plan";
 
 export interface EconomyTickReport {
   seq: number;
@@ -25,7 +31,62 @@ export interface EconomyTickReport {
   leaderboard: AgentPnl[];
   /** The oracle-accuracy leaderboard after this tick. */
   oracleBoard: OracleReputation[];
+  /** What this tick was allowed to do, and why. `null` in mock mode (nothing costs anything). */
+  cadence: CadencePlan | null;
 }
+
+/**
+ * What one round costs the operator treasury: the gas to escrow every Prophet's bet, since escrow
+ * is operator-funded (see the two-transaction model in the decision journal). Creation and seeding
+ * are charged to the same purse but happen on their own cadence, so they are not in the per-round
+ * figure — the floors in `core/cadence.ts` carry enough margin to cover them.
+ */
+function perRoundTreasuryCostMotes(): string {
+  return (BigInt(DEFAULT_BET_GAS_MOTES) * BigInt(PROPHETS.length)).toString();
+}
+
+/** What one round costs a single agent: its stake plus the gas on its own x402 transfer. */
+function perRoundAgentCostMotes(): string {
+  const largestStake = PROPHETS.reduce((max, p) => Math.max(max, p.stakeCspr), 0);
+  return (BigInt(csprToMotes(largestStake)) + PROPHET_GAS_FLOOR_MOTES).toString();
+}
+
+/**
+ * Read the purses and decide what this tick may afford.
+ *
+ * Returns `null` in mock mode: nothing there costs anything, and a throttle that could pause the
+ * demo economy for lack of imaginary money would be a bug, not a safeguard.
+ *
+ * A balance read that fails is treated as zero, which throttles *down*. That is the safe
+ * direction: the failure mode of under-spending is a quiet economy an operator can see and fix,
+ * while the failure mode of over-spending is a purse drained by reverting transactions.
+ */
+async function currentCadence(container: Container): Promise<CadencePlan | null> {
+  if (chainMode() !== "real") return null;
+  const read = async (agentId: string): Promise<bigint> => {
+    try {
+      return BigInt(await container.wallet.balanceOf(agentId));
+    } catch {
+      return 0n;
+    }
+  };
+  const [treasury, ...fleet] = await Promise.all([
+    read(OPERATOR_AGENT_ID),
+    ...PROPHETS.map((p) => read(p.id)),
+  ]);
+  const minFleet = fleet.length > 0 ? fleet.reduce((min, b) => (b < min ? b : min)) : 0n;
+  const plan = planCadence({
+    treasuryMotes: treasury.toString(),
+    minFleetBalanceMotes: minFleet.toString(),
+    perRoundTreasuryCostMotes: perRoundTreasuryCostMotes(),
+    perRoundAgentCostMotes: perRoundAgentCostMotes(),
+  });
+  if (plan.cadence !== "full") console.warn(`[economy] throttled: ${plan.reason}`);
+  return plan;
+}
+
+/** Gas budget one runtime market creation needs — exported so the ops docs cite one number. */
+export const CREATE_MARKET_GAS_MOTES = DEFAULT_CREATE_GAS_MOTES;
 
 export interface EconomyTickInput {
   /** Monotone round sequence (the cron passes the activity-log length). */
@@ -42,11 +103,17 @@ export async function runEconomyTick(
   container: Container,
   input: EconomyTickInput,
 ): Promise<EconomyTickReport> {
+  // 0. What can this tick afford? Throttling happens before anything spends, not after.
+  const cadence = await currentCadence(container);
+
   // 1. Prophets bet — pools move, rivalry plays out.
-  const prophetActions = await runProphetFleet(container, input.seq);
+  const prophetActions =
+    cadence && !cadence.allowProphetBets ? [] : await runProphetFleet(container, input.seq);
 
   // 2. Arbiter resolves everything matured (unattended), then any explicit weekly closes. Explicit
   //    closes run last so meta-markets settle against the boards this tick's resolutions produced.
+  //    Resolution is NEVER throttled: it pays people what they are owed and refunds creation
+  //    bonds. Withholding it to save gas would strand user money to protect the operator's.
   const arbiterActions = await runArbiterSweep(container);
   for (const slug of input.resolveSlugs ?? []) {
     const action = await resolveMarket(container, slug);
@@ -57,5 +124,5 @@ export async function runEconomyTick(
   const leaderboard = computeAgentLeaderboard(await container.store.settledEntries(container.network));
   const oracleBoard = await container.oracle.leaderboard();
 
-  return { seq: input.seq, prophetActions, arbiterActions, leaderboard, oracleBoard };
+  return { seq: input.seq, prophetActions, arbiterActions, leaderboard, oracleBoard, cadence };
 }

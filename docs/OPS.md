@@ -81,6 +81,9 @@ the browser. Everything in §2.3 is a secret.
 | `CASPER_LIVE_SIGNALS` | unset | `false` forces the deterministic Genesis rotation |
 | `CASPER_ENABLE_RESOLVE_ROUTE` | `true` | Operator resolve route; **fail-closed in real mode** |
 | `GENESIS_MAX_CREATED` | `12` | Cap on demo-triggered Genesis creations |
+| `CASPER_PROPHETS_PER_TICK` | 1 real / all mock | Prophets betting per tick (§5 economics) |
+| `CASPER_CREATION_BOND_MOTES` | `1000000000` | Bond attached per created market; refunded at settlement |
+| `CASPER_HOUSE_SEED_DIVISOR` | `500` | Scales catalogue seed pools for real-mode house liquidity |
 | `LLM_MODEL` | `anthropic/claude-sonnet-5` | Narration model (never the money path) |
 
 ### 2.3 Secrets
@@ -95,6 +98,7 @@ the browser. Everything in §2.3 is a secret.
 | `CASPER_REAL_AGENT_X402` | legacy alternative | `true` keeps the weaker nonce-match verifier |
 | `CASPER_FLEET_SEED` | real-mode fleet | Derives one Ed25519 identity per agent (§5) |
 | `CASPER_PROPHET_KEY_<AGENT>` | optional | Explicit key for one agent; overrides derivation |
+| `CASPER_ORACLE_ACCOUNT` | real-mode creation | Oracle bound to Genesis markets — **public**, not a secret |
 | `CSPR_CLOUD_API_KEY` | optional | Live validator signal for Genesis |
 | `LLM_API_KEY` | optional | Narration; absent ⇒ deterministic canned narration |
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | production | Economy persistence (Vercel KV names win) |
@@ -217,6 +221,58 @@ refill never leaves half the fleet funded and you guessing which half. Accounts 
 explicitly rather than re-derived in Rust: a second implementation of the KDF would be a second
 thing to keep in sync, and a divergence would fund addresses no agent signs for — indistinguishable
 from a successful refill until the fleet goes quiet anyway.
+
+### What real mode costs per day
+
+Every figure below is net CSPR under testnet's 75 % refund model
+(`consumed + 0.25 × (limit − consumed)`), from the measured transactions in
+[`contracts/DEPLOY.md` §4c](../contracts/DEPLOY.md).
+
+| Call | Consumed | Limit | Net |
+|---|---|---|---|
+| `bet` (operator escrow) | 1.439 | 5 | **2.33** |
+| `resolve` | 6.317 | 12 | **7.74** |
+| `create_market` (typical) | 2.323 | 8 | **3.74** |
+| agent x402 transfer | fixed | 0.1 | **0.10** |
+
+At the 10-minute tick (144 ticks/day), with **one** Prophet per tick:
+
+| Line | Per day |
+|---|---|
+| Prophet bet escrow gas (144 × 2.33) | ~336 CSPR (treasury) |
+| Prophet x402 transfer gas (144 × 0.10) | ~14 CSPR (fleet purses) |
+| Prophet stakes | ~1–3 CSPR/tick, reimbursed to the treasury by the x402 transfer |
+| Resolutions | 7.74 CSPR each, only when a market matures |
+
+**Four Prophets per tick would be ~1,340 CSPR/day in escrow gas alone** — far past what a
+faucet-funded deployer can hold. That is why real mode defaults to one Prophet per tick and
+rotates which one acts; every agent still takes its turns and the pools still move between rivals
+across the hour. `CASPER_PROPHETS_PER_TICK` raises it if you have funded for more.
+
+To stretch a fixed budget further, lower the tick frequency in
+`.github/workflows/economy.yml` (hourly ≈ 56 CSPR/day) before raising the fleet size.
+
+### Automatic throttling
+
+The tick reads the purses before it spends anything and degrades in a fixed order, so a nearly
+empty economy never reaches the state where every transaction reverts for insufficient funds and
+burns its gas on the way — a broke economy would otherwise drain *faster* than a healthy one.
+
+| Treasury runway | Effect |
+|---|---|
+| ≥ 144 rounds (~24 h) | full cadence |
+| < 144 rounds | **house seeding off** — most expensive per unit of value, most replaceable |
+| < 48 rounds (~8 h) | **market creation off** — the catalogue stops growing; live markets keep trading |
+
+| Fleet runway (poorest agent) | Effect |
+|---|---|
+| ≥ 12 rounds (~2 h) | Prophets bet |
+| < 12 rounds | **betting off** — last, because an economy that stops betting looks dead |
+
+**Resolution is never throttled.** It pays people what they are owed and refunds creation bonds;
+withholding it to save gas would strand user money to protect the operator's. Each capability is
+gated by the purse that actually pays for it, so a full treasury cannot mask a starving fleet.
+The tick logs `[economy] throttled: …` with the runway numbers whenever it is not at full cadence.
 
 ### Running dry
 

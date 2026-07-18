@@ -35,6 +35,14 @@ import { createHmac } from "node:crypto";
 /** Domain-separation label. Bump the version to derive a fresh, non-colliding fleet. */
 export const FLEET_KDF_LABEL = "hunch-fleet-v1";
 
+/**
+ * Reserved agent id for the operator treasury. It is NOT derived from the fleet seed — it resolves
+ * to `CASPER_BETTOR_KEY`, the key that already funds bet escrow and market creation. Exposing the
+ * treasury as an agent id lets the cadence throttle read its balance through the same `WalletPort`
+ * as every agent purse, instead of bolting a second balance path onto the chain adapter.
+ */
+export const OPERATOR_AGENT_ID = "operator";
+
 export class FleetKeyError extends Error {
   constructor(message: string) {
     super(message);
@@ -73,6 +81,10 @@ export function agentSecretKey(
   agentId: string,
   env: Record<string, string | undefined> = process.env,
 ): string | null {
+  if (agentId.trim().toLowerCase() === OPERATOR_AGENT_ID) {
+    const bettorKey = env.CASPER_BETTOR_KEY;
+    return bettorKey && bettorKey.trim().length > 0 ? bettorKey.trim() : null;
+  }
   const explicit = env[agentKeyEnvName(agentId)];
   if (explicit && explicit.trim().length > 0) return explicit.trim();
   const seed = env.CASPER_FLEET_SEED;

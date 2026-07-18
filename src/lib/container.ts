@@ -10,6 +10,7 @@ import { DEFAULT_NETWORK, explorerTransactionUrl, getNetworkConfig } from "@/con
 import { chainMode } from "@/config/chain-mode";
 import type {
   CasperChainPort,
+  CreateMarketInput,
   DeployResult,
   LlmClient,
   MarketStorePort,
@@ -71,6 +72,9 @@ function createLazyRealChain(
     },
     async placeBet(input: PlaceBetInput): Promise<DeployResult> {
       return (await load()).placeBet(input);
+    },
+    async createMarket(input: CreateMarketInput): Promise<DeployResult> {
+      return (await load()).createMarket(input);
     },
     async resolveMarket(input: ResolveMarketInput): Promise<DeployResult> {
       return (await load()).resolveMarket(input);

@@ -1,9 +1,11 @@
 export type {
   CasperChainPort,
+  CreateMarketInput,
   DeployResult,
   PlaceBetInput,
   ResolveMarketInput,
 } from "./casper-chain";
+export type { WalletPort, AgentAccount, TransferInput, TransferResult } from "./wallet";
 export type {
   PaymentPort,
   QuoteInput,

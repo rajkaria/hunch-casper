@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createContainer, type Container } from "@/lib/container";
-import { runProphet, runProphetFleet, PROPHET_GAS_FLOOR_MOTES } from "@/agent/prophet";
+import { runProphet, runProphetFleet, prophetsPerTick, PROPHET_GAS_FLOOR_MOTES } from "@/agent/prophet";
 import { PROPHETS } from "@/core/prophet-strategies";
 import { createMockWallet, __resetMockWallet, __setMockBalance, mockAccountHex } from "@/adapters/mock/mock-wallet";
 import type { TransferInput, WalletPort } from "@/ports/wallet";
@@ -111,6 +111,39 @@ describe("a Prophet's x402 payment is a real transfer from its own purse", () =>
     const container = createContainer("testnet");
     const accounts = await Promise.all(PROPHETS.map((p) => container.wallet.accountFor(p.id)));
     expect(new Set(accounts.map((a) => a.publicKeyHex)).size).toBe(PROPHETS.length);
+  });
+});
+
+describe("fleet size per round", () => {
+  it("sends the whole fleet in mock mode — the rivalry is the demo and it costs nothing", () => {
+    expect(prophetsPerTick()).toBe(PROPHETS.length);
+  });
+
+  it("sends one Prophet per round in real mode — four would burn ~1,340 CSPR/day in gas alone", () => {
+    vi.stubEnv("CASPER_CHAIN_MODE", "real");
+    expect(prophetsPerTick()).toBe(1);
+    vi.unstubAllEnvs();
+  });
+
+  it("honours an operator override, clamped to the fleet size", () => {
+    vi.stubEnv("CASPER_PROPHETS_PER_TICK", "2");
+    expect(prophetsPerTick()).toBe(2);
+    vi.stubEnv("CASPER_PROPHETS_PER_TICK", "99");
+    expect(prophetsPerTick()).toBe(PROPHETS.length);
+    vi.unstubAllEnvs();
+  });
+
+  it("rotates which agent acts, so a partial fleet is still a fair comparison", async () => {
+    const container = createContainer("testnet");
+    const slug = await openMarketSlug(container);
+    const actors: string[] = [];
+    for (let seq = 0; seq < PROPHETS.length; seq++) {
+      const actions = await runProphetFleet(container, seq, { maxProphets: 1 });
+      if (actions.length > 0) actors.push(actions[0].agent);
+    }
+    // Every Prophet takes a turn across a full rotation — not the same agent every round.
+    expect(new Set(actors).size).toBe(PROPHETS.length);
+    expect(slug.length).toBeGreaterThan(0);
   });
 });
 

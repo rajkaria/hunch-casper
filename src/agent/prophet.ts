@@ -135,10 +135,41 @@ export async function runProphet(
 }
 
 /**
- * Run the whole fleet for one round. Picks a target market (deterministic by `seq`) among the
- * open markets and sends every Prophet at it in order, so the pool shifts between them.
+ * How many Prophets act per round.
+ *
+ * Mock mode sends the whole fleet: the rivalry playing out inside a single round is the demo, and
+ * it costs nothing. Real mode defaults to **one**, because the arithmetic is unforgiving — four
+ * bets per tick at the 10-minute cadence is 576 real transactions a day, and at ~2.33 CSPR of net
+ * gas each that is ~1,340 CSPR/day of pure gas, well beyond what a faucet-funded testnet deployer
+ * can sustain. One Prophet per tick rotates through the fleet instead: every agent still gets its
+ * turns, the pool still moves between rivals across the hour, and the burn drops ~4x.
+ *
+ * `CASPER_PROPHETS_PER_TICK` overrides it for an operator who has funded for more.
  */
-export async function runProphetFleet(container: Container, seq: number): Promise<AgentAction[]> {
+export function prophetsPerTick(): number {
+  const raw = Number(process.env.CASPER_PROPHETS_PER_TICK);
+  if (Number.isFinite(raw) && raw >= 1) return Math.min(Math.floor(raw), PROPHETS.length);
+  return chainMode() === "real" ? 1 : PROPHETS.length;
+}
+
+export interface FleetOptions {
+  /** Override how many Prophets act this round (before the per-agent affordability check). */
+  maxProphets?: number;
+}
+
+/**
+ * Run the fleet for one round. Picks a target market (deterministic by `seq`) among the open
+ * markets and sends the round's Prophets at it in order, so the pool shifts between them.
+ *
+ * When fewer than the whole fleet acts, the starting index rotates with `seq`, so the same agent
+ * is not the only one ever betting — over a handful of rounds every Prophet takes a turn, and the
+ * boards stay a fair comparison rather than a record of who happened to be first.
+ */
+export async function runProphetFleet(
+  container: Container,
+  seq: number,
+  opts: FleetOptions = {},
+): Promise<AgentAction[]> {
   // Prophets trade only BASE markets — never meta-markets. A meta-market (`prophet-race`,
   // `momentum-vs-contrarian`, `arbiter-accuracy-95`) resolves against the Prophet PnL / oracle
   // boards, so letting the fleet bet them would let their bets contaminate the very board that
@@ -150,9 +181,12 @@ export async function runProphetFleet(container: Container, seq: number): Promis
   if (open.length === 0) return [];
   const target = open[seq % open.length];
 
+  const count = Math.min(opts.maxProphets ?? prophetsPerTick(), PROPHETS.length);
   const actions: AgentAction[] = [];
-  for (let i = 0; i < PROPHETS.length; i++) {
-    const action = await runProphet(container, PROPHETS[i], target.slug, seq + i);
+  for (let i = 0; i < count; i++) {
+    // Rotate the starting agent with the round so a partial fleet is not always the same agent.
+    const prophet = PROPHETS[(seq + i) % PROPHETS.length];
+    const action = await runProphet(container, prophet, target.slug, seq + i);
     if (action) actions.push(action);
   }
   return actions;
