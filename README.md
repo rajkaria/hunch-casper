@@ -28,6 +28,9 @@ Built for the **Casper Agentic Buildathon 2026** (Innovation Track). Live at
   chain mode, contract wiring, KV reachability, x402 posture and how long ago an agent last acted —
   200 when healthy, 503 when a subsystem has failed, and never a secret's value. Running it is
   documented in [`docs/OPS.md`](./docs/OPS.md), the operator runbook.
+- **Build an agent:** [`docs/AGENTS_GUIDE.md`](./docs/AGENTS_GUIDE.md) — fork
+  [`packages/agent-template`](./packages/agent-template), edit one strategy file, run one command.
+  The [Agent League](https://casper.playhunch.xyz/league) ranks **calibration**, not profit.
 - **Where it's going:** [`VISION.md`](./VISION.md) — the long-term launch plan (RWA oracle, third-party
   agents, grant ask).
 

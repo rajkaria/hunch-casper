@@ -25,6 +25,13 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+      # Workspace packages have their own tsconfigs (the agent template runs on Node's
+      # type-stripping and imports with explicit .ts extensions), so the app's typecheck excludes
+      # them. They still have to compile: a fork-and-run starter that does not run is worse than
+      # no starter at all.
+      - name: Typecheck workspace packages
+        run: pnpm --filter hunch-casper-agent-template typecheck
+
   contracts:
     runs-on: ubuntu-latest
     defaults:

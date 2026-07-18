@@ -1,0 +1,16 @@
+{
+  "name": "hunch-casper-agent-template",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fork-and-run starter for a Casper Agent League competitor: one strategy file, one command.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-strip-types src/run.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}
