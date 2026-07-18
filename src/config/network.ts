@@ -18,6 +18,12 @@ export interface ContractAddresses {
   oracleRegistry?: string;
   /** ParimutuelVault — escrow + settlement. */
   vault?: string;
+  /**
+   * HunchVault v2 — the singleton multi-market vault (S16). Markets are state entries
+   * keyed by slug; `bet`/`resolve` calls carry a `market_id` arg. When set, slugs not in
+   * `marketAddresses` route here (cheap `create_market` calls, no per-market installs).
+   */
+  vaultV2?: string;
 }
 
 export interface NetworkConfig {
@@ -101,6 +107,7 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
       marketFactory: envAddr("NEXT_PUBLIC_TESTNET_MARKET_FACTORY"),
       oracleRegistry: envAddr("NEXT_PUBLIC_TESTNET_ORACLE_REGISTRY"),
       vault: envAddr("NEXT_PUBLIC_TESTNET_VAULT"),
+      vaultV2: envAddr("NEXT_PUBLIC_TESTNET_VAULT_V2"),
     },
     marketAddresses: parseMarketAddresses(process.env.NEXT_PUBLIC_TESTNET_MARKET_ADDRS),
     guardrails: { maxBetCspr: null, showUnauditedBanner: false },
@@ -116,6 +123,7 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
       marketFactory: envAddr("NEXT_PUBLIC_MAINNET_MARKET_FACTORY"),
       oracleRegistry: envAddr("NEXT_PUBLIC_MAINNET_ORACLE_REGISTRY"),
       vault: envAddr("NEXT_PUBLIC_MAINNET_VAULT"),
+      vaultV2: envAddr("NEXT_PUBLIC_MAINNET_VAULT_V2"),
     },
     marketAddresses: parseMarketAddresses(process.env.NEXT_PUBLIC_MAINNET_MARKET_ADDRS),
     guardrails: { maxBetCspr: 25, showUnauditedBanner: true },

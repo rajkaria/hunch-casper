@@ -48,9 +48,10 @@ import { explorerTransactionUrl, getNetworkConfig } from "@/config/network";
 import {
   buildBetPlan,
   buildResolvePlan,
-  resolveMarketContract,
+  resolveMarketTarget,
   type CasperCallArg,
   type CasperCallPlan,
+  type MarketCallTarget,
 } from "./deploy-plan";
 
 /** Thrown when the real adapter is selected but its credentials/addresses are not configured. */
@@ -70,6 +71,8 @@ export interface RealChainOptions {
   marketPackageHash: string;
   /** Per-market package hashes (catalogue slug → `hash-<64hex>`), from the deploy manifest. */
   marketAddresses?: Record<string, string>;
+  /** The singleton `HunchVault` v2 **package** hash — slugs not in `marketAddresses` route here. */
+  vaultV2PackageHash?: string;
   /** Filesystem path to Odra's `proxy_caller_with_return.wasm` (required for payable bets). */
   proxyWasmPath: string;
 }
@@ -81,14 +84,15 @@ const BUNDLED_PROXY_WASM = "src/adapters/casper/resources/proxy_caller_with_retu
 export function realChainOptionsFromEnv(
   marketPackageHash: string | undefined,
   marketAddresses?: Record<string, string>,
+  vaultV2PackageHash?: string,
 ): RealChainOptions {
   const bettorKey = process.env.CASPER_BETTOR_KEY;
   if (!bettorKey) {
     throw new CasperConfigError("CASPER_BETTOR_KEY is required to submit real Casper transactions");
   }
-  if (!marketPackageHash && Object.keys(marketAddresses ?? {}).length === 0) {
+  if (!marketPackageHash && !vaultV2PackageHash && Object.keys(marketAddresses ?? {}).length === 0) {
     throw new CasperConfigError(
-      "no market contracts configured for this network (set NEXT_PUBLIC_*_VAULT or NEXT_PUBLIC_*_MARKET_ADDRS)",
+      "no market contracts configured for this network (set NEXT_PUBLIC_*_VAULT_V2, NEXT_PUBLIC_*_VAULT or NEXT_PUBLIC_*_MARKET_ADDRS)",
     );
   }
   // The proxy wasm ships in-repo; CASPER_PROXY_WASM_PATH overrides it only if needed.
@@ -98,6 +102,7 @@ export function realChainOptionsFromEnv(
     oracleKey: process.env.CASPER_ORACLE_KEY,
     marketPackageHash: marketPackageHash ?? "",
     marketAddresses,
+    vaultV2PackageHash,
     proxyWasmPath,
   };
 }
@@ -155,10 +160,11 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
   const cfg = getNetworkConfig(network);
   const rpc = new RpcClient(new HttpHandler(cfg.nodeRpcUrl));
 
-  /** The deployed contract this market lives at — per-market map first, vault fallback. */
-  const contractFor = (marketId: string): string =>
-    resolveMarketContract(marketId, {
+  /** Where this market's calls go — legacy per-market map first, then the v2 vault, then the legacy fallback. */
+  const targetFor = (marketId: string): MarketCallTarget =>
+    resolveMarketTarget(marketId, {
       marketAddresses: opts.marketAddresses,
+      vaultV2: opts.vaultV2PackageHash,
       fallback: opts.marketPackageHash || undefined,
     });
 
@@ -185,7 +191,11 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
      */
     async placeBet(input: PlaceBetInput): Promise<DeployResult> {
       const key = loadKey(opts.bettorKey);
-      const plan = buildBetPlan(input, { marketContract: contractFor(input.marketId) });
+      const target = targetFor(input.marketId);
+      const plan = buildBetPlan(input, {
+        marketContract: target.contract,
+        vaultMarketId: target.vaultMarketId,
+      });
       const proxyArgs = buildBetProxyArgs(plan);
       const tx = new SessionBuilder()
         .from(key.publicKey)
@@ -200,7 +210,11 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
     /** Non-payable `resolve` → a direct package-targeting transaction, signed by the oracle key. */
     async resolveMarket(input: ResolveMarketInput): Promise<DeployResult> {
       const key = loadKey(opts.oracleKey ?? opts.bettorKey);
-      const plan = buildResolvePlan(input, { marketContract: contractFor(input.marketId) });
+      const target = targetFor(input.marketId);
+      const plan = buildResolvePlan(input, {
+        marketContract: target.contract,
+        vaultMarketId: target.vaultMarketId,
+      });
       const tx = new ContractCallBuilder()
         .from(key.publicKey)
         .byPackageHash(toHexHash(plan.targetContract))

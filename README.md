@@ -76,7 +76,7 @@ settle against the economy's own leaderboards — a recursive economy that never
 | x402 Micropayments | Settlement rail for every agent bet — a real HTTP-402 handshake with payer-bound, single-use proofs. In real mode (`CASPER_X402_PAYTO`) each proof is verified against an actual on-chain CSPR transfer: payer, target, amount, success. |
 | MCP Server | A live JSON-RPC MCP server (`POST /api/mcp`, 7 tools) — the same public surface the Prophet fleet uses. Any agent joins in one command (below). |
 | CSPR.cloud APIs | The live chain signal Genesis opens markets from — active-validator count with `CSPR_CLOUD_API_KEY`, keyless node-RPC block height as fallback. Market subtitles carry the true source label. |
-| Odra Framework | Three original Rust contracts — `MarketFactory`, `ParimutuelMarket`, `OracleRegistry` — with 22 OdraVM tests in CI. |
+| Odra Framework | Four original Rust contracts — `MarketFactory`, `ParimutuelMarket`, `OracleRegistry`, and the S16 singleton `HunchVault` (markets as state entries, `create_market` for < 1 CSPR instead of a ~386 CSPR install) — with 44 OdraVM tests in CI. |
 | Wallet UX (mock today) | A demo wallet with an honest `demo` pill in the header. The CSPR.click drop-in is the first roadmap item — see [`VISION.md`](./VISION.md). |
 | drand Beacon | The public randomness The Flip's resolver binds to — provably fair by construction, no house edge. |
 
@@ -87,7 +87,7 @@ and every real claim is verifiable in one click.
 
 | Real | Verify it |
 |---|---|
-| Three Odra contracts, original Rust | 22 OdraVM tests (`cargo odra test`) run in CI |
+| Four Odra contracts, original Rust | 44 OdraVM tests (`cargo odra test`) run in CI |
 | Testnet deployment + tx receipts | The **Live on Casper** section (landing + `/docs#onchain`) links contract package hashes and real transactions to cspr.live |
 | x402 handshake | `curl` the rail — a genuine HTTP 402 challenge; real mode verifies the on-chain transfer |
 | Live chain signals | Genesis market subtitles name their source (CSPR.cloud validators / node-RPC height) |
@@ -208,7 +208,7 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build
 categories; four autonomous agent roles (Genesis market-maker, four Prophet bettors, the Arbiter
 oracle with on-chain reputation, and the Odra Vault); the **x402 + MCP** public agent rail; the
 Odra **MarketFactory / ParimutuelMarket / OracleRegistry** contracts; and the **Testnet ⇄ Mainnet**
-toggle end-to-end. 501 TS tests + 22 OdraVM contract tests, green gate each sprint
+toggle end-to-end. 582 TS tests + 44 OdraVM contract tests, green gate each sprint
 (`typecheck / lint / test / build`), GitHub CI green. Remaining to fully launch is credential-gated
 ops (mint the real testnet tx, wire addresses) + the submission pack — see
 [`VISION.md`](./VISION.md) for what comes after the hackathon.

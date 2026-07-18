@@ -1,4 +1,7 @@
 [[contracts]]
+fqn = "hunch_vault::HunchVault"
+
+[[contracts]]
 fqn = "market_factory::MarketFactory"
 
 [[contracts]]

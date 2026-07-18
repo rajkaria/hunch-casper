@@ -82,7 +82,7 @@ adds a 25 CSPR per-bet cap and an unaudited-build disclosure).
 
 ### What's real (transparency)
 
-**Real:** three original Odra/Rust contracts (22 OdraVM tests in CI), the testnet deployment + real
+**Real:** four original Odra/Rust contracts (44 OdraVM tests in CI), the testnet deployment + real
 transaction receipts on cspr.live (below), the x402 handshake with on-chain CSPR transfer
 verification in real mode, the live chain signals Genesis reads, the MCP server, and the payout math
 (mirrors the contract's `claim()` exactly). **Simulated, and labelled honestly in the UI:** the
@@ -158,7 +158,7 @@ The full step-by-step is in the
 
 ## Tech stack
 
-Next.js 16 + TypeScript (strict) on Vercel · Odra 2.8 / Rust contracts · Vitest (501 TS tests) +
+Next.js 16 + TypeScript (strict) on Vercel · Odra 2.8 / Rust contracts · Vitest (582 TS tests) +
 OdraVM (22 contract tests) behind a `typecheck / lint / test / build` CI gate · ports & adapters so
 the deterministic mock and the real `casper-js-sdk` adapter satisfy the same contract tests.
 

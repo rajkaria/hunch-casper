@@ -51,4 +51,18 @@ describe("realChainOptionsFromEnv", () => {
       else process.env.CASPER_BETTOR_KEY = savedKey;
     }
   });
+
+  it("accepts a v2 vault alone — the singleton IS the market config (S16)", () => {
+    const savedKey = process.env.CASPER_BETTOR_KEY;
+    process.env.CASPER_BETTOR_KEY = "0".repeat(64);
+    try {
+      const vaultV2 = `hash-${"c".repeat(64)}`;
+      const opts = realChainOptionsFromEnv(undefined, undefined, vaultV2);
+      expect(opts.vaultV2PackageHash).toBe(vaultV2);
+      expect(opts.marketPackageHash).toBe("");
+    } finally {
+      if (savedKey === undefined) delete process.env.CASPER_BETTOR_KEY;
+      else process.env.CASPER_BETTOR_KEY = savedKey;
+    }
+  });
 });

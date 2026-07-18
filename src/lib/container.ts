@@ -48,11 +48,15 @@ function createLazyRealChain(
   network: CasperNetwork,
   marketPackageHash: string | undefined,
   marketAddresses: Record<string, string>,
+  vaultV2PackageHash: string | undefined,
 ): CasperChainPort {
   let cached: Promise<CasperChainPort> | null = null;
   const load = (): Promise<CasperChainPort> =>
     (cached ??= import("@/adapters/casper/real-chain").then((mod) =>
-      mod.createRealChain(network, mod.realChainOptionsFromEnv(marketPackageHash, marketAddresses)),
+      mod.createRealChain(
+        network,
+        mod.realChainOptionsFromEnv(marketPackageHash, marketAddresses, vaultV2PackageHash),
+      ),
     ));
 
   return {
@@ -83,7 +87,7 @@ export function createContainer(network: CasperNetwork = DEFAULT_NETWORK): Conta
   const vaultAddress = cfg.contracts.vault ?? "vault-mock-account";
   const chain =
     chainMode() === "real"
-      ? createLazyRealChain(network, cfg.contracts.vault, cfg.marketAddresses)
+      ? createLazyRealChain(network, cfg.contracts.vault, cfg.marketAddresses, cfg.contracts.vaultV2)
       : createMockChain(network);
   // Real mode + a configured treasury (CASPER_X402_PAYTO) upgrades the x402 rail to the
   // transfer-verifying PaymentPort: proofs must map to a real on-chain CSPR transfer to the

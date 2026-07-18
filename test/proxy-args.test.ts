@@ -42,6 +42,26 @@ describe("buildBetProxyArgs (Odra proxy envelope — money-path invariant)", () 
     const bytes = args.getByName("args")!.byteArray!.bytes();
     expect(bytes.length).toBeGreaterThan(0);
   });
+
+  it("a v2 vault bet keeps the SAME 5-arg envelope, with market_id inside the inner args", () => {
+    const v2Plan = buildBetPlan(
+      { marketId: "testnet:btc-150k-aug1", outcomeKey: "heads", amountMotes: "2500000000", bettor: "demo:human" },
+      { marketContract: PKG, vaultMarketId: "btc-150k-aug1" },
+    );
+    const v2Args = buildBetProxyArgs(v2Plan);
+    expect([...v2Args.args.keys()].sort()).toEqual([
+      "amount",
+      "args",
+      "attached_value",
+      "entry_point",
+      "package_hash",
+    ]);
+    // The extra market_id arg rides INSIDE the serialized inner args, not the envelope.
+    const v1Bytes = args.getByName("args")!.byteArray!.bytes();
+    const v2Bytes = v2Args.getByName("args")!.byteArray!.bytes();
+    expect(v2Bytes.length).toBeGreaterThan(v1Bytes.length);
+    expect(v2Args.getByName("entry_point")!.toString()).toBe("bet");
+  });
 });
 
 describe("toHexHash / hexToBytes", () => {

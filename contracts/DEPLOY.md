@@ -98,6 +98,43 @@ Machine-readable `HUNCH_MARKET slug=<slug> package=<hash>` lines make up the
 `NEXT_PUBLIC_*_MARKET_ADDRS` map; each Odra log line prints the tx hash + explorer link. The
 driver aborts before any market install that would run the deployer below ~650 CSPR.
 
+### 4c. S16 — singleton HunchVault v2 (markets for < 1 CSPR, no more installs)
+
+v1 installed one `ParimutuelMarket` per market (~386 CSPR each). v2 installs **one**
+`HunchVault` and every market after that is a cheap `create_market` entrypoint call —
+the driver prints the measured cost per call (`HUNCH_GAS` line) to evidence the
+"< 1 CSPR" gate. Already-deployed v1 markets stay routable untouched (the app's
+per-market map wins over the vault, `src/adapters/casper/deploy-plan.ts`).
+
+```bash
+# 1. One-time: install the vault singleton (~ the old cost of ONE market) and point
+#    the MarketFactory registry at it. <bond-motes> is the creation bond every
+#    create_market must attach (refunded to the creator at settlement); 0 disables.
+HUNCH_FACTORY=hash-<factory> \
+  cargo run --bin contracts_catalogue -- vault-deploy 1000000000
+# → HUNCH_VAULT_V2 package=hash-<vault-v2>
+
+# 2. Create + register (+ seed) the remaining catalogue INSIDE the vault. Slugs already
+#    in the vault or registry are skipped, so the command is safely re-runnable.
+HUNCH_FACTORY=hash-<factory> HUNCH_VAULT_V2=hash-<vault-v2> \
+  cargo run --bin contracts_catalogue -- catalogue-v2 /tmp/deploy-plan.json all 100
+
+# 3. Receipts on the singleton: create → bet yes → bet no → resolve (fee sweep) → claim,
+#    all five transactions against the ONE vault contract (slug receipts-vault-v2).
+HUNCH_VAULT_V2=hash-<vault-v2> \
+  cargo run --bin contracts_catalogue -- lifecycle-v2
+```
+
+Wire the vault into the app with `NEXT_PUBLIC_TESTNET_VAULT_V2=hash-<vault-v2>` (§5):
+slugs absent from `NEXT_PUBLIC_TESTNET_MARKET_ADDRS` then route to the vault carrying the
+slug as the `market_id` runtime arg — `bet(market_id, outcome)` / `resolve(market_id,
+winning_outcome)`. Record the measured `HUNCH_GAS` numbers here after the run:
+
+| call | measured cost (CSPR) | tx |
+|---|---|---|
+| `create_market` (first) | _fill after deploy_ | |
+| `create_market` (typical) | _fill after deploy_ | |
+
 ## 5. Wire the addresses into the Next.js app
 
 Put the deployed package/contract hashes into the app env (Vercel + `.env.local`) — the

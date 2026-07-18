@@ -18,6 +18,8 @@ pub enum Error {
     DuplicateId = 2,
     /// No market registered under this id.
     UnknownId = 3,
+    /// v2 vault address not configured — call `set_vault` first.
+    VaultNotSet = 4,
 }
 
 /// On-chain metadata for a registered market.
@@ -65,6 +67,8 @@ pub struct MarketFactory {
     ids: List<String>,
     info: Mapping<String, MarketInfo>,
     exists: Mapping<String, bool>,
+    /// v2: the singleton `HunchVault` every new market lives in (no more installs).
+    vault: Var<Address>,
 }
 
 #[odra::module]
@@ -105,6 +109,31 @@ impl MarketFactory {
             market_address,
             category,
         });
+    }
+
+    /// Admin-only (v2): point the registry at the singleton `HunchVault`.
+    pub fn set_vault(&mut self, vault: Address) {
+        self.assert_admin();
+        self.vault.set(vault);
+    }
+
+    /// The configured v2 vault address. Reverts until `set_vault` is called.
+    pub fn vault(&self) -> Address {
+        self.vault.get().unwrap_or_revert_with(self, Error::VaultNotSet)
+    }
+
+    /// Admin-only (v2): register a market that lives **inside the vault** — the id is
+    /// the vault market key and `market_address` is the vault itself, so creation is
+    /// an entrypoint call instead of a per-market Wasm install.
+    pub fn register_vault_market(
+        &mut self,
+        id: String,
+        question: String,
+        category: String,
+        deadline: u64,
+    ) {
+        let vault = self.vault.get().unwrap_or_revert_with(self, Error::VaultNotSet);
+        self.register_market(id, question, category, vault, deadline);
     }
 
     /// Admin-only: flag a market resolved in the registry.
@@ -266,6 +295,63 @@ mod tests {
         );
         factory.mark_resolved("r".to_string());
         assert!(factory.get_market("r".to_string()).resolved);
+    }
+
+    #[test]
+    fn vault_registration_uses_configured_vault_address() {
+        let env = odra_test::env();
+        let mut factory = deploy(&env);
+        let vault = env.get_account(8);
+
+        // Unset vault → both the read and v2 registration revert.
+        assert_eq!(factory.try_vault().unwrap_err(), Error::VaultNotSet.into());
+        assert_eq!(
+            factory
+                .try_register_vault_market(
+                    "v2-market".to_string(),
+                    "q".to_string(),
+                    "meta".to_string(),
+                    1_000,
+                )
+                .unwrap_err(),
+            Error::VaultNotSet.into()
+        );
+
+        factory.set_vault(vault);
+        assert_eq!(factory.vault(), vault);
+        factory.register_vault_market(
+            "v2-market".to_string(),
+            "q".to_string(),
+            "meta".to_string(),
+            1_000,
+        );
+        let info = factory.get_market("v2-market".to_string());
+        assert_eq!(info.market_address, vault);
+        assert!(factory.is_registered("v2-market".to_string()));
+    }
+
+    #[test]
+    fn non_admin_set_vault_and_v2_register_revert() {
+        let env = odra_test::env();
+        let mut factory = deploy(&env);
+        let vault = env.get_account(8);
+        factory.set_vault(vault);
+        env.set_caller(env.get_account(1));
+        assert_eq!(
+            factory.try_set_vault(vault).unwrap_err(),
+            Error::NotAdmin.into()
+        );
+        assert_eq!(
+            factory
+                .try_register_vault_market(
+                    "x".to_string(),
+                    "q".to_string(),
+                    "meta".to_string(),
+                    1,
+                )
+                .unwrap_err(),
+            Error::NotAdmin.into()
+        );
     }
 
     #[test]

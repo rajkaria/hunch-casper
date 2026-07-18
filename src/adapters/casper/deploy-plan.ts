@@ -78,34 +78,60 @@ export interface CasperCallPlan {
 
 export interface BuildPlanOptions {
   /**
-   * The `ParimutuelMarket` contract this market lives at. In the single-sample S1/S2 wiring
-   * this is `NetworkConfig.contracts.vault`; once the registry drives many markets it is the
-   * per-market address resolved from `MarketFactory`.
+   * The contract this market's call targets — a per-market `ParimutuelMarket` package
+   * (legacy v1) or the singleton `HunchVault` v2 package.
    */
   marketContract: string;
+  /**
+   * Set when `marketContract` is the v2 singleton vault: the market's id inside the vault
+   * (the catalogue slug). The plan then carries a leading `market_id` runtime arg, matching
+   * the v2 ABI `bet(market_id, outcome)` / `resolve(market_id, winning_outcome)`.
+   */
+  vaultMarketId?: string;
   /** Override the default gas budget (motes). */
   gasMotes?: string;
 }
 
 /**
- * Resolve which deployed `ParimutuelMarket` contract a market lives at. The full catalogue
- * deploys one contract per market (S11 manifest), mapped by slug in `marketAddresses`
- * (`NEXT_PUBLIC_*_MARKET_ADDRS`); markets not in the map fall back to the single vault address
- * so a thin-slice deploy keeps working. Pure + offline-tested — a mis-routed bet is a money bug.
+ * Where a market's on-chain calls go: a contract package plus — when that package is the
+ * v2 singleton vault — the market's id inside it.
  */
-export function resolveMarketContract(
+export interface MarketCallTarget {
+  /** Target contract package hash (`hash-<64hex>`). */
+  contract: string;
+  /** The vault market key (catalogue slug); only set for v2 vault routing. */
+  vaultMarketId?: string;
+}
+
+/**
+ * Resolve which deployed contract a market lives at, v1 and v2 aware. Routing order —
+ * pure + offline-tested, because a mis-routed bet is a money bug:
+ *
+ *   1. `marketAddresses` (`NEXT_PUBLIC_*_MARKET_ADDRS`) — the five legacy per-market
+ *      `ParimutuelMarket` packages deployed before S16 stay routable exactly as before.
+ *   2. `vaultV2` (`NEXT_PUBLIC_*_VAULT_V2`) — every other slug is a state entry in the
+ *      singleton `HunchVault`; calls carry the slug as `market_id`.
+ *   3. `fallback` (`NEXT_PUBLIC_*_VAULT`) — the legacy single-contract thin-slice deploy.
+ */
+export function resolveMarketTarget(
   marketId: string,
-  opts: { marketAddresses?: Record<string, string>; fallback?: string },
-): string {
+  opts: { marketAddresses?: Record<string, string>; vaultV2?: string; fallback?: string },
+): MarketCallTarget {
   const colon = marketId.indexOf(":");
   const slug = colon >= 0 ? marketId.slice(colon + 1) : marketId;
-  const target = opts.marketAddresses?.[slug] ?? opts.fallback;
-  if (!target) {
-    throw new Error(
-      `no on-chain contract for market '${marketId}' — add it to NEXT_PUBLIC_*_MARKET_ADDRS or set NEXT_PUBLIC_*_VAULT`,
-    );
+  const legacy = opts.marketAddresses?.[slug];
+  if (legacy) {
+    return { contract: legacy };
   }
-  return target;
+  if (opts.vaultV2) {
+    return { contract: opts.vaultV2, vaultMarketId: slug };
+  }
+  if (opts.fallback) {
+    return { contract: opts.fallback };
+  }
+  throw new Error(
+    `no on-chain contract for market '${marketId}' — add it to NEXT_PUBLIC_*_MARKET_ADDRS or set NEXT_PUBLIC_*_VAULT_V2 / NEXT_PUBLIC_*_VAULT`,
+  );
 }
 
 const DECIMAL = /^\d+$/;
@@ -125,6 +151,18 @@ function assertNonEmpty(label: string, value: string): void {
   }
 }
 
+/**
+ * Leading `market_id` arg for v2 vault targets; empty for legacy per-market contracts.
+ * Position matters: the v2 ABI is `bet(market_id, outcome)` / `resolve(market_id, winning_outcome)`.
+ */
+function vaultIdArgs(opts: BuildPlanOptions): CasperCallArg[] {
+  if (opts.vaultMarketId === undefined) {
+    return [];
+  }
+  assertNonEmpty("vaultMarketId", opts.vaultMarketId);
+  return [{ name: "market_id", clType: "string", value: opts.vaultMarketId }];
+}
+
 /** Build the plan for escrowing a stake onto an outcome (payable `bet`). */
 export function buildBetPlan(input: PlaceBetInput, opts: BuildPlanOptions): CasperCallPlan {
   assertNonEmpty("marketContract", opts.marketContract);
@@ -133,7 +171,7 @@ export function buildBetPlan(input: PlaceBetInput, opts: BuildPlanOptions): Casp
   return {
     targetContract: opts.marketContract,
     entryPoint: "bet",
-    args: [{ name: "outcome", clType: "string", value: input.outcomeKey }],
+    args: [...vaultIdArgs(opts), { name: "outcome", clType: "string", value: input.outcomeKey }],
     attachedMotes: input.amountMotes,
     gasMotes: opts.gasMotes ?? DEFAULT_BET_GAS_MOTES,
     usesProxy: true, // payable → routed through proxy_caller_with_return.wasm
@@ -147,7 +185,10 @@ export function buildResolvePlan(input: ResolveMarketInput, opts: BuildPlanOptio
   return {
     targetContract: opts.marketContract,
     entryPoint: "resolve",
-    args: [{ name: "winning_outcome", clType: "string", value: input.winningOutcomeKey }],
+    args: [
+      ...vaultIdArgs(opts),
+      { name: "winning_outcome", clType: "string", value: input.winningOutcomeKey },
+    ],
     attachedMotes: "0",
     gasMotes: opts.gasMotes ?? DEFAULT_RESOLVE_GAS_MOTES,
     usesProxy: false, // non-payable → direct package-targeting transaction
