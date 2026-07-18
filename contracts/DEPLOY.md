@@ -98,14 +98,23 @@ Machine-readable `HUNCH_MARKET slug=<slug> package=<hash>` lines make up the
 `NEXT_PUBLIC_*_MARKET_ADDRS` map; each Odra log line prints the tx hash + explorer link. The
 driver aborts before any market install that would run the deployer below ~650 CSPR.
 
-### 4c. S16 — singleton HunchVault v2 (markets for < 1 CSPR, no more installs)
+### 4c. S16 — singleton HunchVault v2 (markets for ~4 CSPR, no more installs)
 
 v1 installed one `ParimutuelMarket` per market (measured net **324.27 CSPR** each — tx
 `2b0cbe…`, limit 400, consumed 299.023, 75% refund on the unused 100.977). v2 installs **one**
 `HunchVault` and every market after that is a cheap `create_market` entrypoint call —
-the driver prints the measured cost per call (`HUNCH_GAS` line) to evidence the
-"< 1 CSPR" gate. Already-deployed v1 markets stay routable untouched (the app's
-per-market map wins over the vault, `src/adapters/casper/deploy-plan.ts`).
+measured **3.74 CSPR** net per market (2.32 consumed at the 8-CSPR limit; the payable
+proxy keeps it above the sub-CSPR registry writes), ~87x cheaper than a v1 install. The
+driver prints the measured cost per call (`HUNCH_GAS` line). Already-deployed v1 markets
+stay routable untouched (the app's per-market map wins over the vault,
+`src/adapters/casper/deploy-plan.ts`).
+
+> **Deploying against a pre-S16 factory?** A `MarketFactory` installed before S16 has no
+> `set_vault`/`register_vault_market` entrypoints — and Odra's plain `deploy()` installs
+> **locked** packages, so it can never grow them. The driver handles this: `vault-deploy`
+> treats a failed `set_vault` as a note, and `catalogue-v2` registers vault markets through
+> the v1 `register_market` with the vault as the explicit market address. Same registry
+> semantics either way (`register_vault_market` is sugar that fills in the vault address).
 
 ```bash
 # 1. One-time: install the vault singleton (~ the old cost of ONE market) and point
@@ -129,12 +138,19 @@ HUNCH_VAULT_V2=hash-<vault-v2> \
 Wire the vault into the app with `NEXT_PUBLIC_TESTNET_VAULT_V2=hash-<vault-v2>` (§5):
 slugs absent from `NEXT_PUBLIC_TESTNET_MARKET_ADDRS` then route to the vault carrying the
 slug as the `market_id` runtime arg — `bet(market_id, outcome)` / `resolve(market_id,
-winning_outcome)`. Record the measured `HUNCH_GAS` numbers here after the run:
+winning_outcome)`. Measured on the 2026-07-18 testnet run (net = consumed + 25% of the
+unused limit; the testnet vault is
+`hash-ce45136047089a4d0882c7b52f1df6a01ff8e601c1b097440f705fdc9f2876a1`):
 
 | call | measured cost (CSPR) | tx |
 |---|---|---|
-| `create_market` (first) | _fill after deploy_ | |
-| `create_market` (typical) | _fill after deploy_ | |
+| `HunchVault` install (one-time) | 373.07 net (364.099 consumed, limit 400) | `43eab0e4…` |
+| `create_market` (first — initializes the vault dictionaries) | 5.22 net (4.958 consumed, limit 6) | `40273e4b…` |
+| `create_market` (typical) | 3.74 net (2.323 consumed, limit 8) | `e2bb364c…` |
+| `register_market` | 1.48 net (0.976 consumed, limit 3) | `1515eff3…` |
+| `bet` | 3.08 net (1.439 consumed, limit 8) | `79f232a6…` |
+| `resolve` (fee sweep + bond refund) | 6.74 net (6.317 consumed, limit 8) | `46312a4c…` |
+| `claim` | 4.19 net (2.921 consumed, limit 8) | `1364254c…` |
 
 ### 4d. S19 — open permissionless creation
 

@@ -47,8 +47,8 @@ scores itself.
 
 ## What's real (transparency)
 
-We label the line honestly, in the UI itself. **Real:** the three Odra contracts (original Rust,
-44 OdraVM tests in CI), the testnet deployment and its transaction receipts (the "Live on Casper"
+We label the line honestly, in the UI itself. **Real:** the four Odra contracts (original Rust,
+57 OdraVM tests in CI), the testnet deployment and its transaction receipts (the "Live on Casper"
 section links contract packages and real txs to cspr.live), the x402 handshake (with on-chain CSPR
 transfer verification in real mode), the live chain signals Genesis reads (CSPR.cloud validators,
 node-RPC block height — subtitles name the source), the MCP server, and the payout math (mirrors
@@ -60,7 +60,7 @@ payout engine, LLM narrations are advisory flavor, and the header wallet is a mo
 
 ## Tech stack & the Casper toolkit
 
-Next.js 16 + TypeScript (strict) on Vercel; Odra 2.8 / Rust for the contracts; Vitest (582 TS
+Next.js 16 + TypeScript (strict) on Vercel; Odra 2.8 / Rust for the contracts; Vitest (583 TS
 tests) + OdraVM (22 contract tests) behind a `typecheck / lint / test / build` CI gate; ports &
 adapters so the deterministic mock and the real `casper-js-sdk` adapter satisfy the same contract
 tests. Every Casper toolkit item is load-bearing:

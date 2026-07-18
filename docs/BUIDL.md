@@ -82,7 +82,7 @@ adds a 25 CSPR per-bet cap and an unaudited-build disclosure).
 
 ### What's real (transparency)
 
-**Real:** four original Odra/Rust contracts (44 OdraVM tests in CI), the testnet deployment + real
+**Real:** four original Odra/Rust contracts (57 OdraVM tests in CI), the testnet deployment + real
 transaction receipts on cspr.live (below), the x402 handshake with on-chain CSPR transfer
 verification in real mode, the live chain signals Genesis reads, the MCP server, and the payout math
 (mirrors the contract's `claim()` exactly). **Simulated, and labelled honestly in the UI:** the
@@ -106,13 +106,14 @@ buildathon.**
 
 ## Deployed contract packages (Casper testnet)
 
-Three original Odra/Rust contracts. Click any hash to open the contract package on cspr.live.
+Four original Odra/Rust contracts. Click any hash to open the contract package on cspr.live.
 
 | Contract | Role | Package hash | Explorer |
 |---|---|---|---|
 | **MarketFactory** | On-chain registry of every deployed market. | `hash-7f63a93187d4aa3ae7629ce1b15fcf49197d86cda7985ebfcb8a8a494f43d777` | [contract-package](https://testnet.cspr.live/contract-package/7f63a93187d4aa3ae7629ce1b15fcf49197d86cda7985ebfcb8a8a494f43d777) |
 | **OracleRegistry** | Staked-reputation oracle registry; the Arbiter's accuracy is counted here, once per market. | `hash-269834fd371596eacd0ff72c29cc45a4c175601185f33b7583a157bcf80c6282` | [contract-package](https://testnet.cspr.live/contract-package/269834fd371596eacd0ff72c29cc45a4c175601185f33b7583a157bcf80c6282) |
-| **ParimutuelMarket** (vault) | Payable escrow + pull-style `claim()` with pure pool math — the money path. | `hash-c6a1afd3208ffe878802d8df71665c4b70b4365b70c5e6d87dec646090964529` | [contract-package](https://testnet.cspr.live/contract-package/c6a1afd3208ffe878802d8df71665c4b70b4365b70c5e6d87dec646090964529) |
+| **ParimutuelMarket** (v1 vault) | Payable escrow + pull-style `claim()` with pure pool math — the money path. | `hash-c6a1afd3208ffe878802d8df71665c4b70b4365b70c5e6d87dec646090964529` | [contract-package](https://testnet.cspr.live/contract-package/c6a1afd3208ffe878802d8df71665c4b70b4365b70c5e6d87dec646090964529) |
+| **HunchVault** (v2 singleton) | All new markets as state entries in one contract — a measured 3.74 CSPR `create_market` call instead of a 324 CSPR install; guardrailed permissionless creation is **open** on testnet. | `hash-ce45136047089a4d0882c7b52f1df6a01ff8e601c1b097440f705fdc9f2876a1` | [contract-package](https://testnet.cspr.live/contract-package/ce45136047089a4d0882c7b52f1df6a01ff8e601c1b097440f705fdc9f2876a1) |
 
 ---
 
@@ -126,6 +127,11 @@ Each row is a real, successful transaction that bootstrapped the on-chain econom
 | 2 | `register_oracle` | Registers the Arbiter agent as the on-chain oracle whose reputation is staked on its accuracy. | [`c26957…06843`](https://testnet.cspr.live/transaction/c26957021830fa491b4fcab31bf20736bcefff4fec1fd762cb34059977206843) |
 | 3 | Deploy `ParimutuelMarket` | Installs a parimutuel market vault (payable escrow + deterministic `claim()`). | [`2b0cbe…d1d677`](https://testnet.cspr.live/transaction/2b0cbe25f382b40828b34d9c889fea3f1ac03cddbca32fe0dc4e0b6256d1d677) |
 | 4 | `register_market` | Registers the deployed vault in the MarketFactory — wiring the economy's on-chain foundation. | [`d179b6…cc84aa`](https://testnet.cspr.live/transaction/d179b690b768a807466f9864f7fbb617de5a4a5fc01aa0161ebe67176ecc84aa) |
+| 5 | Deploy `HunchVault` v2 | Installs the singleton vault — the last per-contract install; every market after this is a ~4 CSPR `create_market` call. | [`43eab0…9417d3`](https://testnet.cspr.live/transaction/43eab0e436ff79f80f182946156fdde6f8cdd4fda1ffad83cbe89de31b9417d3) |
+| 6 | `create_market` (v2) | Mints the receipts market inside the vault as a state entry — no install, 3.74 CSPR measured. | [`e2bb36…1f2739`](https://testnet.cspr.live/transaction/e2bb364cf9a717d0c68c14b1142bff6f4d4c31ed700d17393e4e7968dc1f2739) |
+| 7 | `resolve` (v2) | Oracle settles the vault market: fee sweep + creation-bond refund in one transaction. | [`46312a…dd409c`](https://testnet.cspr.live/transaction/46312a4ce8739ba4c4a2701714cfb628ae78eb961564bc6fa6819d8690dd409c) |
+| 8 | `claim` (v2) | Winner pulls the pro-rata payout from the singleton's escrow — pure pool math. | [`136425…5a11ad2`](https://testnet.cspr.live/transaction/1364254cad96bb52e5e03b3fc4c209ca321c0df26f261f3711028b0b65a11ad2) |
+| 9 | `set_open_creation(true)` | Flips S19 guardrailed permissionless creation live — any address can now mint a market with an approved oracle. | [`74a0de…d5b5beaf`](https://testnet.cspr.live/transaction/74a0de8a9adc95a35289df9ee6c42a8002ca6a93fa24fab25223387cd5b5beaf) |
 
 > **More receipts render live in the app.** When the deployment env vars are wired
 > (`NEXT_PUBLIC_TESTNET_MARKET_*`, `NEXT_PUBLIC_ONCHAIN_RECEIPTS`), the **Live on Casper** section on
@@ -158,7 +164,7 @@ The full step-by-step is in the
 
 ## Tech stack
 
-Next.js 16 + TypeScript (strict) on Vercel · Odra 2.8 / Rust contracts · Vitest (582 TS tests) +
+Next.js 16 + TypeScript (strict) on Vercel · Odra 2.8 / Rust contracts · Vitest (583 TS tests) +
 OdraVM (22 contract tests) behind a `typecheck / lint / test / build` CI gate · ports & adapters so
 the deterministic mock and the real `casper-js-sdk` adapter satisfy the same contract tests.
 

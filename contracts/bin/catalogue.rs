@@ -35,30 +35,40 @@ use odra::prelude::*;
 // payment_limited` with `refund_handling = { refund_ratio = [75, 100] }`, so a transaction
 // costs `consumed + 0.25 * (limit - consumed)`. Over-setting a limit burns 25% of the slack,
 // and the full limit must be affordable up front or the node rejects the transaction.
-// Verified to the mote against the Jul 5 bootstrap transactions:
+// Verified to the mote against the Jul 5 bootstrap + Jul 18 vault-v2 transactions:
 //
-//   2b0cbe… install ParimutuelMarket  limit 400  consumed 299.023  net 324.2675 CSPR
-//   d179b6… register_market           limit  50  consumed   0.953  net  13.2148 CSPR
+//   2b0cbe… install ParimutuelMarket  limit 400  consumed 299.023  net 324.268 CSPR
+//   43eab0… install HunchVault (S19)  limit 400  consumed 364.099  net 373.074 CSPR
+//   40273e… create_market (first)     limit   6  consumed   4.958  net   5.218 CSPR
+//   e2bb36… create_market (typical)   limit   8  consumed   2.323  net   3.742 CSPR
+//   1515ef… register_market           limit   3  consumed   0.976  net   1.482 CSPR
+//   79f232… bet                       limit   8  consumed   1.439  net   3.080 CSPR
+//   46312a… resolve (fee+bond sweep)  limit   8  consumed   6.317  net   6.738 CSPR
+//   136425… claim                     limit   8  consumed   2.921  net   4.191 CSPR
 //
-// That register_market burned 13.2 CSPR to do ~1 CSPR of work. Limits below are sized at
-// ~3x measured consumption, and generously where consumption is still unmeasured.
+// Limits below are sized at ~3x measured consumption; installs get extra insurance
+// because an out-of-gas install burns the whole limit and strands the deployer.
 
-/// Wasm installs. Measured: 249.08 CSPR consumed for a 274,781-byte contract, 299.02 for a
-/// 314,813-byte one — so ~350 for the 356,076-byte `HunchVault`. Kept at 400 deliberately:
-/// an install that runs out of gas burns the whole limit and strands the deployer, and the
-/// 75% refund caps the cost of the unused headroom at ~12 CSPR.
-const MARKET_GAS: u64 = 400_000_000_000;
-/// Registry writes (`register_market`, `register_vault_market`, `set_vault`). Measured at
-/// 0.953 CSPR consumed; 3 CSPR is a 3.1x margin and nets ~1.46 CSPR per call.
+/// Wasm installs. The S19 `HunchVault` (367,617 bytes) consumed 364.099 — the old 400
+/// limit had shrunk to 9.9% headroom, unacceptable for a burn-the-whole-limit failure
+/// mode. 450 restores ~1.24x at ~+13 CSPR net (25% of the extra slack) per install.
+const MARKET_GAS: u64 = 450_000_000_000;
+/// Registry writes (`register_market`, `set_vault`, `approve_oracle`, `set_open_creation`).
+/// Measured at 0.953–0.976 CSPR consumed; 3 CSPR is ~3.1x and nets ~1.48 per call.
 const REGISTRY_GAS: u64 = 3_000_000_000;
-/// The money path (`bet`, `resolve`, `claim`) — native transfers plus pool math, and not yet
-/// measured on chain (the v1 lifecycle was never run). Held deliberately generous: a failed
-/// call burns its limit, but unlike an install it is re-runnable.
-const MONEY_GAS: u64 = 8_000_000_000;
-/// A v2 `create_market` is storage writes only — budget far below an install. The driver
-/// prints the measured balance delta per call (`HUNCH_GAS`) for the S16 "< 1 CSPR" gate,
-/// so this limit must stay near actual consumption or it *becomes* the reported number.
-const CREATE_GAS: u64 = 6_000_000_000;
+/// `bet` — escrow transfer plus pool math. Measured 1.434–1.439 CSPR consumed; 5 is ~3.5x
+/// and nets ~2.33 per seed instead of the ~3.08 the old blanket 8-CSPR money limit cost.
+const BET_GAS: u64 = 5_000_000_000;
+/// `resolve` / `claim` — settlement writes plus fee, bond-refund, and payout transfers.
+/// Resolve measured 6.317 CSPR consumed (claim 2.921): the old blanket 8 left resolve
+/// only 1.27x headroom, so settlement gets its own 12 (~1.9x resolve, ~4.1x claim).
+const SETTLE_GAS: u64 = 12_000_000_000;
+/// A v2 `create_market` through the payable proxy. Measured 2.323 CSPR consumed on a
+/// typical market — the FIRST create on a fresh vault runs 4.958 (it initializes the
+/// vault's dictionaries), so 8 is ~3.4x typical and ~1.6x that first-call spike. The
+/// driver prints the measured cost per call (`HUNCH_GAS`) so the docs report what the
+/// chain actually charged.
+const CREATE_GAS: u64 = 8_000_000_000;
 
 /// Aug 1 2026 00:00 UTC — matches the catalogue's one-shot deadlines; far enough that bets
 /// stay open for the demo window (resolve is oracle-gated, not deadline-gated).
@@ -113,6 +123,7 @@ fn main() {
             catalogue_v2(&env, manifest, selector, divisor);
         }
         "lifecycle-v2" => lifecycle_v2(&env),
+        "list-markets" => list_markets(&env),
         "approve-oracle" => {
             let oracle = args
                 .get(2)
@@ -135,7 +146,7 @@ fn main() {
         _ => {
             eprintln!(
                 "usage: contracts_catalogue <balance|lifecycle|catalogue|vault-deploy|\
-                 catalogue-v2|lifecycle-v2|approve-oracle|open-creation> ..."
+                 catalogue-v2|lifecycle-v2|list-markets|approve-oracle|open-creation> ..."
             );
             std::process::exit(2);
         }
@@ -174,6 +185,28 @@ fn open_creation(env: &HostEnv, open: bool) {
     env.set_gas(REGISTRY_GAS);
     vault.set_open_creation(open);
     println!("HUNCH_OPEN_CREATION {}", vault.open_creation());
+}
+
+/// Enumerate every registration in the `HUNCH_FACTORY` registry — free state reads, no
+/// transactions. `HUNCH_REGISTRY` lines are machine-readable (id → market address), the
+/// source of truth for rebuilding `NEXT_PUBLIC_*_MARKET_ADDRS` when the env map is lost.
+fn list_markets(env: &HostEnv) {
+    let factory_addr = std::env::var("HUNCH_FACTORY")
+        .expect("set HUNCH_FACTORY to the deployed MarketFactory package hash");
+    let factory =
+        MarketFactory::load(env, Address::from_str(&factory_addr).expect("bad HUNCH_FACTORY"));
+    let count = factory.market_count();
+    println!("HUNCH_REGISTRY_COUNT {count}");
+    for i in 0..count {
+        let id = factory.market_id_at(i);
+        let info = factory.get_market(id.clone());
+        println!(
+            "HUNCH_REGISTRY id={id} market={} deadline={} resolved={}",
+            info.market_address.to_formatted_string(),
+            info.deadline,
+            info.resolved
+        );
+    }
 }
 
 /// Load the singleton vault from `HUNCH_VAULT_V2`.
@@ -222,15 +255,24 @@ fn vault_deploy(env: &HostEnv, bond_motes: u64) {
         MarketFactory::load(env, Address::from_str(&factory_addr).expect("bad HUNCH_FACTORY"));
     println!("HUNCH_STEP factory-set-vault");
     env.set_gas(REGISTRY_GAS);
-    factory.set_vault(vault.address());
-    println!("HUNCH_FACTORY_VAULT_SET ok");
+    // A factory installed before S16 has no `set_vault` entrypoint — and Odra's plain
+    // `deploy()` installs locked packages, so it can never grow one. That's fine:
+    // `catalogue-v2` registers vault markets through the v1 `register_market` with the
+    // vault as the explicit market address, so the registry works either way.
+    match factory.try_set_vault(vault.address()) {
+        Ok(()) => println!("HUNCH_FACTORY_VAULT_SET ok"),
+        Err(e) => println!(
+            "HUNCH_NOTE set_vault unavailable on this factory ({e:?}); v2 registrations \
+             will carry the vault address explicitly"
+        ),
+    }
 
     println!("HUNCH_BALANCE end {}", env.balance_of(&caller));
 }
 
 /// S16: create + register (+ optionally seed) the selected catalogue markets **inside the
 /// singleton vault** — no per-market installs. Prints a `HUNCH_GAS` line per `create_market`
-/// (measured balance delta, bond excluded) — the evidence for the "< 1 CSPR" gate.
+/// (measured balance delta, bond excluded) — 3.74 CSPR net on the 2026-07-18 run.
 fn catalogue_v2(env: &HostEnv, manifest_path: &str, selector: &str, divisor: u64) {
     let raw = fs::read_to_string(manifest_path).expect("cannot read manifest");
     let manifest: serde_json::Value = serde_json::from_str(&raw).expect("manifest is not JSON");
@@ -255,6 +297,13 @@ fn catalogue_v2(env: &HostEnv, manifest_path: &str, selector: &str, divisor: u64
         }
         if vault.market_exists(slug.to_string()) {
             println!("HUNCH_SKIP_CREATE slug={slug} (already in the vault)");
+            continue;
+        }
+        // A slug registered in the factory but absent from the vault has a live v1
+        // per-market contract (and the app's per-market map outranks the vault for it) —
+        // a vault twin would just strand a bond and seed pools nothing routes to.
+        if factory.is_registered(slug.to_string()) {
+            println!("HUNCH_SKIP_CREATE slug={slug} (live v1 contract already registered)");
             continue;
         }
 
@@ -293,7 +342,15 @@ fn catalogue_v2(env: &HostEnv, manifest_path: &str, selector: &str, divisor: u64
         } else {
             println!("HUNCH_STEP register-v2 {slug}");
             env.set_gas(REGISTRY_GAS);
-            factory.register_vault_market(slug.to_string(), question, category, deadline);
+            // v1-compatible registration: pass the vault as the market address explicitly
+            // instead of `register_vault_market`, which a pre-S16 factory doesn't have.
+            factory.register_market(
+                slug.to_string(),
+                question,
+                category,
+                vault.address(),
+                deadline,
+            );
             println!("HUNCH_REGISTERED slug={slug}");
         }
 
@@ -310,7 +367,7 @@ fn catalogue_v2(env: &HostEnv, manifest_path: &str, selector: &str, divisor: u64
                         continue;
                     }
                     println!("HUNCH_STEP seed {slug} {outcome}");
-                    env.set_gas(MONEY_GAS);
+                    env.set_gas(BET_GAS);
                     vault
                         .with_tokens(U512::from(stake))
                         .bet(slug.to_string(), outcome.to_string());
@@ -349,23 +406,23 @@ fn lifecycle_v2(env: &HostEnv) {
     println!("HUNCH_MARKET slug={slug} vault-entry (no install)");
 
     println!("HUNCH_STEP bet-yes");
-    env.set_gas(MONEY_GAS);
+    env.set_gas(BET_GAS);
     vault
         .with_tokens(U512::from(120_000_000_000u64))
         .bet(slug.to_string(), "yes".to_string());
 
     println!("HUNCH_STEP bet-no");
-    env.set_gas(MONEY_GAS);
+    env.set_gas(BET_GAS);
     vault
         .with_tokens(U512::from(80_000_000_000u64))
         .bet(slug.to_string(), "no".to_string());
 
     println!("HUNCH_STEP resolve");
-    env.set_gas(MONEY_GAS);
+    env.set_gas(SETTLE_GAS);
     vault.resolve(slug.to_string(), "yes".to_string());
 
     println!("HUNCH_STEP claim");
-    env.set_gas(MONEY_GAS);
+    env.set_gas(SETTLE_GAS);
     vault.claim(slug.to_string());
 
     println!("HUNCH_STEP done");
@@ -397,19 +454,19 @@ fn lifecycle(env: &HostEnv) {
     );
 
     println!("HUNCH_STEP bet-yes");
-    env.set_gas(MONEY_GAS);
+    env.set_gas(BET_GAS);
     market.with_tokens(U512::from(120_000_000_000u64)).bet("yes".to_string());
 
     println!("HUNCH_STEP bet-no");
-    env.set_gas(MONEY_GAS);
+    env.set_gas(BET_GAS);
     market.with_tokens(U512::from(80_000_000_000u64)).bet("no".to_string());
 
     println!("HUNCH_STEP resolve");
-    env.set_gas(MONEY_GAS);
+    env.set_gas(SETTLE_GAS);
     market.resolve("yes".to_string());
 
     println!("HUNCH_STEP claim");
-    env.set_gas(MONEY_GAS);
+    env.set_gas(SETTLE_GAS);
     market.claim();
 
     println!("HUNCH_STEP done");
@@ -508,7 +565,7 @@ fn catalogue(env: &HostEnv, manifest_path: &str, selector: &str, divisor: u64) {
                         continue;
                     }
                     println!("HUNCH_STEP seed {slug} {outcome}");
-                    env.set_gas(MONEY_GAS);
+                    env.set_gas(BET_GAS);
                     market.with_tokens(U512::from(stake)).bet(outcome.to_string());
                     println!("HUNCH_SEEDED slug={slug} outcome={outcome} motes={stake}");
                 }
