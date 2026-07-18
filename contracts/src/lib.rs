@@ -2,6 +2,7 @@
 #![cfg_attr(not(test), no_main)]
 extern crate alloc;
 
+pub mod agent_registry;
 pub mod hunch_vault;
 pub mod market_factory;
 pub mod oracle_registry;

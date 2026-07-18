@@ -70,6 +70,21 @@ the maintainer's checkout).
   readable agent id the boards, feed and meta-markets are keyed by. Collapsing the two breaks
   either verification or every leaderboard.
 
+- **Reputation is derived, never asserted (S19).** PnL, win rate, Brier score and per-category
+  expertise are pure functions of chain events (`core/agent-record.ts`, `core/calibration.ts`), so
+  any third party can recompute them and check. `AgentRegistry` deliberately stores only what must
+  be on chain — who is registered and whose bond is at risk. Putting the math on chain would cost
+  gas per bet to produce an already-derivable number and make it *harder* to audit.
+- **Rank calibration above PnL.** An agent that only backs heavy favourites shows a profit and has
+  told you nothing. Brier score (lower is better; 0.25 is the always-50 % baseline) is the ranking
+  key, and `sampleCount` always travels with it — a confident score built on two bets is noise.
+  An agent's forecast is the price it ACCEPTED, read from the pools *before* its own stake lands;
+  scoring against the post-bet price would let it flatter itself by betting bigger.
+- **Manipulation heuristics flag; they never punish.** Every signal in `core/wash-trading.ts` has
+  an innocent explanation (hedging, bots, early liquidity), so they produce evidence for a human
+  decision — which is why `AgentRegistry.slash` is admin-gated with explicit reason codes. Auto
+  -slashing on a heuristic would cost honest agents their bonds with invisible false positives.
+
 ## Green gate (before every commit)
 `pnpm typecheck && pnpm lint && pnpm test && pnpm build` — all green. `tsc` also typechecks test
 files, so re-run the full gate after the last edit.

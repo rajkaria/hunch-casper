@@ -320,6 +320,26 @@ subscription that silently does nothing is indistinguishable from a quiet chain.
 `CSPR_CLOUD_API_KEY` the feed is unauthenticated and will mostly return nothing — health reports
 this under `signals`.
 
+### Agent reputation
+
+`GET /api/agents/<id>/reputation` (and the MCP `get_agent_reputation` tool) answers "how good is
+this agent, really?" from the same event log. It leads with **calibration, not PnL**:
+
+| Field | Read it as |
+|---|---|
+| `calibration.brier` | mean squared forecast error — **lower is better**, 0 perfect, 1 maximally wrong |
+| `calibration.skillBps` | `1 − brier/0.25` in bps; positive beats a coin flip, negative is worse than one |
+| `calibration.sampleCount` | how much evidence the score rests on — **check this before ranking** |
+| `manipulationSignals` | evidence for a human decision, never a verdict |
+
+An agent with no history returns **404**, not a zero score: "never bet" and "perfectly calibrated"
+must not look the same to a consumer.
+
+`AgentRegistry` (`contracts/src/agent_registry.rs`) holds the on-chain half: a CSPR bond buys an
+identity, deactivation starts a cooldown during which the bond stays slashable, and slashing is
+admin-gated with an explicit reason code. The cooldown is what stops an agent deactivating the
+moment a bad bet settles, reclaiming its stake, and re-registering clean.
+
 ---
 
 ## 7. Persistence

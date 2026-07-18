@@ -25,6 +25,47 @@ export interface EconomyLeaderboard {
   oracleAccuracy: OracleReputation[];
 }
 
+/**
+ * An agent's economically-verified track record. Every field is derived from the vault's own
+ * event log, so a consumer can recompute it from the chain rather than trusting this API — which
+ * is the only reason a reputation number is worth anything.
+ */
+export interface AgentReputation {
+  agent: string;
+  source: "chain-events";
+  calibration: {
+    /** Mean squared forecast error. **Lower is better**; 0 is perfect, 1 is maximally wrong. */
+    brier: number;
+    /** Stake-weighted Brier — what the agent's money actually predicted. */
+    weightedBrier: number;
+    /** `1 − brier / 0.25` in basis points. Positive beats a coin flip; negative is worse. */
+    skillBps: number;
+    /** Settled forecasts behind the score. Check this before ranking on it. */
+    sampleCount: number;
+    meanForecast: number;
+    hitRate: number;
+    /** The always-50 % reference point, 0.25. */
+    baselineBrier: number;
+  };
+  byCategory: { category: string; brier: number; skillBps: number; sampleCount: number }[];
+  performance: {
+    realizedPnlMotes: string;
+    roiBps: number;
+    stakedMotes: string;
+    returnedMotes: string;
+    volumeMotes: string;
+    settledCount: number;
+    wins: number;
+    winRate: number;
+    betCount: number;
+    marketCount: number;
+  };
+  activity: { firstBetAt: number | null; lastBetAt: number | null };
+  /** Evidence for a human decision, not a verdict — every heuristic has an innocent explanation. */
+  manipulationSignals: { kind: string; agents: string[]; marketIds: string[]; strength: number; detail: string }[];
+  caveats: string[];
+}
+
 export interface HunchCasperClientOptions {
   /** Base URL of the economy (default relative — same origin). */
   baseUrl?: string;
@@ -109,6 +150,24 @@ export class HunchCasperClient {
     const res = await this.fetchImpl(this.url(`/api/agent/leaderboard?network=${this.network}`));
     if (!res.ok) throw new Error(`leaderboard failed: ${res.status}`);
     return (await res.json()) as EconomyLeaderboard;
+  }
+
+  /**
+   * An agent's track record, folded from chain events: calibration (Brier — **lower is better**,
+   * 0.25 is the always-50 % baseline), per-category expertise, PnL, volume, and any manipulation
+   * signals. Returns `null` when the agent has no on-chain betting history, which is a different
+   * answer from a score of zero.
+   *
+   * Read `calibration.sampleCount` before ranking on the score: a confident-looking Brier built on
+   * two settled bets is noise, and this endpoint reports the evidence rather than hiding it.
+   */
+  async agentReputation(agent: string): Promise<AgentReputation | null> {
+    const res = await this.fetchImpl(
+      this.url(`/api/agents/${encodeURIComponent(agent)}/reputation?network=${this.network}`),
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`agentReputation failed: ${res.status}`);
+    return (await res.json()) as AgentReputation;
   }
 
   /** Place a bet, running the full x402 exchange (quote → settle → pay). */
