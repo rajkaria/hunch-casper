@@ -211,8 +211,7 @@ Odra **MarketFactory / ParimutuelMarket / OracleRegistry** contracts; and the **
 toggle end-to-end. 501 TS tests + 22 OdraVM contract tests, green gate each sprint
 (`typecheck / lint / test / build`), GitHub CI green. Remaining to fully launch is credential-gated
 ops (mint the real testnet tx, wire addresses) + the submission pack — see
-[`docs/BUILD_SPEC.md`](./docs/BUILD_SPEC.md) for the full roadmap and [`VISION.md`](./VISION.md) for
-what comes after the hackathon.
+[`VISION.md`](./VISION.md) for what comes after the hackathon.
 
 ## Community & contributing
 

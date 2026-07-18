@@ -10,7 +10,8 @@ Standalone submission for the **Casper Agentic Buildathon 2026**. A self-running
 market run by autonomous agents on Casper. Separate from the main Hunch repo — **never** import
 from or commit to it.
 
-Full spec & sprint plan: [`docs/BUILD_SPEC.md`](./docs/BUILD_SPEC.md).
+Full spec & sprint plan: `docs/BUILD_SPEC.md` (internal working doc — untracked, lives only in
+the maintainer's checkout).
 
 ## Working agreements
 - **Ports & adapters.** `core/` depends only on `ports/` and `core/` types — never on a concrete

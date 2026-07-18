@@ -51,3 +51,14 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .burn-rate/
+
+# agent-session state (worktrees, settings, local runs) — never public
+.claude/
+.ocean/
+
+# internal working docs — live in the maintainer's checkout only, never in the public repo
+/CLAUDE.md
+/docs/STATUS.md
+/docs/BUILD_SPEC.md
+/docs/ROADMAP_SPEC.md
+/docs/context/

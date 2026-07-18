@@ -6,7 +6,7 @@
  * It is a module-level singleton so state survives across requests within a process (the demo
  * shows a bet move the odds, then a resolution pay out). The chain remains the source of truth
  * for money; this ledger is a fast index that may reset on a cold start — exactly the role the
- * BUILD_SPEC assigns the off-chain store. The real Supabase/SQLite adapter drops in behind the
+ * spec assigns the off-chain store. The real Supabase/SQLite adapter drops in behind the
  * same port with no core change.
  */
 
