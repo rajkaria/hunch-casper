@@ -292,6 +292,29 @@ curl -X POST -H "x-cron-secret: $CRON_SECRET" -H 'content-type: application/json
 
 That request resets and ticks in one call, so you find out immediately whether the fix worked.
 
+### Quarantined markets
+
+The breaker above answers "the money path is broken everywhere". A narrower fault is more
+expensive: one market whose catalogue entry disagrees with the contract it routes to reverts every
+bet, forever. The fleet picks its target by `seq % openMarkets.length`, so that market comes back
+on a fixed cycle and costs a full stake each time — and the breaker never trips, because the
+failures are never consecutive.
+
+So a placement that reverts with `UnknownOutcome` (3) or `UnknownMarket` (12) quarantines the slug:
+those two mean config, not weather. Transport failures, timeouts and `MarketClosed` never do — a
+blip must not silently shrink the catalogue. Quarantine rides the KV envelope, so a new instance
+does not re-discover the fault by paying for it again.
+
+`/api/health` warns on the `markets` check and names each quarantined slug. Fix the routing
+(`NEXT_PUBLIC_*_MARKET_ADDRS` / the vault registration), then release:
+
+```bash
+curl -X POST -H "x-cron-secret: $CRON_SECRET" -H 'content-type: application/json' \
+  -d '{"releaseMarkets":["coin-flip-5m"]}' https://casper.playhunch.xyz/api/agent/tick
+```
+
+`{"releaseMarkets": true}` releases all of them.
+
 ### Automatic throttling
 
 The tick reads the purses before it spends anything and degrades in a fixed order, so a nearly

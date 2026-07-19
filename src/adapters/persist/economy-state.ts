@@ -51,6 +51,11 @@ import {
   importBreakerState,
   type BreakerSnapshot,
 } from "@/agent/bet-breaker";
+import {
+  exportQuarantine,
+  importQuarantine,
+  type QuarantinedMarket,
+} from "@/agent/market-quarantine";
 import { markDemoSeeded } from "@/adapters/mock/demo-seed";
 import { setEconomyPersistHook } from "@/adapters/persist/economy-persist-hook";
 
@@ -71,6 +76,8 @@ interface EconomyEnvelope {
   created: CreatedMarketsSnapshot;
   /** Optional: absent in envelopes written before the bet breaker existed. */
   breaker?: BreakerSnapshot;
+  /** Optional: absent in envelopes written before market quarantine existed. */
+  quarantine?: QuarantinedMarket[];
 }
 
 // ── Config ──────────────────────────────────────────────────────────────────────────────────────
@@ -106,6 +113,7 @@ export function serializeEconomyState(): string {
     oracle: exportOracleState(),
     created: exportCreatedMarkets(),
     breaker: exportBreakerState(),
+    quarantine: exportQuarantine(),
   };
   return JSON.stringify(envelope);
 }
@@ -178,6 +186,7 @@ export function applyEconomyState(json: string): boolean {
     importCreatedMarkets(parsed.created);
     // Optional: envelopes written before the breaker existed simply leave it closed.
     if (parsed.breaker) importBreakerState(parsed.breaker);
+    if (Array.isArray(parsed.quarantine)) importQuarantine(parsed.quarantine);
   } catch {
     return false;
   }

@@ -10,6 +10,7 @@ import { __resetOracleLedger } from "@/adapters/mock/oracle-ledger";
 import { __resetConsumedNonces } from "@/lib/agent-bet";
 import { __resetCreatedMarkets } from "@/adapters/mock/market-source";
 import { BREAKER_TRIP_THRESHOLD, recordPaidNotPlaced, resetBreaker } from "@/agent/bet-breaker";
+import { quarantineMarket, releaseAllMarkets } from "@/agent/market-quarantine";
 
 beforeEach(() => {
   __resetLedger();
@@ -18,6 +19,7 @@ beforeEach(() => {
   __resetConsumedNonces();
   __resetCreatedMarkets();
   resetBreaker();
+  releaseAllMarkets();
 });
 
 const maxPnl = (board: { realizedPnlMotes: string }[]) =>
@@ -143,5 +145,36 @@ describe("the paid-but-not-placed breaker inside the tick", () => {
     expect((await runEconomyTick(container, { seq: 4 })).prophetActions).toEqual([]);
     resetBreaker();
     expect((await runEconomyTick(container, { seq: 5 })).prophetActions.length).toBeGreaterThan(0);
+  });
+});
+
+describe("quarantined markets inside the tick", () => {
+  it("the fleet stops choosing a market the chain permanently rejects", async () => {
+    const container = createContainer("testnet");
+    const before = await runEconomyTick(container, { seq: 1 });
+    const considered = before.marketsConsidered;
+    expect(considered).toBeGreaterThan(1);
+
+    const target = before.prophetActions[0]?.marketId?.split(":").pop();
+    expect(target).toBeTruthy();
+    quarantineMarket({
+      slug: target!,
+      reason: "UnknownOutcome: reverted on chain: User error: 3",
+      deployHash: "ab".repeat(32),
+      ts: 1,
+    });
+
+    const after = await runEconomyTick(container, { seq: 1 });
+    expect(after.marketsConsidered).toBe(considered - 1);
+    expect(after.quarantined.map((q) => q.slug)).toContain(target);
+    // Same seq, so the ONLY reason the target can change is the quarantine.
+    expect(after.prophetActions[0]?.marketId?.split(":").pop()).not.toBe(target);
+  });
+
+  it("keeps betting on everything else — one bad market is not an outage", async () => {
+    const container = createContainer("testnet");
+    quarantineMarket({ slug: "coin-flip-5m", reason: "UnknownOutcome", deployHash: "", ts: 1 });
+    const report = await runEconomyTick(container, { seq: 2 });
+    expect(report.prophetActions.length).toBeGreaterThan(0);
   });
 });

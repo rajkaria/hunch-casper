@@ -18,6 +18,7 @@ import { createContainer } from "@/lib/container";
 import { PROPHETS } from "@/core/prophet-strategies";
 import { prophetTurnCostMotes } from "@/agent/prophet";
 import { breakerSnapshot } from "@/agent/bet-breaker";
+import { quarantinedMarkets } from "@/agent/market-quarantine";
 
 function isSet(name: string): boolean {
   const v = process.env[name];
@@ -127,6 +128,7 @@ export async function gatherHealth(
         lastFailureReason: b.lastFailure?.reason,
       };
     })(),
+    quarantinedMarkets: quarantinedMarkets().map((m) => ({ slug: m.slug, reason: m.reason })),
     fleetMinBalanceMotes: fleetTurnFloorMotes(),
     now: opts.now ?? Date.now(),
   };

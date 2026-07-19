@@ -9,6 +9,8 @@
  *        their settlement against the freshly-updated boards is demoable on demand.
  *        `resetBreaker: true` closes a tripped paid-but-not-placed breaker — the deliberate human
  *        step after the escrow path has actually been fixed (see `agent/bet-breaker.ts`).
+ *        `releaseMarkets: true | string[]` un-quarantines markets whose routing has been fixed
+ *        (see `agent/market-quarantine.ts`).
  *
  * Auth: open in the credential-free mock/demo. In real mode it requires the cron secret — either
  * Vercel's native `Authorization: Bearer <CRON_SECRET>` or an `x-cron-secret` header — because a
@@ -24,6 +26,7 @@ import { chainMode } from "@/config/chain-mode";
 import type { CasperNetwork } from "@/config/network";
 import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
 import { resetBreaker } from "@/agent/bet-breaker";
+import { releaseAllMarkets, releaseMarket } from "@/agent/market-quarantine";
 
 function authorized(req: Request): boolean {
   const secret = process.env.CRON_SECRET ?? process.env.TICK_CRON_SECRET;
@@ -55,6 +58,7 @@ async function tick(network: CasperNetwork, seq: number, resolveSlugs?: string[]
     cadence: report.cadence,
     marketsConsidered: report.marketsConsidered,
     breaker: report.breaker,
+    quarantined: report.quarantined,
   });
 }
 
@@ -96,5 +100,10 @@ export async function POST(req: Request): Promise<Response> {
   // Reset BEFORE the tick, so the same request that clears the breaker also bets again — an
   // operator who has fixed the cause should not need a second call to find out whether it worked.
   if (body.resetBreaker === true) resetBreaker();
+  // Release quarantined markets once their routing is fixed: `true` for all, or a slug list.
+  if (body.releaseMarkets === true) releaseAllMarkets();
+  else if (Array.isArray(body.releaseMarkets)) {
+    for (const slug of body.releaseMarkets) if (typeof slug === "string") releaseMarket(slug);
+  }
   return tick(network, seq, resolveSlugs);
 }

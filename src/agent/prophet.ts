@@ -18,6 +18,7 @@ import type { AgentAction } from "@/adapters/mock/activity-log";
 import type { X402PaymentProof, X402PaymentRequirement } from "@/ports/payment";
 import { chainMode } from "@/config/chain-mode";
 import { recordPaidNotPlaced, recordPlacement } from "@/agent/bet-breaker";
+import { isQuarantined, permanentMarketFault, quarantineMarket } from "@/agent/market-quarantine";
 
 /**
  * Motes a Prophet must hold ABOVE its stake before it is allowed to bet: the native-transfer
@@ -161,6 +162,18 @@ export async function runProphet(
       placed.status,
       reason,
     );
+    // A revert that names a permanent config fault (the contract has no such outcome / no such
+    // market) will repeat every time this slug comes around in the rotation. Quarantine the slug
+    // so the loss is one stake, not one stake per cycle forever.
+    const fault = permanentMarketFault(reason);
+    if (fault) {
+      console.error(
+        "[prophet] QUARANTINING market %s — %s: the catalogue and the contract it routes to disagree",
+        slug,
+        fault,
+      );
+      quarantineMarket({ slug, reason: `${fault}: ${reason}`, deployHash: proof.deployHash ?? "", ts: Date.now() });
+    }
     // Count it. Repeating this every tick is how a bounded per-bet loss becomes an unbounded one.
     recordPaidNotPlaced({
       agentId: prophet.id,
@@ -259,7 +272,7 @@ export async function runProphetFleet(
   // scores them (a reflexive loop). Meta-markets are for humans + external agents; excluding them
   // here keeps the self-scoring board honest — the same invariant the economy-loop tests assume.
   const open = (await container.store.list({ network: container.network, status: "open" })).filter(
-    (m) => m.category !== "meta",
+    (m) => m.category !== "meta" && !isQuarantined(m.slug),
   );
   if (open.length === 0) return [];
   const target = open[seq % open.length];

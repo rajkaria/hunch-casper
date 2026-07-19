@@ -14,6 +14,7 @@ import { computeAgentLeaderboard } from "@/core/agent-leaderboard";
 import type { OracleReputation } from "@/ports/oracle";
 import { runProphetFleet, prophetsPerTick, prophetTurnCostMotes } from "@/agent/prophet";
 import { bettingHalted, breakerSnapshot, type BreakerSnapshot } from "@/agent/bet-breaker";
+import { isQuarantined, quarantinedMarkets, type QuarantinedMarket } from "@/agent/market-quarantine";
 import { runArbiterSweep, resolveMarket } from "@/agent/arbiter";
 import { planCadence, type CadencePlan } from "@/core/cadence";
 import { OPERATOR_AGENT_ID } from "@/adapters/casper/fleet-keys";
@@ -44,6 +45,8 @@ export interface EconomyTickReport {
    * paying and getting nothing back — an operator has to fix the money path and reset it.
    */
   breaker: BreakerSnapshot;
+  /** Markets the fleet refuses to bet on because the chain rejects them permanently. */
+  quarantined: QuarantinedMarket[];
 }
 
 /**
@@ -124,7 +127,7 @@ export async function runEconomyTick(
 
   // 1. Prophets bet — pools move, rivalry plays out.
   const bettable = (await container.store.list({ network: container.network, status: "open" })).filter(
-    (m) => m.category !== "meta",
+    (m) => m.category !== "meta" && !isQuarantined(m.slug),
   );
   // The breaker outranks the cadence plan: affording a bet is irrelevant when the last few bets
   // were paid for and never landed. Resolution below is deliberately NOT gated by it.
@@ -162,5 +165,6 @@ export async function runEconomyTick(
     cadence,
     marketsConsidered: bettable.length,
     breaker: breakerSnapshot(),
+    quarantined: quarantinedMarkets(),
   };
 }

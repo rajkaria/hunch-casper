@@ -44,6 +44,7 @@ function healthyReal(): HealthInputs {
       { agentId: "Contrarian", account: "01bb", accountHash: "account-hash-bb", balanceMotes: "40000000000" },
     ],
     breaker: { consecutiveFailures: 0, trippedAt: null },
+    quarantinedMarkets: [],
     fleetMinBalanceMotes: "3200000000",
     now: NOW,
   };
@@ -409,5 +410,22 @@ describe("the paid-but-not-placed breaker check", () => {
     const withoutBreaker = { ...healthyReal() };
     delete (withoutBreaker as { breaker?: unknown }).breaker;
     expect(buildHealthReport(withoutBreaker).checks.find((c) => c.name === "bets")!.status).toBe("skip");
+  });
+});
+
+describe("the quarantined-markets check", () => {
+  it("is ok when every catalogued market is bettable", () => {
+    expect(buildHealthReport(healthyReal()).checks.find((c) => c.name === "markets")!.status).toBe("ok");
+  });
+
+  it("warns — the economy is fine, but the catalogue is quietly smaller than it looks", () => {
+    const r = buildHealthReport({
+      ...healthyReal(),
+      quarantinedMarkets: [{ slug: "coin-flip-5m", reason: "UnknownOutcome: User error: 3" }],
+    });
+    const c = r.checks.find((x) => x.name === "markets")!;
+    expect(c.status).toBe("warn");
+    expect(c.detail).toContain("coin-flip-5m");
+    expect(r.status).toBe("ok"); // a warn must not page anyone at 3am
   });
 });

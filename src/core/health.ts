@@ -67,6 +67,8 @@ export interface HealthInputs {
    * a mock-mode probe) is unchanged.
    */
   breaker?: { consecutiveFailures: number; trippedAt: number | null; lastFailureReason?: string };
+  /** Markets the fleet has stopped betting on because the chain rejects them permanently. */
+  quarantinedMarkets?: { slug: string; reason: string }[];
   /** Epoch ms "now" — injected so tests never race the wall clock. */
   now: number;
 }
@@ -302,6 +304,22 @@ function breakerCheck(i: HealthInputs): HealthCheck {
   return check("bets", "ok", "every paid bet is landing on chain");
 }
 
+/**
+ * Markets the fleet has quarantined. A `warn`, not a `fail`: the economy is healthy and the
+ * quarantine is the safeguard working — but the catalogue is quietly smaller than it looks, and
+ * that is a config bug someone has to fix, not a steady state to live in.
+ */
+function quarantineCheck(i: HealthInputs): HealthCheck {
+  const q = i.quarantinedMarkets ?? [];
+  if (q.length === 0) return check("markets", "ok", "every catalogued market is bettable on chain");
+  return check(
+    "markets",
+    "warn",
+    `${q.length} market(s) quarantined — the catalogue and the contracts they route to disagree, so ` +
+      `the fleet skips them: ${q.map((m) => `${m.slug} (${m.reason.split(":")[0]})`).join(", ")}`,
+  );
+}
+
 /** Evaluate every subsystem. Overall status is `degraded` iff any check failed. */
 export function buildHealthReport(i: HealthInputs): HealthReport {
   const floor = BigInt(i.fleetMinBalanceMotes);
@@ -316,6 +334,7 @@ export function buildHealthReport(i: HealthInputs): HealthReport {
     signalsCheck(i),
     fleetCheck(i, unfunded),
     breakerCheck(i),
+    quarantineCheck(i),
     economyCheck(i),
   ];
   const problems = checks.filter((c) => c.status === "fail" || c.status === "warn").map((c) => c.name);
