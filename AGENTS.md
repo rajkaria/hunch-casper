@@ -20,7 +20,10 @@ the maintainer's checkout).
 - **Composition root only.** `src/lib/container.ts` is the only place that picks adapters.
 - **Never trust an LLM into the money path.** Payouts are pure, deterministic contract math
   (`core/parimutuel-odds.ts` + the vault). LLMs only propose markets, narrate bets, summarise
-  resolutions.
+  resolutions. This extends to **disputes** (S25): panel voting is stake-weighted, and every bond
+  settlement, slash, and reward is integer arithmetic (`core/dispute-math.ts` +
+  `contracts/src/dispute_panel.rs`), conservation-exact (Σ in == Σ out). An LLM may draft a vote
+  rationale; it never decides a vote or sizes a payout.
 - **One config for the network toggle.** Everything that differs between Testnet and Mainnet lives
   in `src/config/network.ts`. Never hardcode a network-specific value elsewhere.
 - **Deterministic data.** Seed pools and deadlines are fixed literals so tests don't drift on the

@@ -3,6 +3,7 @@
 extern crate alloc;
 
 pub mod agent_registry;
+pub mod dispute_panel;
 pub mod hunch_vault;
 pub mod market_factory;
 pub mod oracle_registry;
