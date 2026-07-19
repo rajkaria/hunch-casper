@@ -2,6 +2,11 @@ import { describe, it, expect } from "vitest";
 import { buildBetPlan } from "@/adapters/casper/deploy-plan";
 import { buildProxyArgs, toHexHash, hexToBytes } from "@/adapters/casper/real-chain";
 
+/** The proxy's `args` envelope is a List<U8>; read it back as raw bytes. */
+function innerArgsBytes(a: ReturnType<typeof buildProxyArgs>): number[] {
+  return (a.getByName("args")!.list!.elements ?? []).map((e) => Number(e.ui8!.toNumber()));
+}
+
 const PKG = `hash-${"ab".repeat(32)}`; // hash- + 64 hex
 
 describe("buildProxyArgs (Odra proxy envelope — money-path invariant)", () => {
@@ -39,8 +44,21 @@ describe("buildProxyArgs (Odra proxy envelope — money-path invariant)", () => 
   });
 
   it("serializes the inner entry-point args (outcome) into the args bytes", () => {
-    const bytes = args.getByName("args")!.byteArray!.bytes();
-    expect(bytes.length).toBeGreaterThan(0);
+    expect(innerArgsBytes(args).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * THE ABI PIN. Odra declares the proxy's `args` parameter as `Vec<u8>::cl_type()` and its own
+   * client sends `Bytes::from(...)` — `CLType::List(U8)`. We sent a fixed `ByteArray`, which
+   * serialises without the length prefix, so the proxy could not deserialise the inner call and
+   * EVERY payable call reverted with `ApiError::InvalidArgument` before reaching the contract.
+   * Nothing catches this at build time; it only shows up on chain, after money has moved.
+   */
+  it("types the args envelope as Bytes (List<U8>), not a fixed ByteArray", () => {
+    const argsValue = args.getByName("args")!;
+    expect(argsValue.byteArray).toBeUndefined();
+    expect(argsValue.list).toBeDefined();
+    expect(argsValue.type.toString()).toBe("(List of U8)");
   });
 
   it("a v2 vault bet keeps the SAME 5-arg envelope, with market_id inside the inner args", () => {
@@ -57,9 +75,7 @@ describe("buildProxyArgs (Odra proxy envelope — money-path invariant)", () => 
       "package_hash",
     ]);
     // The extra market_id arg rides INSIDE the serialized inner args, not the envelope.
-    const v1Bytes = args.getByName("args")!.byteArray!.bytes();
-    const v2Bytes = v2Args.getByName("args")!.byteArray!.bytes();
-    expect(v2Bytes.length).toBeGreaterThan(v1Bytes.length);
+    expect(innerArgsBytes(v2Args).length).toBeGreaterThan(innerArgsBytes(args).length);
     expect(v2Args.getByName("entry_point")!.toString()).toBe("bet");
   });
 });

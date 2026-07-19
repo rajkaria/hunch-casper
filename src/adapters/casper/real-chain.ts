@@ -29,6 +29,7 @@ import { join } from "node:path";
 import {
   Args,
   CLTypeString,
+  CLTypeUInt8,
   CLValue,
   ContractCallBuilder,
   HttpHandler,
@@ -189,16 +190,38 @@ function entryPointArgs(plan: CasperCallPlan): Args {
 }
 
 /**
+ * Casper `Bytes` — `CLType::List(U8)`, NOT `ByteArray(n)`.
+ *
+ * The distinction is the whole bug. Odra's proxy declares its `args` parameter as
+ * `Vec<u8>::cl_type()` (`odra-core::entry_point`), and its own client sends
+ * `Bytes::from(args_bytes)` (`odra-casper-rpc-client::transactions`). We sent a fixed-size
+ * `ByteArray`, which serialises differently — no length prefix — so the proxy's deserialisation
+ * of the inner call failed and every payable call reverted with `ApiError::InvalidArgument`
+ * BEFORE reaching the contract. The CLI never hit it because Odra's client builds this envelope
+ * itself; only the app's hand-built one was wrong, so the fleet's escrow had never once landed.
+ */
+function clBytes(bytes: Uint8Array): CLValue {
+  return CLValue.newCLList(
+    CLTypeUInt8,
+    Array.from(bytes, (b) => CLValue.newCLUint8(b)),
+  );
+}
+
+/**
  * The 5-arg Odra proxy envelope for a payable plan. PURE (no signing/submit) so the money-path
  * invariant — exactly {package_hash, entry_point, args, attached_value, amount}, with
  * `amount === attached_value === stake` and `package_hash` = the 32-byte target — is asserted
  * offline in CI (see `test/proxy-args.test.ts`) without a funded key or a live node.
+ *
+ * Every name and CLType here mirrors `odra-casper-rpc-client`'s own `runtime_args!` for a proxied
+ * call. Treat it as a transcription of that source, not as a design: a divergence does not fail
+ * at build time, it reverts on chain after the money has moved.
  */
 export function buildProxyArgs(plan: CasperCallPlan): Args {
   return Args.fromMap({
     package_hash: CLValue.newCLByteArray(hexToBytes(toHexHash(plan.targetContract))),
     entry_point: CLValue.newCLString(plan.entryPoint),
-    args: CLValue.newCLByteArray(entryPointArgs(plan).toBytes()),
+    args: clBytes(entryPointArgs(plan).toBytes()),
     attached_value: CLValue.newCLUInt512(plan.attachedMotes),
     amount: CLValue.newCLUInt512(plan.attachedMotes),
   });
