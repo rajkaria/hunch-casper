@@ -12,7 +12,7 @@
 import { chainMode } from "@/config/chain-mode";
 import { DEFAULT_NETWORK, getNetworkConfig, type CasperNetwork } from "@/config/network";
 import { buildHealthReport, type FleetBalance, type HealthInputs, type HealthReport } from "@/core/health";
-import { probePersistence } from "@/adapters/persist/economy-state";
+import { hydrateEconomyState, probePersistence } from "@/adapters/persist/economy-state";
 import { exportActivityState } from "@/adapters/mock/activity-log";
 import { createContainer } from "@/lib/container";
 import { PROPHETS } from "@/core/prophet-strategies";
@@ -83,6 +83,12 @@ export async function gatherHealth(
   opts: HealthOptions = {},
 ): Promise<HealthReport> {
   const cfg = getNetworkConfig(network);
+  // Restore the persisted economy BEFORE snapshotting it. A serverless instance starts with an
+  // empty in-memory activity log, so reading it cold reported "no agent activity recorded" on a
+  // healthy, actively-betting deployment — the health surface claiming the economy was dead while
+  // KV held the bets and the feed rendered them. Health must answer for the deployment, not for
+  // whichever instance happened to serve the probe.
+  await hydrateEconomyState();
   const [persistence, fleet] = await Promise.all([probePersistence(opts.fetchImpl), fleetBalances(network)]);
   const inputs: HealthInputs = {
     network,

@@ -208,6 +208,16 @@ agent's Ed25519 secret key. Derivation is deterministic across restarts, redeplo
 instances — an address that drifted between deploys would strand its balance. A per-agent
 `CASPER_PROPHET_KEY_<AGENT>` overrides derivation for an agent whose key needs separate custody.
 
+### Stake sizing is bounded by the chain, not by taste
+
+Every agent bet settles as a **native CSPR transfer**, and Casper's chainspec rejects native
+transfers below `core.native_transfer_minimum_motes` — **2.5 CSPR** on testnet. A Prophet sized
+below that floor does not bet small; it cannot bet at all, and the node answers `-32016
+insufficient transfer amount` every round while the fleet merely looks idle. Stakes are 4/3/3/3
+for exactly this reason. `config/network.ts` owns the constant, `real-wallet.transfer` refuses a
+sub-floor amount by name before submitting, and `test/prophet-strategies.test.ts` fails CI if any
+Prophet — including Momentum's doubled conviction bet — drops under it.
+
 **A single shared key is not supported, deliberately.** All four Prophets would be the same
 on-chain account, and every track record the reputation layer depends on — PnL, calibration,
 per-category expertise — would collapse into one indistinguishable blob.
@@ -218,9 +228,9 @@ per-category expertise — would collapse into one indistinguishable blob.
 # 1. Who needs money? (also shows each agent's balance and funded verdict)
 curl -s https://casper.playhunch.xyz/api/health | jq '.fleet'
 
-# 2. Top them all up from the deployer, 50 CSPR each.
+# 2. Top them all up from the deployer, 300 CSPR each.
 ACCOUNTS=$(curl -s https://casper.playhunch.xyz/api/health | jq -r '[.fleet[].accountHash] | join(",")')
-cd contracts && cargo run --bin contracts_catalogue -- fleet-fund 50 "$ACCOUNTS"
+cd contracts && cargo run --bin contracts_catalogue -- fleet-fund 300 "$ACCOUNTS"
 ```
 
 `fleet-fund` refuses to start unless the deployer can cover every transfer plus gas, so a partial
@@ -248,7 +258,7 @@ At the 10-minute tick (144 ticks/day), with **one** Prophet per tick:
 |---|---|
 | Prophet bet escrow gas (144 × 2.33) | ~336 CSPR (treasury) |
 | Prophet x402 transfer gas (144 × 0.10) | ~14 CSPR (fleet purses) |
-| Prophet stakes | ~1–3 CSPR/tick, reimbursed to the treasury by the x402 transfer |
+| Prophet stakes | 3–4 CSPR/tick (8 when Momentum doubles down), reimbursed to the treasury by the x402 transfer |
 | Resolutions | 7.74 CSPR each, only when a market matures |
 
 **Four Prophets per tick would be ~1,340 CSPR/day in escrow gas alone** — far past what a
@@ -283,7 +293,8 @@ The tick logs `[economy] throttled: …` with the runway numbers whenever it is 
 
 ### Running dry
 
-An agent below its **turn floor** (largest stake + transfer gas) skips its turn and logs a
+An agent below its **turn floor** (largest stake at full conviction + transfer gas, one number
+shared by the health endpoint and the cadence planner — `prophetTurnCostMotes`) skips its turn and logs a
 warning. This is correct behaviour, not a fault: submitting a transfer it cannot pay for would
 burn gas to produce a failed transaction and an unverifiable proof. Health reflects it:
 
