@@ -89,7 +89,14 @@ function keyForAgent(agentId: string): PrivateKey {
 
 export function createRealWallet(network: CasperNetwork, opts: RealWalletOptions = {}): WalletPort {
   const cfg = getNetworkConfig(network);
-  const rpc = new RpcClient(new HttpHandler(cfg.nodeRpcUrl));
+  // TRANSPORT: 'fetch', not the handler's default.
+  //
+  // The default transport rejected the proxy-session submit from the deployment environment with
+  // HTTP 413 "Payload Too Large" — the identical transaction submitted fine from a workstation and
+  // the node itself accepts far larger bodies, so the size was never the problem, the client was.
+  // Every other chain read this app makes (balances, confirmation polls, signals) already goes over
+  // plain fetch and has never failed there, so the submit path now uses the same one.
+  const rpc = new RpcClient(new HttpHandler(cfg.nodeRpcUrl, "fetch"));
   const paymentMotes = opts.transferPaymentMotes ?? TRANSFER_PAYMENT_MOTES;
 
   async function submit(tx: Transaction, key: PrivateKey): Promise<string> {

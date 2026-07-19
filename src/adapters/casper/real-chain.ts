@@ -229,7 +229,14 @@ export function buildProxyArgs(plan: CasperCallPlan): Args {
 
 export function createRealChain(network: CasperNetwork, opts: RealChainOptions): CasperChainPort {
   const cfg = getNetworkConfig(network);
-  const rpc = new RpcClient(new HttpHandler(cfg.nodeRpcUrl));
+  // TRANSPORT: 'fetch', not the handler's default.
+  //
+  // The default transport rejected the proxy-session submit from the deployment environment with
+  // HTTP 413 "Payload Too Large" — the identical transaction submitted fine from a workstation and
+  // the node itself accepts far larger bodies, so the size was never the problem, the client was.
+  // Every other chain read this app makes (balances, confirmation polls, signals) already goes over
+  // plain fetch and has never failed there, so the submit path now uses the same one.
+  const rpc = new RpcClient(new HttpHandler(cfg.nodeRpcUrl, "fetch"));
 
   /** Where this market's calls go — legacy per-market map first, then the v2 vault, then the legacy fallback. */
   const targetFor = (marketId: string): MarketCallTarget =>
