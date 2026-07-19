@@ -8,3 +8,4 @@ pub mod hunch_vault;
 pub mod market_factory;
 pub mod oracle_registry;
 pub mod parimutuel_market;
+pub mod resolution_hook;
