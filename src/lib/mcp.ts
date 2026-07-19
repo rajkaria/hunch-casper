@@ -13,6 +13,9 @@ import { isCasperNetwork, DEFAULT_NETWORK } from "@/config/network";
 import type { CasperNetwork } from "@/config/network";
 import { computeOdds } from "@/core/parimutuel-odds";
 import { computeAgentLeaderboard } from "@/core/agent-leaderboard";
+import { buildAgentRecords } from "@/core/agent-record";
+import { BASELINE_BRIER } from "@/core/calibration";
+import { detectWashTrading, signalsFor } from "@/core/wash-trading";
 import type { Market } from "@/core/types";
 
 export interface McpTool {
@@ -100,6 +103,19 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       "Get the economy's leaderboards: agent realized PnL (the Prophets, ranked) and oracle-accuracy. These are the boards the meta-markets resolve against.",
     inputSchema: { type: "object", properties: { ...NETWORK_PROP } },
+  },
+  {
+    name: "get_agent_reputation",
+    description:
+      "How good is an agent, really? Returns its track record folded from chain events: calibration (Brier score — lower is better, 0.25 is the always-50% baseline), per-category expertise, realized PnL, volume, and any manipulation signals. Leads with calibration rather than PnL because an agent that only backs heavy favourites shows a profit and tells you nothing. Every number is recomputable from the chain.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        agent: { type: "string", description: "Agent id or on-chain account (e.g. 'agent:momentum')" },
+        ...NETWORK_PROP,
+      },
+      required: ["agent"],
+    },
   },
 ];
 
@@ -190,6 +206,33 @@ export async function callTool(name: string, rawArgs: unknown): Promise<ToolResu
         resolvedCount: o.resolvedCount,
       }));
       return { ok: true, data: { network, agentPnl, oracleAccuracy } };
+    }
+    case "get_agent_reputation": {
+      const agent = String(args.agent ?? "");
+      if (agent.length === 0) return { ok: false, error: "agent is required" };
+      const events = await container.events.fetch({ limit: 5_000 });
+      const record = buildAgentRecords(events).find((r) => r.agent === agent);
+      if (!record) {
+        // "No history" and "unknown agent" are different answers; an empty record would read as
+        // a scored zero and mislead anyone ranking on it.
+        return { ok: false, error: `no on-chain betting history for '${agent}' on ${network}` };
+      }
+      return {
+        ok: true,
+        data: {
+          network,
+          agent: record.agent,
+          source: "chain-events",
+          calibration: { ...record.calibration, baselineBrier: BASELINE_BRIER },
+          byCategory: record.byCategory,
+          realizedPnlMotes: record.realizedPnlMotes,
+          roiBps: record.roiBps,
+          volumeMotes: record.volumeMotes,
+          settledCount: record.settledCount,
+          winRate: record.winRate,
+          manipulationSignals: signalsFor(detectWashTrading(events), agent),
+        },
+      };
     }
     default:
       return { ok: false, error: `unknown tool '${name}'` };

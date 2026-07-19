@@ -59,8 +59,8 @@ const CATEGORIES = [
   {
     key: "casper-native",
     label: "Casper-native",
-    count: 7,
-    body: "CSPR price and market cap, hourly up/down, daily deploys, active validators, staking APY, total staked.",
+    count: 10,
+    body: "CSPR price and market cap, hourly up/down, daily deploys, active validators, staking APY, total staked — plus public-good feeds on the Condor upgrade, validator-set health, and grant milestones.",
     example: "CSPR above $0.05 by Aug 1?",
     accent: "text-accent",
   },
@@ -105,12 +105,69 @@ const TRUST = [
   },
 ];
 
+const PLATFORM = [
+  {
+    title: "Create a market",
+    body: "Type a claim in English. The composer turns it into a market whose resolution recipe is hashed (SHA-256) and frozen before the first bet — the rule can never quietly change.",
+    href: "/create",
+    cta: "Mint one →",
+  },
+  {
+    title: "The Agent League",
+    body: "Third-party agents bond a CSPR identity in the AgentRegistry and compete in seasons — ranked on calibration (Brier score), not just profit. Fork the template, edit one file, join.",
+    href: "/league",
+    cta: "See the standings →",
+  },
+  {
+    title: "Copy-betting",
+    body: "One click mirrors an agent's future bets under your own stake guardrails — and the agent earns a fee split from its reputation.",
+    href: "/agents",
+    cta: "Pick an agent →",
+  },
+  {
+    title: "Verifiable resolution",
+    body: "Every resolution is replayable from a content-addressed evidence bundle, and the recipe + evidence hashes anchor on-chain. Receipts, not vibes.",
+    href: "/docs#resolution",
+    cta: "How it works →",
+  },
+  {
+    title: "Optimistic disputes",
+    body: "A wrong call can be challenged with a bond, escalated to a deterministically-sampled staked panel, and corrected — the settlement math is conservation-exact.",
+    href: "/docs#resolution",
+    cta: "The dispute path →",
+  },
+  {
+    title: "Oracle-as-a-service",
+    body: "Other protocols buy resolutions: a metered query API plus on-chain settlement hooks that fire event-driven — a failing consumer can never block settlement.",
+    href: "/docs#oracle-service",
+    cta: "Bind a hook →",
+  },
+  {
+    title: "Probability feeds",
+    body: "A metered odds API with a public calibration record — anyone can check whether the numbers were honest before they buy them.",
+    href: "/docs#oracle-service",
+    cta: "Read the feed →",
+  },
+  {
+    title: "LMSR liquidity",
+    body: "Continuous LMSR market-making with agent strategies and LP vaults — a float engine parity-tested against its fixed-point Odra contract.",
+    href: "/docs#liquidity",
+    cta: "The engine →",
+  },
+  {
+    title: "Bet from chat, embed anywhere",
+    body: "Telegram and X bots with a strict command grammar, an embeddable market widget for any site, and agent-narrated alerts — without ever posting in your name.",
+    href: "/docs#distribution",
+    cta: "Distribution →",
+  },
+];
+
 const PRIMITIVES = [
   ["x402 Micropayments", "The settlement rail for every bet an agent places — a real HTTP-402 handshake with a payer-bound proof."],
   ["MCP Server", "How agents discover markets, read odds, quote, and place bets — the same public surface the Prophets use."],
-  ["Wallet UX (CSPR.click-ready)", "A mock wallet with an honest demo pill today — the CSPR.click drop-in is the first post-hackathon integration. Everything else on this page is live."],
+  ["Wallet UX (CSPR.click)", "The CSPR.click connector ships in the build — the operator enables real signing with a script tag and app id. Until then, an honest demo pill labels the fallback wallet."],
   ["CSPR.cloud APIs", "The live chain-data feeds Genesis reads to open markets and the Arbiter reads to resolve them."],
-  ["Odra Framework", "The market, vault, and oracle-reputation contracts — all original Rust, all covered by the gate."],
+  ["Odra Framework", "Nine original Rust contracts — factory, parimutuel vault, oracle registry, the singleton HunchVault, bonded AgentRegistry, DisputePanel, ResolutionHook, LmsrMarket, CopyBetting — 95 OdraVM tests in CI."],
   ["drand Beacon", "The public randomness that decides The Flip — provably fair, verifiable by anyone."],
 ];
 
@@ -210,7 +267,12 @@ export default function Home() {
             ))}
           </div>
           <p className="mt-6 text-sm text-muted">
-            Read exactly how each agent decides in the{" "}
+            And the swarm is open: any agent can join over MCP, bond its identity in the on-chain
+            registry, and get ranked on calibration in the{" "}
+            <Link href="/league" className="text-foreground underline decoration-border underline-offset-4 hover:decoration-accent">
+              Agent League
+            </Link>
+            . Read exactly how each agent decides in the{" "}
             <Link href="/docs#agents" className="text-foreground underline decoration-border underline-offset-4 hover:decoration-accent">
               docs
             </Link>
@@ -223,11 +285,18 @@ export default function Home() {
       <section className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
         <div className="mb-10 flex flex-col gap-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-up">
-            16 markets, 4 categories
+            19 markets, 4 categories
           </span>
           <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
             What you can bet on.
           </h2>
+          <p className="max-w-2xl text-muted">
+            Or type a claim in plain English and{" "}
+            <Link href="/create" className="text-foreground underline decoration-border underline-offset-4 hover:decoration-accent">
+              mint your own market
+            </Link>{" "}
+            — the resolution rule is frozen as a hash before the first bet lands.
+          </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           {CATEGORIES.map((c) => (
@@ -275,23 +344,56 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Primitives */}
+      {/* The platform era — everything beyond the core loop */}
       <section className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
         <div className="mb-10 flex flex-col gap-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-accent-2">
-            Load-bearing, not decorative
+          <span className="text-xs font-semibold uppercase tracking-wide text-up">
+            Beyond the loop
           </span>
           <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            Every Casper primitive does real work here.
+            Not just a demo — an open market infrastructure.
           </h2>
+          <p className="max-w-2xl text-muted">
+            The four-agent loop is the engine. Around it: humans mint markets, outside agents
+            compete and get copied, resolutions are provable and disputable, and the odds
+            themselves become a product.
+          </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {PRIMITIVES.map(([title, body]) => (
-            <div key={title} className="card p-5">
-              <h3 className="text-sm font-semibold">{title}</h3>
-              <p className="mt-1 text-sm leading-relaxed text-muted">{body}</p>
+          {PLATFORM.map((f) => (
+            <div key={f.title} className="card card-hover flex flex-col gap-3 p-5">
+              <h3 className="text-base font-semibold">{f.title}</h3>
+              <p className="flex-1 text-sm leading-relaxed text-muted">{f.body}</p>
+              <Link
+                href={f.href}
+                className="text-sm font-semibold text-foreground underline decoration-border underline-offset-4 hover:decoration-accent"
+              >
+                {f.cta}
+              </Link>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* Primitives */}
+      <section className="border-t border-border bg-surface/40">
+        <div className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
+          <div className="mb-10 flex flex-col gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-accent-2">
+              Load-bearing, not decorative
+            </span>
+            <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              Every Casper primitive does real work here.
+            </h2>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {PRIMITIVES.map(([title, body]) => (
+              <div key={title} className="card p-5">
+                <h3 className="text-sm font-semibold">{title}</h3>
+                <p className="mt-1 text-sm leading-relaxed text-muted">{body}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

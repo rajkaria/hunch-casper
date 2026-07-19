@@ -232,6 +232,41 @@ export function hydrateEconomyState(fetchImpl?: typeof fetch): Promise<void> {
   return hydrating;
 }
 
+/**
+ * Liveness probe for the operator health surface: is the configured KV endpoint actually
+ * reachable and authorized *right now*? Distinct from `persistenceConfigured()` (which only
+ * reads env) because the classic ops failure is a token that was rotated in the KV dashboard
+ * but not in the deploy — env looks perfect, every write silently 401s, and the boards quietly
+ * stop surviving cold starts.
+ *
+ * Never throws, never mutates state, and never returns the URL or token — only a verdict, an
+ * HTTP status when there is one, and a latency. Uses the same hard timeout as the real traffic.
+ */
+export async function probePersistence(
+  fetchImpl?: typeof fetch,
+): Promise<{ configured: boolean; reachable: boolean; status?: number; latencyMs?: number; error?: string }> {
+  const cfg = kvConfig();
+  if (!cfg) return { configured: false, reachable: false };
+  const started = Date.now();
+  try {
+    const res = await withTimeout((signal) =>
+      (fetchImpl ?? fetch)(`${cfg.url}/get/${encodeURIComponent(ECONOMY_KV_KEY)}`, {
+        headers: { Authorization: `Bearer ${cfg.token}` },
+        cache: "no-store",
+        signal,
+      }),
+    );
+    return { configured: true, reachable: res.ok, status: res.status, latencyMs: Date.now() - started };
+  } catch (err) {
+    return {
+      configured: true,
+      reachable: false,
+      latencyMs: Date.now() - started,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 let dirty = false;
 let writer: Promise<void> | null = null;
 let warnedWrite = false;

@@ -126,7 +126,17 @@ pub enum Error {
     InvalidField = 24,
     /// Outcome keys must be unique.
     DuplicateOutcome = 25,
+    /// The recipe hash is frozen — a bet has already landed on this market (S24).
+    RecipeLocked = 26,
+    /// Only the market's creator (or admin) may commit its resolution recipe.
+    NotCreator = 27,
+    /// An evidence bundle may only be committed for a settled market.
+    NotYetSettled = 28,
 }
+
+/// Longest recipe / evidence hash string the vault stores (`sha256:` + 64 hex = 71). 96 gives
+/// headroom for a differently-prefixed or multi-hash scheme without an unbounded storage vector.
+const MAX_HASH_LEN: usize = 96;
 
 /// Emitted when a market is created in the vault.
 #[odra::event]
@@ -207,6 +217,25 @@ pub struct CreationOpened {
     pub open: bool,
 }
 
+/// Emitted when a market's resolution recipe hash is committed/updated (S24). Only fires while the
+/// market has no bets — once the first bet lands the hash is frozen.
+#[odra::event]
+pub struct RecipeCommitted {
+    /// Market whose recipe was committed.
+    pub market_id: String,
+    /// The canonical resolution-recipe hash (e.g. `sha256:…`).
+    pub recipe_hash: String,
+}
+
+/// Emitted when the oracle commits the evidence-bundle hash for a settled market (S24).
+#[odra::event]
+pub struct EvidenceCommitted {
+    /// Market whose evidence bundle was committed.
+    pub market_id: String,
+    /// The content-addressed evidence-bundle hash.
+    pub bundle_hash: String,
+}
+
 /// Emitted when a creator's bond is returned at settlement.
 #[odra::event]
 pub struct BondRefunded {
@@ -241,7 +270,7 @@ pub struct MarketConfig {
 #[odra::module(
     events = [
         MarketCreated, BetPlaced, MarketResolved, MarketVoided, PayoutClaimed, BondRefunded,
-        OracleApproved, CreationOpened
+        OracleApproved, CreationOpened, RecipeCommitted, EvidenceCommitted
     ],
     errors = Error
 )]
@@ -275,6 +304,11 @@ pub struct HunchVault {
     /// Snapshots captured at resolution so claims are cheap + deterministic.
     winning_pool: Mapping<String, U512>,
     distributable_losing: Mapping<String, U512>,
+    /// market -> canonical resolution-recipe hash. Committed at/after creation, FROZEN once the
+    /// first bet lands, so the rule a resolution is replayed against cannot change under bettors (S24).
+    recipe_hash: Mapping<String, String>,
+    /// market -> content-addressed evidence-bundle hash, committed by the oracle at settlement (S24).
+    bundle_hash: Mapping<String, String>,
 }
 
 #[odra::module]
@@ -563,6 +597,68 @@ impl HunchVault {
     pub fn set_max_open_markets_per_creator(&mut self, max: u32) {
         self.assert_admin();
         self.max_open_markets_per_creator.set(max);
+    }
+
+    // ---- verifiable resolution (S24) ----
+
+    /// Commit (or correct) the market's canonical resolution-recipe hash — the rule a third party
+    /// replays a resolution against. Callable by the market's **creator** or the **admin**, and
+    /// ONLY while the market has taken no bets: once the first stake lands the hash is frozen
+    /// (`RecipeLocked`), so bettors can trust that the rule they bet under is the rule that settles.
+    ///
+    /// Kept a separate entrypoint (rather than a `create_market` argument) precisely so this
+    /// "immutable once the first bet lands" property is explicit and testable, and so the existing
+    /// creation ABI is unchanged.
+    pub fn commit_recipe(&mut self, market_id: String, recipe_hash: String) {
+        let config = self.get_config_or_revert(&market_id);
+        let caller = self.env().caller();
+        let is_admin = caller == self.admin.get().unwrap_or_revert(self);
+        if caller != config.creator && !is_admin {
+            self.env().revert(Error::NotCreator);
+        }
+        // Frozen the moment any stake has landed — the first bet locks the rule.
+        if !self.total_pool.get_or_default(&market_id).is_zero() {
+            self.env().revert(Error::RecipeLocked);
+        }
+        if recipe_hash.is_empty() || recipe_hash.len() > MAX_HASH_LEN {
+            self.env().revert(Error::InvalidField);
+        }
+        self.recipe_hash.set(&market_id, recipe_hash.clone());
+        self.env().emit_event(RecipeCommitted {
+            market_id,
+            recipe_hash,
+        });
+    }
+
+    /// Commit the content-addressed evidence-bundle hash for a **settled** market. Oracle-only, and
+    /// only after `resolve`/`void`, so the published evidence is bound to the outcome it justifies.
+    /// Re-committable (a richer bundle can supersede an earlier one) — the event log is the history.
+    pub fn commit_bundle(&mut self, market_id: String, bundle_hash: String) {
+        let config = self.get_config_or_revert(&market_id);
+        self.assert_oracle(&config);
+        if self.status.get_or_default(&market_id) == STATUS_OPEN {
+            self.env().revert(Error::NotYetSettled);
+        }
+        if bundle_hash.is_empty() || bundle_hash.len() > MAX_HASH_LEN {
+            self.env().revert(Error::InvalidField);
+        }
+        self.bundle_hash.set(&market_id, bundle_hash.clone());
+        self.env().emit_event(EvidenceCommitted {
+            market_id,
+            bundle_hash,
+        });
+    }
+
+    /// The committed resolution-recipe hash (empty until committed).
+    pub fn recipe_hash_of(&self, market_id: String) -> String {
+        self.get_config_or_revert(&market_id);
+        self.recipe_hash.get_or_default(&market_id)
+    }
+
+    /// The committed evidence-bundle hash (empty until committed).
+    pub fn bundle_hash_of(&self, market_id: String) -> String {
+        self.get_config_or_revert(&market_id);
+        self.bundle_hash.get_or_default(&market_id)
     }
 
     // ---- reads (used by the off-chain adapter / MCP / UI / indexers) ----
@@ -1920,5 +2016,106 @@ mod tests {
         );
         // Winners still claim normally.
         vault.claim("m1".to_string());
+    }
+
+    // ---- S24: verifiable resolution (recipe + evidence hashes) ----
+
+    #[test]
+    fn recipe_hash_commits_then_freezes_on_the_first_bet() {
+        let env = odra_test::env();
+        let mut vault = deploy(&env, 0);
+        create(&mut vault, &env, "m1", 200, 0); // account(0) is creator + oracle
+        env.set_caller(env.get_account(0));
+        vault.commit_recipe("m1".to_string(), "sha256:abc123".to_string());
+        assert_eq!(
+            vault.recipe_hash_of("m1".to_string()),
+            "sha256:abc123".to_string()
+        );
+
+        // The first bet freezes the rule.
+        env.set_caller(env.get_account(1));
+        vault
+            .with_tokens(U512::from(100u64))
+            .bet("m1".to_string(), "YES".to_string());
+
+        env.set_caller(env.get_account(0));
+        assert_eq!(
+            vault
+                .try_commit_recipe("m1".to_string(), "sha256:tampered".to_string())
+                .unwrap_err(),
+            Error::RecipeLocked.into()
+        );
+        // The committed hash is unchanged — a bettor's rule cannot be rewritten under them.
+        assert_eq!(
+            vault.recipe_hash_of("m1".to_string()),
+            "sha256:abc123".to_string()
+        );
+    }
+
+    #[test]
+    fn recipe_commit_is_gated_and_validated() {
+        let env = odra_test::env();
+        let mut vault = deploy(&env, 0);
+        create(&mut vault, &env, "m1", 200, 0);
+        // A stranger (not creator, not admin) cannot commit.
+        env.set_caller(env.get_account(2));
+        assert_eq!(
+            vault
+                .try_commit_recipe("m1".to_string(), "sha256:x".to_string())
+                .unwrap_err(),
+            Error::NotCreator.into()
+        );
+        // Empty hash is rejected.
+        env.set_caller(env.get_account(0));
+        assert_eq!(
+            vault
+                .try_commit_recipe("m1".to_string(), String::new())
+                .unwrap_err(),
+            Error::InvalidField.into()
+        );
+    }
+
+    #[test]
+    fn evidence_bundle_commits_only_after_settlement_by_the_oracle() {
+        let env = odra_test::env();
+        let mut vault = deploy(&env, 0);
+        create(&mut vault, &env, "m1", 200, 0); // oracle = account(0)
+        env.set_caller(env.get_account(1));
+        vault
+            .with_tokens(U512::from(100u64))
+            .bet("m1".to_string(), "YES".to_string());
+        env.set_caller(env.get_account(2));
+        vault
+            .with_tokens(U512::from(100u64))
+            .bet("m1".to_string(), "NO".to_string());
+
+        // Cannot commit evidence before the market settles.
+        env.set_caller(env.get_account(0));
+        assert_eq!(
+            vault
+                .try_commit_bundle("m1".to_string(), "cas:bundle1".to_string())
+                .unwrap_err(),
+            Error::NotYetSettled.into()
+        );
+
+        env.set_caller(env.get_account(0));
+        vault.resolve("m1".to_string(), "YES".to_string());
+
+        // A non-oracle cannot commit the bundle.
+        env.set_caller(env.get_account(1));
+        assert_eq!(
+            vault
+                .try_commit_bundle("m1".to_string(), "cas:bundle1".to_string())
+                .unwrap_err(),
+            Error::NotOracle.into()
+        );
+
+        // The oracle commits the evidence bundle for the settled outcome.
+        env.set_caller(env.get_account(0));
+        vault.commit_bundle("m1".to_string(), "cas:bundle1".to_string());
+        assert_eq!(
+            vault.bundle_hash_of("m1".to_string()),
+            "cas:bundle1".to_string()
+        );
     }
 }

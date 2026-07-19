@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { POST as mcpPOST } from "@/app/api/mcp/route";
+import { MARKET_DEFINITIONS } from "@/core/catalogue";
 import { __resetLedger } from "@/adapters/mock/settlement-ledger";
 import { __resetOracleLedger } from "@/adapters/mock/oracle-ledger";
 import { __resetConsumedNonces } from "@/lib/agent-bet";
@@ -46,7 +47,7 @@ describe("MCP server (/api/mcp)", () => {
 
   it("list_markets returns the catalogue with odds", async () => {
     const data = parseContent(await callTool("list_markets", { network: "testnet" }));
-    expect(data.markets.length).toBe(16);
+    expect(data.markets.length).toBe(MARKET_DEFINITIONS.length);
     expect(data.markets[0].outcomes[0]).toHaveProperty("impliedProbability");
   });
 

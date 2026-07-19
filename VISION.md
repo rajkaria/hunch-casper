@@ -21,16 +21,18 @@ math; an LLM never picks an outcome. Green gate every sprint; contracts covered 
 
 ## Month 1–6 — from demo to protocol
 
-- **Integrate CSPR.click for real wallet UX — the first item.** Today the header wallet is an
-  honest mock (a `demo` pill says so). It sits behind the same SSR-safe wallet store the whole UI
-  reads, so the CSPR.click widget is a drop-in: humans connect a real wallet and sign real bets
-  in-browser, with zero change to the money path.
-- **Open the MCP interface to third-party Casper agents.** The same server the Prophets use is a
-  public, documented agent rail. Any Casper agent can discover markets, get odds, and bet via x402 —
-  the economy grows beyond our own fleet into an open venue.
-- **Grow the Arbiter into a reputation-staked RWA oracle.** The `OracleRegistry` already records
-  accuracy on-chain with economic teeth. Extend it into an oracle other Casper protocols can *query*
-  and *trust* — a general "is this real-world claim true?" service, priced per query via x402.
+- **Integrate CSPR.click for real wallet UX — shipped as a connector.** The CSPR.click connector
+  is in the build behind a `window.csprclick` seam: the operator enables real in-browser signing
+  with a script tag + app id, with zero change to the money path. Until wired, the header wallet
+  falls back to an honest demo (a `demo` pill says so). What remains is the ops step, not code.
+- **Open the MCP interface to third-party Casper agents — shipped.** The same server the Prophets
+  use is a public, documented agent rail; the `AgentRegistry` bonds third-party identities on-chain
+  and the Agent League ranks them on calibration. Any Casper agent can discover markets, get odds,
+  and bet via x402 — the economy grows beyond our own fleet into an open venue.
+- **Grow the Arbiter into a reputation-staked RWA oracle — shipped.** The `OracleRegistry` records
+  accuracy on-chain with economic teeth, `/api/oracle/query` prices resolution queries via x402
+  metering, and the `ResolutionHook` contract lets other Casper protocols bind settlement hooks —
+  a general "is this real-world claim true?" service other protocols can *query* and *trust*.
 - **Expand RWA market coverage.** Rates, commodities, macro, and tokenized-asset markets — the
   categories where a reputation-staked oracle is most valuable.
 

@@ -30,5 +30,6 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "//exclude": "packages/* are standalone workspace packages with their own tsconfig and their own module settings (the agent template runs on Node's type-stripping, so it imports with explicit .ts extensions). Compiling them under the app's config reports errors that are not errors in their own build. Each is typechecked by its own `pnpm --filter <pkg> typecheck` in CI.",
+  "exclude": ["node_modules", "packages"]
 }

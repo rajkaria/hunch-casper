@@ -28,9 +28,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   Args,
+  CLTypeString,
   CLValue,
   ContractCallBuilder,
   HttpHandler,
+  Key,
   KeyAlgorithm,
   PrivateKey,
   RpcClient,
@@ -39,6 +41,7 @@ import {
 } from "casper-js-sdk";
 import type {
   CasperChainPort,
+  CreateMarketInput,
   DeployResult,
   PlaceBetInput,
   ResolveMarketInput,
@@ -47,6 +50,7 @@ import type { CasperNetwork } from "@/config/network";
 import { explorerTransactionUrl, getNetworkConfig } from "@/config/network";
 import {
   buildBetPlan,
+  buildCreateMarketPlan,
   buildResolvePlan,
   resolveMarketTarget,
   type CasperCallArg,
@@ -131,8 +135,29 @@ export function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
+/**
+ * One plan arg → its CLValue. An Odra `Address` arg is a `Key`: an `account-hash-…` becomes a
+ * Key::Account, a `hash-…` a contract-package key — the two are different on-chain values, so the
+ * prefix decides rather than being normalised away.
+ */
 function clFor(arg: CasperCallArg): CLValue {
-  return arg.clType === "u512" ? CLValue.newCLUInt512(arg.value) : CLValue.newCLString(arg.value);
+  switch (arg.clType) {
+    case "u512":
+      return CLValue.newCLUInt512(arg.value);
+    case "u32":
+      return CLValue.newCLUInt32(arg.value);
+    case "u64":
+      return CLValue.newCLUint64(arg.value);
+    case "key":
+      return CLValue.newCLKey(Key.newKey(arg.value));
+    case "string-list":
+      return CLValue.newCLList(
+        CLTypeString,
+        arg.values.map((v) => CLValue.newCLString(v)),
+      );
+    default:
+      return CLValue.newCLString(arg.value);
+  }
 }
 
 /** The entry point's own runtime args (e.g. `{ outcome: "heads" }`). */
@@ -146,7 +171,7 @@ function entryPointArgs(plan: CasperCallPlan): Args {
  * `amount === attached_value === stake` and `package_hash` = the 32-byte target — is asserted
  * offline in CI (see `test/proxy-args.test.ts`) without a funded key or a live node.
  */
-export function buildBetProxyArgs(plan: CasperCallPlan): Args {
+export function buildProxyArgs(plan: CasperCallPlan): Args {
   return Args.fromMap({
     package_hash: CLValue.newCLByteArray(hexToBytes(toHexHash(plan.targetContract))),
     entry_point: CLValue.newCLString(plan.entryPoint),
@@ -175,6 +200,23 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
     return { deployHash: hash, explorerUrl: explorerTransactionUrl(network, hash) };
   }
 
+  /**
+   * Submit a payable plan through Odra's proxy-caller session. The proxy wasm mints a one-time
+   * cargo purse from the signer and injects it so the contract's `attached_value()` reads the
+   * attached CSPR; a direct package call would attach ZERO — a silent money bug. The five proxy
+   * args are exactly what Odra 2.8.2's own client sends, with `amount === attached_value`.
+   */
+  function submitPayable(plan: CasperCallPlan, key: PrivateKey): Promise<DeployResult> {
+    const tx = new SessionBuilder()
+      .from(key.publicKey)
+      .wasm(readFileSync(opts.proxyWasmPath))
+      .runtimeArgs(buildProxyArgs(plan))
+      .chainName(cfg.chainName)
+      .payment(Number(plan.gasMotes))
+      .build();
+    return submit(tx, key);
+  }
+
   return {
     network,
 
@@ -183,12 +225,7 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
       return Number(res.block.height);
     },
 
-    /**
-     * Payable `bet` → an Odra proxy session. The proxy wasm mints a one-time cargo purse from
-     * the signer and injects it so the contract's `attached_value()` reads the stake. The five
-     * proxy args (package_hash, entry_point, args-as-bytes, attached_value, amount) are exactly
-     * what Odra 2.8.2's own client sends; `amount` must equal `attached_value`.
-     */
+    /** Payable `bet` → an Odra proxy session carrying the stake. */
     async placeBet(input: PlaceBetInput): Promise<DeployResult> {
       const key = loadKey(opts.bettorKey);
       const target = targetFor(input.marketId);
@@ -196,15 +233,30 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
         marketContract: target.contract,
         vaultMarketId: target.vaultMarketId,
       });
-      const proxyArgs = buildBetProxyArgs(plan);
-      const tx = new SessionBuilder()
-        .from(key.publicKey)
-        .wasm(readFileSync(opts.proxyWasmPath))
-        .runtimeArgs(proxyArgs)
-        .chainName(cfg.chainName)
-        .payment(Number(plan.gasMotes))
-        .build();
-      return submit(tx, key);
+      return submitPayable(plan, key);
+    },
+
+    /**
+     * Payable `create_market` → an Odra proxy session carrying the creation bond. Routing is
+     * forced to the v2 vault rather than going through `targetFor`: a fresh slug is by definition
+     * absent from the per-market address map, and a market that does not exist yet cannot be
+     * "resolved" to a contract by the normal path. `buildCreateMarketPlan` rejects a non-vault
+     * target, so a misconfigured deployment fails at plan time with a message naming the fix,
+     * instead of on chain with a revert code.
+     */
+    async createMarket(input: CreateMarketInput): Promise<DeployResult> {
+      if (!opts.vaultV2PackageHash) {
+        throw new CasperConfigError(
+          "runtime market creation needs the singleton HunchVault v2 — set NEXT_PUBLIC_*_VAULT_V2 " +
+            "(a v1 per-market package has no create_market entry point)",
+        );
+      }
+      const key = loadKey(opts.bettorKey);
+      const plan = buildCreateMarketPlan(input, {
+        marketContract: opts.vaultV2PackageHash,
+        vaultMarketId: input.marketId,
+      });
+      return submitPayable(plan, key);
     },
 
     /** Non-payable `resolve` → a direct package-targeting transaction, signed by the oracle key. */

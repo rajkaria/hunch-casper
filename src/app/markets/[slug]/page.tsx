@@ -10,6 +10,7 @@ import { computeOdds, formatProbability } from "@/core/parimutuel-odds";
 import { BetPanel } from "@/components/bet-panel";
 import { RelatedMarkets } from "@/components/related-markets";
 import { OracleReputation } from "@/components/oracle-reputation";
+import { EvidenceViewer } from "@/components/evidence-viewer";
 
 const CATEGORY_META: Record<MarketCategory, { label: string; className: string }> = {
   "casper-native": { label: "Casper-native", className: "text-accent" },
@@ -142,6 +143,9 @@ export default function MarketDetailPage() {
           <OracleReputation oracleId="arbiter" variant="inline" />
         </div>
       </div>
+
+      {/* Resolution evidence — renders only once a market has settled + published a bundle. */}
+      <EvidenceViewer slug={market.slug} network={network} />
 
       {/* Related markets — full-width at the foot, per the Hunch UI rule. */}
       <RelatedMarkets market={market} />

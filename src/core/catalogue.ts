@@ -308,6 +308,67 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
     seedPoolMotes: { yes: "1000000000000", no: "1000000000000" },
   },
 
+  // ── Casper-native public-good markets (S27) ─────────────────────────────────────────────
+  // Feeds the ecosystem cares about: does the upgrade ship, is the validator set healthy, are
+  // grant milestones hit. Real recipes, category-policy-clean, useful as public probability feeds.
+  {
+    slug: "casper-condor-upgrade-ships-aug",
+    title: "Casper 2.0 (Condor) mainnet upgrade activates by Aug 1?",
+    subtitle: "Casper-native · protocol milestone",
+    category: "casper-native",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "cspr_cloud",
+      metric: "condor_activation_height",
+      target: "1",
+      comparator: "gte",
+      description: "The Condor protocol upgrade has activated on mainnet (activation height recorded) by the deadline.",
+    },
+    deadlineIso: AUG_1,
+    seedPoolMotes: { yes: "900000000000", no: "500000000000" },
+  },
+  {
+    slug: "casper-validator-health-90",
+    title: "Casper validator-set health above 90% by Aug 1?",
+    subtitle: "Casper-native · network health",
+    category: "casper-native",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "cspr_cloud",
+      metric: "validator_uptime_pct",
+      target: "90",
+      comparator: "gte",
+      description: "Mean active-validator uptime at or above 90% over the window ending at the snapshot.",
+    },
+    deadlineIso: AUG_1,
+    seedPoolMotes: { yes: "820000000000", no: "380000000000" },
+  },
+  {
+    slug: "casper-grant-milestones-aug",
+    title: "At least 10 ecosystem grant milestones completed by Aug 1?",
+    subtitle: "Casper-native · public-goods funding",
+    category: "casper-native",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "cspr_cloud",
+      metric: "grant_milestones_completed",
+      target: "10",
+      comparator: "gte",
+      description: "Count of ecosystem grant milestones marked complete at or above 10 at the snapshot.",
+    },
+    deadlineIso: AUG_1,
+    seedPoolMotes: { yes: "600000000000", no: "600000000000" },
+  },
+
   // ── Meta / agent-performance (the novelty) ─────────────────────────────────────────────
   {
     slug: "prophet-race-weekly",

@@ -30,6 +30,10 @@ export interface AgentAction {
    * to the live explorer (a pseudo hash would land a judge on "transaction not found").
    */
   simulated?: boolean;
+  /** S24: the resolution-recipe hash this `market_resolved` ran under (auditable rule). */
+  recipeHash?: string;
+  /** S24: the content hash of the published evidence bundle for this resolution. */
+  evidenceBundleHash?: string;
   /** Epoch ms the action was recorded — the feed renders it as relative time ("2m ago"). */
   ts: number;
 }

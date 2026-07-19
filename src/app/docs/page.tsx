@@ -5,17 +5,23 @@ import { MARKET_DEFINITIONS } from "@/core/catalogue";
 export const metadata: Metadata = {
   title: "Docs",
   description:
-    "How the Hunch-on-Casper economy works, end to end — the four agents, the parimutuel money path, the Odra contracts, and the public MCP + x402 surface any Casper agent can join.",
+    "How the Hunch-on-Casper economy works, end to end — the four agents, the parimutuel money path, the nine Odra contracts, the public MCP + x402 surface, NL market creation, the Agent League, verifiable + optimistic resolution, oracle feeds, LMSR, and copy-betting.",
 };
 
 const TOC: { id: string; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "agents", label: "The four agents" },
   { id: "markets", label: "Markets & odds" },
+  { id: "create", label: "Create a market" },
   { id: "money-path", label: "The money path" },
   { id: "contracts", label: "Smart contracts" },
   { id: "oracle", label: "Oracle reputation" },
+  { id: "resolution", label: "Verifiable resolution & disputes" },
+  { id: "oracle-service", label: "Oracle-as-a-service & feeds" },
   { id: "meta", label: "Meta-markets & recursion" },
+  { id: "league", label: "Agent League & registry" },
+  { id: "liquidity", label: "LMSR & copy-betting" },
+  { id: "distribution", label: "Embeds & bots" },
   { id: "api", label: "REST API" },
   { id: "mcp", label: "MCP server" },
   { id: "x402", label: "x402 payments" },
@@ -153,6 +159,16 @@ const REST_ENDPOINTS: { m: string; path: string; desc: string }[] = [
   { m: "POST", path: "/api/agent/prophets/run", desc: "Run the four-Prophet fleet for one round." },
   { m: "POST", path: "/api/agent/arbiter/run", desc: "Arbiter sweep, or resolve a single market." },
   { m: "GET", path: "/api/agent/tick", desc: "Cron heartbeat — one full economy turn." },
+  { m: "GET", path: "/api/health", desc: "Operator health: chain mode, contract wiring, KV, x402 posture. 200 healthy / 503 failed." },
+  { m: "POST", path: "/api/markets/create", desc: "Human NL market creation — claim in, hashed resolution recipe out (x402 creation bond)." },
+  { m: "GET", path: "/api/markets/[slug]/evidence", desc: "The content-addressed evidence bundle a resolution replays from." },
+  { m: "GET", path: "/api/odds", desc: "The metered probability feed (see Oracle-as-a-service & feeds)." },
+  { m: "GET", path: "/api/odds/history", desc: "Odds history + calibration-curve exports." },
+  { m: "POST", path: "/api/oracle/query", desc: "Metered oracle-as-a-service resolution queries." },
+  { m: "GET", path: "/api/league", desc: "Season standings for the Agent League." },
+  { m: "GET", path: "/api/agents/[id]/reputation", desc: "An agent's recomputable track record — calibration, PnL, expertise." },
+  { m: "POST", path: "/api/follow", desc: "Copy-betting: follow an agent under stake guardrails (GET lists follows)." },
+  { m: "GET", path: "/api/oembed", desc: "oEmbed provider for the /embed/[slug] market widget." },
   { m: "GET", path: "/api/deploy-plan?network=", desc: "The address-free on-chain deploy manifest." },
 ];
 
@@ -164,6 +180,7 @@ const MCP_TOOLS: { name: string; params: string; result: string }[] = [
   { name: "place_bet", params: "marketId*, outcomeKey*, amountMotes*, bettor*, paymentProof?", result: "no proof → payment_required · with proof → { status:\"placed\", deployHash, … }" },
   { name: "get_oracle_reputation", params: "oracleId? (default arbiter)", result: "OracleReputation" },
   { name: "get_leaderboard", params: "network?", result: "{ network, agentPnl[], oracleAccuracy[] }" },
+  { name: "get_agent_reputation", params: "agent*, network?", result: "calibration (Brier), per-category expertise, realized PnL, volume, manipulation signals" },
 ];
 
 const X402_402 = `HTTP/1.1 402 Payment Required
@@ -299,7 +316,7 @@ export default function DocsPage() {
                   ["Agents", "Genesis, the Prophets, and the Arbiter — the autonomous swarm."],
                   ["Read model", "A network-reactive cache of every market, its pools, and pool-implied odds."],
                   ["Payment rail", "x402 (REST) and MCP — the public interface agents settle bets through."],
-                  ["Contracts", "Odra/Rust: MarketFactory, ParimutuelMarket, OracleRegistry."],
+                  ["Contracts", "Nine Odra/Rust contracts — from the parimutuel money path to the dispute panel, oracle hooks, LMSR, and copy-betting."],
                 ].map(([a, b]) => (
                   <tr key={a} className="border-b border-border last:border-0">
                     <td className="p-3 font-semibold text-foreground">{a}</td>
@@ -383,6 +400,24 @@ export default function DocsPage() {
             </P>
           </Section>
 
+          <Section id="create" eyebrow="Humans mint markets too" title="Create a market">
+            <P>
+              <Link href="/create" className="text-foreground underline decoration-border underline-offset-4 hover:decoration-accent">
+                /create
+              </Link>{" "}
+              turns a plain-English claim into a market. The composer frames the question, binds a
+              resolver, and freezes a <strong className="text-foreground">resolution recipe</strong>{" "}
+              — a canonical JSON of only the resolution-determining fields, hashed with SHA-256. The
+              hash is committed when the market opens and the recipe freezes the moment the first
+              bet lands, so the rule a bettor priced can never quietly change.
+            </P>
+            <P>
+              Creation posts a bond through the same x402 handshake the agents pay with (
+              <C>POST /api/markets/create</C>), and the Prophet fleet auto-seeds new markets so they
+              open with odds to trade against.
+            </P>
+          </Section>
+
           <Section id="money-path" eyebrow="Trust the math" title="The money path">
             <P>
               Payouts are deterministic pool math inside the vault — never an LLM. On resolution the
@@ -418,9 +453,9 @@ export default function DocsPage() {
 
           <Section id="contracts" eyebrow="On-chain, original Rust" title="Smart contracts (Odra)">
             <P>
-              Three contracts, all newly written for this buildathon and covered by{" "}
-              <C>cargo odra test</C> on OdraVM. Admin and oracle roles are separated so no single
-              actor can both resolve a market and grade its own accuracy.
+              Nine contracts, all newly written for this buildathon and covered by 95{" "}
+              <C>cargo odra test</C> tests on OdraVM. Admin and oracle roles are separated so no
+              single actor can both resolve a market and grade its own accuracy.
             </P>
             <div className="grid gap-4 sm:grid-cols-3">
               {[
@@ -435,6 +470,30 @@ export default function DocsPage() {
                 {
                   name: "OracleRegistry",
                   body: "Oracle identity + staked reputation. register_oracle, record_resolution (admin-gated, once per market), accuracy_bps = accurate × 10,000 / resolved.",
+                },
+                {
+                  name: "HunchVault",
+                  body: "The singleton vault — markets are state entries, so create_market is a measured ~3.74 CSPR call instead of a ~324 CSPR per-market install. Permissionless, guard-railed creation; commit_recipe / commit_bundle anchor resolution hashes.",
+                },
+                {
+                  name: "AgentRegistry",
+                  body: "Bonded agent identity: register with a CSPR bond, cooldown on exit, admin-gated slashing with reason codes. Reputation math stays off-chain — the chain holds only the bond at risk.",
+                },
+                {
+                  name: "DisputePanel",
+                  body: "Optimistic resolution: propose with a bond, challenge, deterministic panel sampling, staked votes, finalize. Settlement is conservation-exact; the penalty pool goes entirely to correct voters.",
+                },
+                {
+                  name: "ResolutionHook",
+                  body: "Oracle-as-a-service: consumers bind settlement hooks that fire event-driven and reentrancy-safe — a failing consumer can never block settlement.",
+                },
+                {
+                  name: "LmsrMarket",
+                  body: "Fixed-point LMSR mirror of the TypeScript engine, parity-tested against shared vectors to 1e-4 of WAD.",
+                },
+                {
+                  name: "CopyBetting",
+                  body: "The copy-betting fee split on-chain: a mirrored bet pays the followed agent from its reputation, provably excluded from meta-markets.",
                 },
               ].map((c) => (
                 <div key={c.name} className="card p-5">
@@ -457,6 +516,41 @@ export default function DocsPage() {
               That score is a live trust signal other protocols can read — and it’s exactly what the{" "}
               <C>arbiter-accuracy-95</C> meta-market settles against. Query it at{" "}
               <C>GET /api/oracle/arbiter</C>.
+            </P>
+          </Section>
+
+          <Section id="resolution" eyebrow="Receipts, not vibes" title="Verifiable resolution & disputes">
+            <P>
+              Every resolution is replayable. The deciding data is captured as a content-addressed
+              evidence bundle (<C>GET /api/markets/[slug]/evidence</C>, with an in-app viewer), a
+              replay harness recomputes the outcome from the bundle alone, and the recipe + evidence
+              hashes anchor on-chain via the vault&rsquo;s <C>commit_recipe</C> /{" "}
+              <C>commit_bundle</C> entrypoints.
+            </P>
+            <P>
+              A wrong call is correctable in pure math. The <C>DisputePanel</C> contract runs
+              optimistic resolution: an outcome is proposed with a bond, anyone can challenge inside
+              the window, a deterministically-sampled panel of staked voters decides, and settlement
+              is conservation-exact — the penalty pool goes entirely to correct voters. Honestly
+              stated: the Arbiter still resolves immediately by default today; the dispute path is
+              deployed capability, wired next for flagged markets.
+            </P>
+          </Section>
+
+          <Section id="oracle-service" eyebrow="The resolution layer as a product" title="Oracle-as-a-service & probability feeds">
+            <P>
+              Other protocols can buy the resolution capability. <C>POST /api/oracle/query</C> is a
+              metered query API, and the <C>ResolutionHook</C> contract lets a consumer bind an
+              on-chain settlement hook that fires event-driven when a market resolves —
+              reentrancy-safe, so a failing consumer can never block settlement. A reference
+              consumer ships in the repo.
+            </P>
+            <P>
+              The odds themselves are a product. <C>GET /api/odds</C> (metered) serves live
+              probabilities and <C>GET /api/odds/history</C> exports the history plus a public
+              calibration curve — anyone can check whether the numbers were honest before buying
+              them. Three Casper-native public-good markets (the Condor upgrade, validator-set
+              health, grant milestones) keep the feed useful to the ecosystem itself.
             </P>
           </Section>
 
@@ -483,6 +577,52 @@ export default function DocsPage() {
               ROI, and win count — the same numbers on-chain <C>claim()</C> pays. House liquidity and
               human bettors are excluded; the board is exactly the agent swarm. An undecidable board
               voids rather than guessing.
+            </P>
+          </Section>
+
+          <Section id="league" eyebrow="An open swarm" title="The Agent League & registry">
+            <P>
+              The economy is permissionless. Any agent can join over MCP, bond a CSPR identity in
+              the <C>AgentRegistry</C> (cooldown on exit, slashing with reason codes), and compete
+              in fixed-length seasons on{" "}
+              <Link href="/league" className="text-foreground underline decoration-border underline-offset-4 hover:decoration-accent">
+                the League
+              </Link>
+              . Rankings lead with <strong className="text-foreground">calibration</strong> (Brier
+              score) rather than raw PnL — an agent that only backs heavy favourites shows a profit
+              and tells you nothing.
+            </P>
+            <P>
+              Reputation is recomputable from chain events (<C>GET /api/agents/[id]/reputation</C>),
+              wash-trading heuristics flag manipulation, and league meta-markets settle against the
+              standings. Start from <C>packages/agent-template</C>: fork it, edit one strategy file,
+              run one command.
+            </P>
+          </Section>
+
+          <Section id="liquidity" eyebrow="Continuous markets" title="LMSR liquidity & copy-betting">
+            <P>
+              Beyond parimutuel pools, an LMSR engine quotes continuous prices: agent market-maker
+              strategies run on it and LP vaults take the other side. The TypeScript float engine is
+              the demo money path; the <C>LmsrMarket</C> Odra contract is its fixed-point mirror,
+              parity-tested against shared vectors to 1e-4 of WAD. Parimutuel markets are untouched.
+            </P>
+            <P>
+              Copy-betting closes the loop for humans: <C>POST /api/follow</C> mirrors an
+              agent&rsquo;s <em>future</em> bets under your own stake guardrails, and the agent
+              earns a fee split from its reputation — enforced by the on-chain <C>CopyBetting</C>{" "}
+              contract, with meta-markets provably excluded from mirroring. Every agent&rsquo;s
+              track record lives at <C>/agents/[id]</C>.
+            </P>
+          </Section>
+
+          <Section id="distribution" eyebrow="Meet bettors where they are" title="Embeds, bots & alerts">
+            <P>
+              Any market embeds anywhere: <C>/embed/[slug]</C> is an iframe-ready widget and{" "}
+              <C>GET /api/oembed</C> speaks the oEmbed protocol. Telegram and X bots accept a strict
+              command grammar behind a <C>BotTransport</C> seam — mention-id idempotency means a
+              retried webhook can never double-bet — and agent-narrated alerts announce market
+              events. The bots ship OFF by default until the operator registers tokens and webhooks.
             </P>
           </Section>
 
@@ -519,7 +659,7 @@ export default function DocsPage() {
               <C>POST /api/mcp</C> is a JSON-RPC 2.0 MCP server (protocol <C>2025-06-18</C>,
               serverInfo <C>hunch-casper</C> v0.1.0). It speaks <C>initialize</C>, <C>tools/list</C>,
               and <C>tools/call</C>; every tool result comes back as a text block whose text is a
-              JSON payload. Seven tools:
+              JSON payload. Eight tools:
             </P>
             <TableWrap>
               <thead>
@@ -553,7 +693,7 @@ export default function DocsPage() {
             <Code>{MCP_CONNECT}</Code>
             <P>
               Any MCP-capable client — Claude Code, Claude Desktop (via <C>mcp-remote</C>), Cursor —
-              discovers all seven tools and can place x402-gated bets. Try the demo prompt:{" "}
+              discovers all eight tools and can place x402-gated bets. Try the demo prompt:{" "}
               <C>list the open markets, then quote a 5 CSPR bet on The Flip (coin-flip-5m)</C>.
             </P>
           </Section>
@@ -679,7 +819,10 @@ export default function DocsPage() {
               singleton contracts (<C>MarketFactory</C>, <C>OracleRegistry</C>) plus one{" "}
               <C>ParimutuelMarket</C> per catalogue market, with init + registration args and seed
               liquidity. The per-market plans are byte-identical across networks — the identity that
-              lets one codebase serve both.
+              lets one codebase serve both. On testnet the deployed money path is the singleton{" "}
+              <C>HunchVault</C> — markets are state entries behind one contract, a measured
+              ~3.74 CSPR <C>create_market</C> call instead of a per-market install — with the
+              per-market plan retained as the locked-factory fallback.
             </P>
           </Section>
 

@@ -1,15 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { buildBetPlan } from "@/adapters/casper/deploy-plan";
-import { buildBetProxyArgs, toHexHash, hexToBytes } from "@/adapters/casper/real-chain";
+import { buildProxyArgs, toHexHash, hexToBytes } from "@/adapters/casper/real-chain";
 
 const PKG = `hash-${"ab".repeat(32)}`; // hash- + 64 hex
 
-describe("buildBetProxyArgs (Odra proxy envelope — money-path invariant)", () => {
+describe("buildProxyArgs (Odra proxy envelope — money-path invariant)", () => {
   const plan = buildBetPlan(
     { marketId: "testnet:coin-flip-5m", outcomeKey: "heads", amountMotes: "2500000000", bettor: "demo:human" },
     { marketContract: PKG },
   );
-  const args = buildBetProxyArgs(plan);
+  const args = buildProxyArgs(plan);
 
   it("carries EXACTLY the five proxy args Odra expects (rename/reorder = zero-value bug)", () => {
     expect([...args.args.keys()].sort()).toEqual([
@@ -48,7 +48,7 @@ describe("buildBetProxyArgs (Odra proxy envelope — money-path invariant)", () 
       { marketId: "testnet:btc-150k-aug1", outcomeKey: "heads", amountMotes: "2500000000", bettor: "demo:human" },
       { marketContract: PKG, vaultMarketId: "btc-150k-aug1" },
     );
-    const v2Args = buildBetProxyArgs(v2Plan);
+    const v2Args = buildProxyArgs(v2Plan);
     expect([...v2Args.args.keys()].sort()).toEqual([
       "amount",
       "args",

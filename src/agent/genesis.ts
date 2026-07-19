@@ -17,6 +17,9 @@ import type { Market, MarketOutcome, ResolverBinding } from "@/core/types";
 import { buildDeployPlan } from "@/core/market-generator";
 import { addCreatedMarket } from "@/adapters/mock/market-source";
 import { appendAction } from "@/adapters/mock/activity-log";
+import { chainMode } from "@/config/chain-mode";
+import { seedMarketPools } from "@/agent/house-seed";
+import { assessMarketFields } from "@/core/category-policy";
 
 /** A CSPR.cloud-style signal that motivates a new market. */
 export interface GenesisTrigger {
@@ -101,14 +104,99 @@ export function definitionFromTrigger(trigger: GenesisTrigger, framing: string):
   };
 }
 
-/** Run Genesis once against a trigger: frame → build → validate → register → return the market. */
-export async function runGenesis(container: Container, trigger: GenesisTrigger): Promise<Market> {
+/** The creation bond Genesis attaches, in motes. Held by the vault, refunded at settlement. */
+export const DEFAULT_CREATION_BOND_MOTES = "1000000000";
+
+function creationBondMotes(): string {
+  const raw = process.env.CASPER_CREATION_BOND_MOTES;
+  return raw && /^\d+$/.test(raw) && BigInt(raw) > 0n ? raw : DEFAULT_CREATION_BOND_MOTES;
+}
+
+/**
+ * The account bound as a market's oracle — the only address that can resolve it, i.e. the address
+ * that decides who gets paid. It is read from config rather than defaulted to the creator because
+ * the vault's central guardrail is that a creator may never name themselves: an unconstrained
+ * creator would take the other side's stake and self-resolve.
+ */
+function oracleAccount(): string | null {
+  const raw = process.env.CASPER_ORACLE_ACCOUNT;
+  return raw && raw.trim().length > 0 ? raw.trim() : null;
+}
+
+/**
+ * The on-chain half of a Genesis creation: a runtime `create_market` call on the v2 vault.
+ *
+ * Returns `null` — never throws — when real creation is unavailable or fails. That is the whole
+ * design of this function: an agent that cannot reach the chain must still open the market
+ * off-chain and say so honestly, because the alternative is either a dead economy (throw) or a
+ * market presented as on-chain when no transaction exists (silent success). The `simulated` chip
+ * is what makes the third option acceptable.
+ */
+async function createOnChain(
+  container: Container,
+  def: MarketDefinition,
+): Promise<{ deployHash: string; explorerUrl: string } | null> {
+  if (chainMode() !== "real") return null;
+  const oracle = oracleAccount();
+  if (!oracle) {
+    console.warn(
+      "[genesis] real mode without CASPER_ORACLE_ACCOUNT — creating off-chain and labelling it simulated. " +
+        "The vault binds an approved, non-creator oracle to every market; there is no safe default for it.",
+    );
+    return null;
+  }
+  try {
+    return await container.chain.createMarket({
+      marketId: def.slug,
+      question: def.title,
+      category: def.category,
+      oracle,
+      feeBps: def.feeBps,
+      deadlineMs: Date.parse(def.deadlineIso ?? ""),
+      outcomeKeys: def.outcomes.map((o) => o.key),
+      bondMotes: creationBondMotes(),
+    });
+  } catch (err) {
+    // The slug can come from user input; keep it out of the format string and escape it.
+    console.warn("[genesis] on-chain create_market failed for", JSON.stringify(def.slug), "— labelling it simulated:", err);
+    return null;
+  }
+}
+
+export interface GenesisOptions {
+  /**
+   * Stake the house's opening liquidity into the new market (real mode only). Off when the
+   * cadence throttle has decided the treasury cannot afford it — see `core/cadence.ts`.
+   */
+  houseSeed?: boolean;
+}
+
+/** Run Genesis once against a trigger: frame → build → validate → create → register → return. */
+export async function runGenesis(
+  container: Container,
+  trigger: GenesisTrigger,
+  opts: GenesisOptions = {},
+): Promise<Market> {
   const framing = await container.llm.complete({
     system: "You are Genesis, a prediction-market maker on Casper. Propose one crisp, cleanly-resolvable market.",
     prompt: `Propose a market idea and one-line framing for the signal ${trigger.metric} = ${trigger.value}.`,
   });
   const def = definitionFromTrigger(trigger, framing);
+
+  // Compliance gate — no market reaches the board that the category policy forbids. Genesis builds
+  // from market metrics so this is virtually always a pass, but the gate is enforced identically
+  // for the autonomous and the human (S23) surface: a banned question is refused, not created.
+  const verdict = assessMarketFields({ title: def.title, subtitle: def.subtitle, description: def.resolver.description });
+  if (!verdict.allowed) {
+    throw new Error(`genesis market rejected by category policy (${verdict.reason}): ${verdict.message}`);
+  }
+
   buildDeployPlan(def); // ABI-validate before registering (throws on a bad config)
+
+  // On-chain first: a market entry must exist in the vault before anything can bet into it. If
+  // that fails we still register the off-chain mirror, labelled simulated — see `createOnChain`.
+  const receipt = await createOnChain(container, def);
+
   addCreatedMarket(def); // MarketFactory.register_market, off-chain mirror
   const market = buildMarket(def, container.network);
   appendAction({
@@ -117,9 +205,16 @@ export async function runGenesis(container: Container, trigger: GenesisTrigger):
     marketId: market.id,
     marketTitle: market.title,
     narration: def.resolver.description,
-    // No on-chain MarketFactory tx backs a runtime creation yet (the factory registration is a
-    // deploy-time step), so a Genesis creation is always simulated until that lands.
-    simulated: true,
+    deployHash: receipt?.deployHash,
+    explorerUrl: receipt?.explorerUrl,
+    // Honest by construction: a creation is real only when a transaction actually backs it.
+    simulated: receipt === null,
   });
+
+  // Opening liquidity, but only for a market that genuinely exists on chain — seeding a market
+  // the vault never created would submit bets with nowhere to land.
+  if (receipt && opts.houseSeed !== false) {
+    await seedMarketPools(container, def, market.id);
+  }
   return market;
 }

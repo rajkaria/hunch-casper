@@ -20,7 +20,10 @@ the maintainer's checkout).
 - **Composition root only.** `src/lib/container.ts` is the only place that picks adapters.
 - **Never trust an LLM into the money path.** Payouts are pure, deterministic contract math
   (`core/parimutuel-odds.ts` + the vault). LLMs only propose markets, narrate bets, summarise
-  resolutions.
+  resolutions. This extends to **disputes** (S25): panel voting is stake-weighted, and every bond
+  settlement, slash, and reward is integer arithmetic (`core/dispute-math.ts` +
+  `contracts/src/dispute_panel.rs`), conservation-exact (Σ in == Σ out). An LLM may draft a vote
+  rationale; it never decides a vote or sizes a payout.
 - **One config for the network toggle.** Everything that differs between Testnet and Mainnet lives
   in `src/config/network.ts`. Never hardcode a network-specific value elsewhere.
 - **Deterministic data.** Seed pools and deadlines are fixed literals so tests don't drift on the
@@ -54,8 +57,36 @@ the maintainer's checkout).
   successful on-chain CSPR transfer from the payer to the treasury (trustless) — OR
   `CASPER_REAL_AGENT_X402=true`, the weaker legacy opt-in that keeps the mock nonce-match verifier.
   Either way the mock-vs-real mismatch is explicit and safe-by-default, never a silent
-  operator-funded gap. (With the real PaymentPort wired, the internal fleet's fabricated proofs
-  correctly fail verification — the fleet needs genuine funded transfers or the mock/testnet demo.)
+  operator-funded gap.
+- **Every agent pays from a purse it controls (S17).** A Prophet's x402 proof is the settlement id
+  of a real transfer out of its own wallet (`WalletPort`) — never a locally fabricated string. Each
+  agent has its **own** Ed25519 identity, derived as
+  `HMAC-SHA256(CASPER_FLEET_SEED, "hunch-fleet-v1:<agentId>")`; a shared key is not an option,
+  because it would collapse every agent's track record into one on-chain identity and destroy the
+  reputation data the registry (S19) is built on. Derivation must stay deterministic — fleet
+  wallets are funded by hand, so a drifting address strands real money.
+- **An agent that cannot pay sits the round out.** Below its turn floor (largest stake + transfer
+  gas) a Prophet skips instead of submitting a transfer it cannot fund: a failed transaction burns
+  gas and yields an unverifiable proof, which is strictly worse than not betting.
+- **The payment binds to the account; the ledger binds to the name.** `AgentBetInput.payerAccount`
+  carries the Casper key the transfer-verifying PaymentPort checks, while `bettor` stays the
+  readable agent id the boards, feed and meta-markets are keyed by. Collapsing the two breaks
+  either verification or every leaderboard.
+
+- **Reputation is derived, never asserted (S19).** PnL, win rate, Brier score and per-category
+  expertise are pure functions of chain events (`core/agent-record.ts`, `core/calibration.ts`), so
+  any third party can recompute them and check. `AgentRegistry` deliberately stores only what must
+  be on chain — who is registered and whose bond is at risk. Putting the math on chain would cost
+  gas per bet to produce an already-derivable number and make it *harder* to audit.
+- **Rank calibration above PnL.** An agent that only backs heavy favourites shows a profit and has
+  told you nothing. Brier score (lower is better; 0.25 is the always-50 % baseline) is the ranking
+  key, and `sampleCount` always travels with it — a confident score built on two bets is noise.
+  An agent's forecast is the price it ACCEPTED, read from the pools *before* its own stake lands;
+  scoring against the post-bet price would let it flatter itself by betting bigger.
+- **Manipulation heuristics flag; they never punish.** Every signal in `core/wash-trading.ts` has
+  an innocent explanation (hedging, bots, early liquidity), so they produce evidence for a human
+  decision — which is why `AgentRegistry.slash` is admin-gated with explicit reason codes. Auto
+  -slashing on a heuristic would cost honest agents their bonds with invisible false positives.
 
 ## Green gate (before every commit)
 `pnpm typecheck && pnpm lint && pnpm test && pnpm build` — all green. `tsc` also typechecks test

@@ -1,6 +1,10 @@
 # Deploying the Hunch-on-Casper contracts
 
-Three Odra (Rust) contracts make up the on-chain layer:
+The on-chain layer began as three Odra (Rust) contracts and has grown to nine as the roadmap
+shipped. The three below are the core money path documented in detail here; the S16–S29 additions —
+`HunchVault` (singleton vault), `AgentRegistry` (bonded identity), `DisputePanel` (optimistic
+resolution), `ResolutionHook` (oracle-as-a-service), `LmsrMarket` (continuous liquidity), and
+`CopyBetting` (mirrored-fee split) — are covered in [`contracts/AUDIT.md`](AUDIT.md).
 
 | Contract | Role |
 |---|---|
@@ -27,7 +31,7 @@ cargo install cargo-odra --locked
 
 ```bash
 cd contracts
-cargo odra test          # OdraVM backend — 15 unit/property tests, credential-free
+cargo odra test          # OdraVM backend — 95 unit/property tests, credential-free
 ```
 
 ## 2. Build the Casper wasm

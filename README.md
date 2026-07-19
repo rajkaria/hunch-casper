@@ -24,6 +24,13 @@ Built for the **Casper Agentic Buildathon 2026** (Innovation Track). Live at
   the MVP (live demo, local run, on-chain verification, MCP, x402).
 - **Submission pack:** [`docs/SUBMISSION.md`](./docs/SUBMISSION.md) — ready-to-paste form copy,
   judge quickstart, final checklist. On-chain hashes for the BUIDL page: [`docs/BUIDL.md`](./docs/BUIDL.md).
+- **Is it healthy right now?** [`/api/health`](https://casper.playhunch.xyz/api/health) reports
+  chain mode, contract wiring, KV reachability, x402 posture and how long ago an agent last acted —
+  200 when healthy, 503 when a subsystem has failed, and never a secret's value. Running it is
+  documented in [`docs/OPS.md`](./docs/OPS.md), the operator runbook.
+- **Build an agent:** [`docs/AGENTS_GUIDE.md`](./docs/AGENTS_GUIDE.md) — fork
+  [`packages/agent-template`](./packages/agent-template), edit one strategy file, run one command.
+  The [Agent League](https://casper.playhunch.xyz/league) ranks **calibration**, not profit.
 - **Where it's going:** [`VISION.md`](./VISION.md) — the long-term launch plan (RWA oracle, third-party
   agents, grant ask).
 
@@ -74,10 +81,10 @@ settle against the economy's own leaderboards — a recursive economy that never
 | Casper AI Toolkit | Role here |
 |---|---|
 | x402 Micropayments | Settlement rail for every agent bet — a real HTTP-402 handshake with payer-bound, single-use proofs. In real mode (`CASPER_X402_PAYTO`) each proof is verified against an actual on-chain CSPR transfer: payer, target, amount, success. |
-| MCP Server | A live JSON-RPC MCP server (`POST /api/mcp`, 7 tools) — the same public surface the Prophet fleet uses. Any agent joins in one command (below). |
+| MCP Server | A live JSON-RPC MCP server (`POST /api/mcp`, 8 tools) — the same public surface the Prophet fleet uses. Any agent joins in one command (below). |
 | CSPR.cloud APIs | The live chain signal Genesis opens markets from — active-validator count with `CSPR_CLOUD_API_KEY`, keyless node-RPC block height as fallback. Market subtitles carry the true source label. |
-| Odra Framework | Four original Rust contracts — `MarketFactory`, `ParimutuelMarket`, `OracleRegistry`, and the S16 singleton `HunchVault` (markets as state entries — a measured 3.74 CSPR `create_market` call instead of a measured 324 CSPR per-market install) — with 57 OdraVM tests in CI. |
-| Wallet UX (mock today) | A demo wallet with an honest `demo` pill in the header. The CSPR.click drop-in is the first roadmap item — see [`VISION.md`](./VISION.md). |
+| Odra Framework | Nine Rust contracts — `MarketFactory`, `ParimutuelMarket`, `OracleRegistry`, the S16 singleton `HunchVault` (markets as state entries — a measured 3.74 CSPR `create_market` call instead of a measured 324 CSPR per-market install), `AgentRegistry` (bonded identity), `DisputePanel` (optimistic resolution), `ResolutionHook` (oracle-as-a-service), `LmsrMarket` (continuous liquidity), and `CopyBetting` (mirrored-fee split) — with 95 OdraVM tests in CI. |
+| Wallet UX (CSPR.click connector shipped) | The CSPR.click connector is in the build behind a `window.csprclick` seam — the operator enables real signing with a script tag + app id. Absent, the app falls back to a demo wallet with an honest `demo` pill in the header. |
 | drand Beacon | The public randomness The Flip's resolver binds to — provably fair by construction, no house edge. |
 
 ## What's real vs simulated
@@ -87,7 +94,7 @@ and every real claim is verifiable in one click.
 
 | Real | Verify it |
 |---|---|
-| Four Odra contracts, original Rust | 57 OdraVM tests (`cargo odra test`) run in CI |
+| Nine Odra contracts, original Rust | 95 OdraVM tests (`cargo odra test`) run in CI |
 | Testnet deployment + tx receipts | The **Live on Casper** section (landing + `/docs#onchain`) links contract package hashes and real transactions to cspr.live |
 | x402 handshake | `curl` the rail — a genuine HTTP 402 challenge; real mode verifies the on-chain transfer |
 | Live chain signals | Genesis market subtitles name their source (CSPR.cloud validators / node-RPC height) |
@@ -99,7 +106,7 @@ and every real claim is verifiable in one click.
 | Mock-mode transaction hashes | A `simulated` chip in the activity feed — only real transactions get an `on-chain` chip + explorer link |
 | Demo seed history | A deterministic cold-start seed, settled through the real payout engine, so boards aren't empty on a fresh instance |
 | LLM narrations | Advisory flavor only — an LLM never picks an outcome or touches the money path |
-| Wallet | Mock, with a `demo` pill — see the roadmap note above |
+| Wallet | Demo by default, with a `demo` pill — the shipped CSPR.click connector activates when the operator wires the script tag + app id |
 
 ## Connect your agent in 60 seconds
 
@@ -110,8 +117,9 @@ claude mcp add --transport http hunch-casper https://casper.playhunch.xyz/api/mc
 ```
 
 Then ask Claude: *"list the open markets on hunch-casper and quote a 5 CSPR bet on The Flip."*
-Any MCP-capable client (Claude Code, Claude Desktop via `mcp-remote`, Cursor) discovers all seven
-tools — list/get/odds/quote/place_bet/reputation/leaderboard — and can place x402-gated bets.
+Any MCP-capable client (Claude Code, Claude Desktop via `mcp-remote`, Cursor) discovers all eight
+tools — list/get/odds/quote/place_bet/oracle-reputation/leaderboard/agent-reputation — and can
+place x402-gated bets.
 
 **REST (x402)** — the raw two-step (full recipe in [`/docs#x402`](https://casper.playhunch.xyz/docs#x402)):
 
@@ -174,8 +182,8 @@ src/
   agent/                Genesis, the Prophet fleet, the Arbiter, the typed SDK
   lib/container.ts      Composition root
   components/           Network toggle/context, header, market card, on-chain proof section
-  app/                  Landing (/), markets, agents, docs + the API (REST, x402 rail, MCP)
-contracts/              Odra/Rust: MarketFactory, ParimutuelMarket, OracleRegistry + deploy CLI
+  app/                  Landing (/), markets, agents, league, create, embed, docs + the API (REST, x402 rail, MCP)
+contracts/              Odra/Rust: nine contracts (factory, market, oracle, vault, registry, disputes, hooks, LMSR, copy-betting) + deploy CLI
 packages/sdk/           The publishable agent SDK (npm: hunch-casper-sdk)
 ```
 
@@ -204,13 +212,18 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build
 
 ## Status
 
-**S3–S13 shipped — the self-running economy is live.** A 16-market catalogue across four
-categories; four autonomous agent roles (Genesis market-maker, four Prophet bettors, the Arbiter
-oracle with on-chain reputation, and the Odra Vault); the **x402 + MCP** public agent rail; the
-Odra **MarketFactory / ParimutuelMarket / OracleRegistry** contracts; and the **Testnet ⇄ Mainnet**
-toggle end-to-end. 583 TS tests + 57 OdraVM contract tests, green gate each sprint
-(`typecheck / lint / test / build`), GitHub CI green. Remaining to fully launch is credential-gated
-ops (mint the real testnet tx, wire addresses) + the submission pack — see
+**S3–S29 shipped — the self-running economy and the open agent economy are live.** A 19-market
+catalogue (incl. Casper-native public-good feeds) across four categories; autonomous agent roles
+(Genesis market-maker, four Prophet bettors, the Arbiter oracle with on-chain reputation, and the
+Odra Vault); the **x402 + MCP** public agent rail; a permissionless **AgentRegistry** + League;
+distribution (chat bots, embeds, narrated alerts); human NL market creation with hashed resolution
+recipes; **verifiable resolution** (recipe + evidence hashes, replay harness); **optimistic
+resolution** with staked disputes; **oracle-as-a-service** (metered query API + settlement hooks);
+**probability feeds** with calibration exports; **LMSR** continuous liquidity + LP vaults;
+**copy-betting**; and the **Testnet ⇄ Mainnet** toggle end-to-end. 1113 TS tests + 95 OdraVM
+contract tests, green gate each sprint (`typecheck / lint / test / build`), GitHub CI green.
+Remaining to fully launch is credential-gated ops (mint the real testnet tx, wire addresses,
+register the bots, fund the audit/bounty/mainnet deploy) + the submission pack — see
 [`VISION.md`](./VISION.md) for what comes after the hackathon.
 
 ## Community & contributing

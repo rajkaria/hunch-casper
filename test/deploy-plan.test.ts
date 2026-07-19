@@ -42,7 +42,7 @@ describe("deploy-plan builder (Odra ABI mapping)", () => {
       { marketId: "m", outcomeKey: "YES", amountMotes: "1", bettor: "x" },
       { marketContract: MARKET },
     );
-    expect(plan.args[0].value).toBe("YES");
+    expect(plan.args[0]).toMatchObject({ name: "outcome", value: "YES" });
   });
 
   it("honours a gas override", () => {

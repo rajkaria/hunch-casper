@@ -29,28 +29,58 @@
  * `outcome.key`s. See `PlaceBetInput.outcomeKey`.
  */
 
-import type { PlaceBetInput, ResolveMarketInput } from "@/ports/casper-chain";
+import type { CreateMarketInput, PlaceBetInput, ResolveMarketInput } from "@/ports/casper-chain";
 
 /** 1 CSPR = 1e9 motes. */
 const MOTES_PER_CSPR = 1_000_000_000n;
 
 /**
- * Default gas budgets (in motes). A payable Odra `bet` routes value through a proxy-caller
- * session, so it is budgeted higher than the plain `resolve` call. Both are overridable per
- * call via {@link BuildPlanOptions.gasMotes} — these are safe upper-bound defaults, not
- * measured minima.
+ * Default gas budgets (in motes), matched to CHAIN MEASUREMENTS — see the table at the top of
+ * `contracts/bin/catalogue.rs`, and keep the two in step: the app and the deploy driver must never
+ * price the same call differently.
+ *
+ * These were previously round guesses (bet 10, resolve 5) described as "safe upper bounds". They
+ * were not: `resolve` consumes **6.317 CSPR**, so a 5 CSPR limit ran every real-mode resolution out
+ * of gas — and an out-of-gas transaction refunds nothing, so each failure burned the whole limit
+ * while settling nobody. Meanwhile `bet` at 10 was over-budgeted, and testnet's 75 % refund model
+ * means 25 % of the unused slack is burned on every call.
+ *
+ * Sized at ~2–3.5x measured consumption: enough headroom for a heavier-than-usual execution,
+ * little enough that the refund model is not quietly taxing every transaction.
  */
-export const DEFAULT_BET_GAS_MOTES = (10n * MOTES_PER_CSPR).toString();
-export const DEFAULT_RESOLVE_GAS_MOTES = (5n * MOTES_PER_CSPR).toString();
+/** `bet` measured 1.439 consumed → limit 5 is ~3.5x, netting ~2.33 CSPR. */
+export const DEFAULT_BET_GAS_MOTES = (5n * MOTES_PER_CSPR).toString();
+/** `resolve` measured 6.317 consumed → limit 12 is ~1.9x, netting ~7.74 CSPR. */
+export const DEFAULT_RESOLVE_GAS_MOTES = (12n * MOTES_PER_CSPR).toString();
+/**
+ * `create_market` measured 2.323 CSPR consumed on a warm vault and 4.958 on the very first call
+ * (which initialises the vault's dictionaries). 8 covers the spike at ~1.6x and a typical call at
+ * ~3.4x — the same limit `contracts/bin/catalogue.rs` uses, kept in step deliberately so the app
+ * and the deploy driver are never priced differently for the same call.
+ */
+export const DEFAULT_CREATE_GAS_MOTES = (8n * MOTES_PER_CSPR).toString();
+/**
+ * `commit_recipe` / `commit_bundle` (S24) are single-string storage writes — cheaper than
+ * `register_market` (measured ~0.976 consumed). 3 CSPR is ~3x headroom, netting ~1.5 like register.
+ */
+export const DEFAULT_COMMIT_GAS_MOTES = (3n * MOTES_PER_CSPR).toString();
 
-/** A single runtime argument. Odra passes String entry-point args 1:1 under their Rust name. */
-export interface CasperCallArg {
-  name: string;
-  /** CLType of the value. Only the subset the Hunch contracts use. */
-  clType: "string" | "u512";
-  /** String-encoded value (decimal for u512; raw for string) — keeps the plan JSON/bigint-safe. */
-  value: string;
-}
+/**
+ * A single runtime argument. Odra passes entry-point args 1:1 under their Rust name.
+ *
+ * A discriminated union rather than one `{clType, value}` shape, because `create_market` takes a
+ * `Vec<String>` and an `Address`: encoding a list into a delimited string would put an escaping
+ * bug directly in the money path's ABI. Scalars stay string-encoded so a plan is JSON- and
+ * bigint-safe and can be asserted offline.
+ */
+export type CasperCallArg =
+  | { name: string; clType: "string"; value: string }
+  /** Decimal-encoded integers. `u512` for motes, `u32`/`u64` for contract-side numerics. */
+  | { name: string; clType: "u512" | "u32" | "u64"; value: string }
+  /** An Odra `Address` — `account-hash-<64hex>` (an account) or `hash-<64hex>` (a contract). */
+  | { name: string; clType: "key"; value: string }
+  /** `Vec<String>` — outcome keys, verbatim. */
+  | { name: string; clType: "string-list"; values: string[] };
 
 /**
  * A network-, key-, and SDK-agnostic description of one on-chain contract call. Everything
@@ -178,6 +208,62 @@ export function buildBetPlan(input: PlaceBetInput, opts: BuildPlanOptions): Casp
   };
 }
 
+/**
+ * Build the plan for a runtime `create_market` on the v2 vault (payable — the creation bond is
+ * the attached value).
+ *
+ * Argument ORDER is the ABI, not a preference: `create_market(market_id, question, category,
+ * oracle, fee_bps, deadline, outcomes)`. Odra matches runtime args by name, but keeping the plan
+ * in declaration order means a signature change shows up as a diff here rather than as a
+ * mysterious revert on chain.
+ *
+ * This entry point exists only on the singleton vault. A per-market v1 package has no notion of
+ * creating anything, so a caller that has not routed to a v2 vault is a configuration error worth
+ * failing loudly on.
+ */
+export function buildCreateMarketPlan(
+  input: CreateMarketInput,
+  opts: BuildPlanOptions,
+): CasperCallPlan {
+  assertNonEmpty("marketContract", opts.marketContract);
+  assertNonEmpty("marketId", input.marketId);
+  assertNonEmpty("question", input.question);
+  assertNonEmpty("category", input.category);
+  assertNonEmpty("oracle", input.oracle);
+  assertPositiveMotes("bondMotes", input.bondMotes);
+  if (opts.vaultMarketId === undefined) {
+    throw new Error(
+      `create_market exists only on the singleton HunchVault v2 — market '${input.marketId}' routed to ` +
+        `a per-market package instead (set NEXT_PUBLIC_*_VAULT_V2, and keep the slug out of NEXT_PUBLIC_*_MARKET_ADDRS)`,
+    );
+  }
+  if (input.outcomeKeys.length < 2) {
+    throw new Error(`a market needs at least two outcomes, got ${input.outcomeKeys.length}`);
+  }
+  if (!Number.isInteger(input.feeBps) || input.feeBps < 0 || input.feeBps >= 10_000) {
+    throw new Error(`feeBps must be an integer in [0, 10000), got: ${input.feeBps}`);
+  }
+  if (!Number.isInteger(input.deadlineMs) || input.deadlineMs <= 0) {
+    throw new Error(`deadlineMs must be a positive epoch-ms integer, got: ${input.deadlineMs}`);
+  }
+  return {
+    targetContract: opts.marketContract,
+    entryPoint: "create_market",
+    args: [
+      { name: "market_id", clType: "string", value: input.marketId },
+      { name: "question", clType: "string", value: input.question },
+      { name: "category", clType: "string", value: input.category },
+      { name: "oracle", clType: "key", value: input.oracle },
+      { name: "fee_bps", clType: "u32", value: String(input.feeBps) },
+      { name: "deadline", clType: "u64", value: String(input.deadlineMs) },
+      { name: "outcomes", clType: "string-list", values: [...input.outcomeKeys] },
+    ],
+    attachedMotes: input.bondMotes,
+    gasMotes: opts.gasMotes ?? DEFAULT_CREATE_GAS_MOTES,
+    usesProxy: true, // payable → routed through proxy_caller_with_return.wasm
+  };
+}
+
 /** Build the plan for the oracle's `resolve` to a winning outcome (non-payable). */
 export function buildResolvePlan(input: ResolveMarketInput, opts: BuildPlanOptions): CasperCallPlan {
   assertNonEmpty("marketContract", opts.marketContract);
@@ -193,4 +279,43 @@ export function buildResolvePlan(input: ResolveMarketInput, opts: BuildPlanOptio
     gasMotes: opts.gasMotes ?? DEFAULT_RESOLVE_GAS_MOTES,
     usesProxy: false, // non-payable → direct package-targeting transaction
   };
+}
+
+/**
+ * S24 verifiable resolution: cheap non-payable storage-write entrypoints on the v2 vault that
+ * anchor the resolution-recipe hash and the evidence-bundle hash on chain. Both require a v2 vault
+ * target (`market_id` is the leading ABI arg); a per-market v1 package has no such entrypoint.
+ */
+export function buildCommitRecipePlan(marketId: string, recipeHash: string, opts: BuildPlanOptions): CasperCallPlan {
+  assertNonEmpty("marketContract", opts.marketContract);
+  assertNonEmpty("recipeHash", recipeHash);
+  assertVaultTarget("commit_recipe", opts);
+  return {
+    targetContract: opts.marketContract,
+    entryPoint: "commit_recipe",
+    args: [...vaultIdArgs(opts), { name: "recipe_hash", clType: "string", value: recipeHash }],
+    attachedMotes: "0",
+    gasMotes: opts.gasMotes ?? DEFAULT_COMMIT_GAS_MOTES,
+    usesProxy: false,
+  };
+}
+
+export function buildCommitBundlePlan(marketId: string, bundleHash: string, opts: BuildPlanOptions): CasperCallPlan {
+  assertNonEmpty("marketContract", opts.marketContract);
+  assertNonEmpty("bundleHash", bundleHash);
+  assertVaultTarget("commit_bundle", opts);
+  return {
+    targetContract: opts.marketContract,
+    entryPoint: "commit_bundle",
+    args: [...vaultIdArgs(opts), { name: "bundle_hash", clType: "string", value: bundleHash }],
+    attachedMotes: "0",
+    gasMotes: opts.gasMotes ?? DEFAULT_COMMIT_GAS_MOTES,
+    usesProxy: false,
+  };
+}
+
+function assertVaultTarget(entryPoint: string, opts: BuildPlanOptions): void {
+  if (opts.vaultMarketId === undefined) {
+    throw new Error(`${entryPoint} exists only on the singleton HunchVault v2 — set NEXT_PUBLIC_*_VAULT_V2`);
+  }
 }
