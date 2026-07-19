@@ -439,10 +439,32 @@ deduped by the platform's message id (`bot-idempotency.ts`), so a retried webhoo
 
 ## 10. Deploy pipeline
 
-- **Production:** push to `main` → Vercel builds and promotes to `casper.playhunch.xyz`.
+- **Production (app):** push to `main` → Vercel builds and promotes to `casper.playhunch.xyz`.
 - **CI gate:** `.github/workflows/ci.yml` runs `pnpm typecheck && lint && test && build`, plus
   `cargo odra test` and a wasm build in a second job.
 - **SDK:** `pnpm sdk:build`, then `cd packages/sdk && npm publish --access public`.
+
+### Mainnet contract deploy — dry run FIRST, then a deliberate spend
+
+The mainnet deploy of the contracts is an operator action that spends real CSPR, so it is never
+automated. Always preview it:
+
+```bash
+# The full cost + address plan, zero transactions (transactionsPerformed:false):
+curl -s https://casper.playhunch.xyz/api/deploy-plan/mainnet-preflight?format=text
+```
+
+The preflight prints every install + `create_market` + `register_market` (+ optional house seed)
+with chain-measured net costs and a grand total, the address plan (already-deployed vs to-deploy),
+and the **audit gate**: while `NEXT_PUBLIC_AUDIT_STATUS` is not `audited` it reports **NOT CLEARED**
+and the per-bet cap stays at the unaudited ceiling. There is deliberately no path from this endpoint
+to a signed transaction.
+
+Only after (1) an independent audit closes, (2) `NEXT_PUBLIC_AUDIT_STATUS=audited` is set, and (3)
+you have reviewed the preflight, do you run the real deploy with a funded `CASPER_BETTOR_KEY`
+against the mainnet node via `contracts/bin/cli.rs` (odra-cli livenet) + the catalogue driver in
+`contracts/bin/catalogue.rs` — see [`contracts/DEPLOY.md`](../contracts/DEPLOY.md). That is a
+separate, deliberate command; this run does not execute it (decision D2).
 
 The local pre-commit gate is the same command CI runs:
 

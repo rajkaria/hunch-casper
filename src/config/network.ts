@@ -7,6 +7,8 @@
  * a network-specific value.
  */
 
+import { currentMaxBetCspr, UNAUDITED_MAINNET_CAP_CSPR } from "./caps";
+
 export type CasperNetwork = "testnet" | "mainnet";
 
 export const CASPER_NETWORKS: readonly CasperNetwork[] = ["testnet", "mainnet"] as const;
@@ -126,7 +128,9 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
       vaultV2: envAddr("NEXT_PUBLIC_MAINNET_VAULT_V2"),
     },
     marketAddresses: parseMarketAddresses(process.env.NEXT_PUBLIC_MAINNET_MARKET_ADDRS),
-    guardrails: { maxBetCspr: 25, showUnauditedBanner: true },
+    // The static unaudited ceiling; the *effective* cap is the audit-gated ramp in `caps.ts`, which
+    // never exceeds this until the contracts are audited (see `maxBetCspr` below).
+    guardrails: { maxBetCspr: UNAUDITED_MAINNET_CAP_CSPR, showUnauditedBanner: true },
   },
 };
 
@@ -141,9 +145,13 @@ export function getNetworkConfig(network: CasperNetwork): NetworkConfig {
   return NETWORKS[network];
 }
 
-/** Per-bet cap in whole CSPR for a network (the mainnet real-money guardrail), or `null` if uncapped. */
+/**
+ * Per-bet cap in whole CSPR for a network, or `null` if uncapped. Delegates to the audit-gated
+ * cap-ramp policy (`caps.ts`): with no audit env set this returns the static unaudited ceiling
+ * (25 CSPR on mainnet, uncapped on testnet), so it is a superset of the old static behaviour.
+ */
 export function maxBetCspr(network: CasperNetwork): number | null {
-  return NETWORKS[network].guardrails.maxBetCspr;
+  return currentMaxBetCspr(network);
 }
 
 /**
@@ -152,7 +160,7 @@ export function maxBetCspr(network: CasperNetwork): number | null {
  * can never route around the guardrail on any surface. `amountCspr` is a whole-CSPR amount.
  */
 export function exceedsBetCap(network: CasperNetwork, amountCspr: number): boolean {
-  const cap = NETWORKS[network].guardrails.maxBetCspr;
+  const cap = currentMaxBetCspr(network);
   return cap != null && amountCspr > cap;
 }
 

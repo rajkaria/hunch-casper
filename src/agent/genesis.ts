@@ -19,6 +19,7 @@ import { addCreatedMarket } from "@/adapters/mock/market-source";
 import { appendAction } from "@/adapters/mock/activity-log";
 import { chainMode } from "@/config/chain-mode";
 import { seedMarketPools } from "@/agent/house-seed";
+import { assessMarketFields } from "@/core/category-policy";
 
 /** A CSPR.cloud-style signal that motivates a new market. */
 export interface GenesisTrigger {
@@ -180,6 +181,15 @@ export async function runGenesis(
     prompt: `Propose a market idea and one-line framing for the signal ${trigger.metric} = ${trigger.value}.`,
   });
   const def = definitionFromTrigger(trigger, framing);
+
+  // Compliance gate — no market reaches the board that the category policy forbids. Genesis builds
+  // from market metrics so this is virtually always a pass, but the gate is enforced identically
+  // for the autonomous and the human (S23) surface: a banned question is refused, not created.
+  const verdict = assessMarketFields({ title: def.title, subtitle: def.subtitle, description: def.resolver.description });
+  if (!verdict.allowed) {
+    throw new Error(`genesis market rejected by category policy (${verdict.reason}): ${verdict.message}`);
+  }
+
   buildDeployPlan(def); // ABI-validate before registering (throws on a bad config)
 
   // On-chain first: a market entry must exist in the vault before anything can bet into it. If
