@@ -98,7 +98,8 @@ export async function seedMarketPools(
         }),
       );
     } catch (err) {
-      console.warn(`[house-seed] could not seed ${marketId}/${seed.outcomeKey}:`, err);
+      // The market id can come from user input; keep it out of the format string and escape it.
+      console.warn("[house-seed] could not seed", JSON.stringify(`${marketId}/${seed.outcomeKey}`), "—", err);
     }
   }
   return actions;

@@ -157,7 +157,8 @@ async function createOnChain(
       bondMotes: creationBondMotes(),
     });
   } catch (err) {
-    console.warn(`[genesis] on-chain create_market failed for '${def.slug}' — labelling it simulated:`, err);
+    // The slug can come from user input; keep it out of the format string and escape it.
+    console.warn("[genesis] on-chain create_market failed for", JSON.stringify(def.slug), "— labelling it simulated:", err);
     return null;
   }
 }
