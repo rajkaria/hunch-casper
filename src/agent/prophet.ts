@@ -9,7 +9,8 @@
 
 import type { Container } from "@/lib/container";
 import type { Prophet } from "@/core/prophet-strategies";
-import { PROPHETS, decide } from "@/core/prophet-strategies";
+import { PROPHETS, decide, MAX_CONVICTION_MULTIPLIER } from "@/core/prophet-strategies";
+import { csprToMotes } from "@/core/types";
 import { agentBet } from "@/lib/agent-bet";
 import { computeOdds } from "@/core/parimutuel-odds";
 import { appendAction } from "@/adapters/mock/activity-log";
@@ -24,6 +25,23 @@ import { chainMode } from "@/config/chain-mode";
  * out, which costs nothing and leaves the balance available for the next one.
  */
 export const PROPHET_GAS_FLOOR_MOTES = 200_000_000n;
+
+/**
+ * What one turn can cost the richest-betting agent: the largest stake in the fleet, at Momentum's
+ * doubled conviction, plus the gas on its own x402 transfer.
+ *
+ * THE SINGLE SOURCE OF TRUTH for "can this purse afford to act". Both the cadence planner (which
+ * throttles betting off below `BETTING_FLOOR_ROUNDS` of this) and the health endpoint (which calls
+ * a purse funded or not) ask this one function. They used to compute it separately and drifted the
+ * moment stakes changed — health reporting every purse funded while the planner had already
+ * throttled betting off is the worst kind of green: an operator sees a healthy fleet and no bets,
+ * with nothing in either surface explaining the contradiction.
+ */
+export function prophetTurnCostMotes(): string {
+  const largestStake = PROPHETS.reduce((max, p) => Math.max(max, p.stakeCspr), 0);
+  const worstCase = BigInt(csprToMotes(largestStake)) * BigInt(MAX_CONVICTION_MULTIPLIER);
+  return (worstCase + PROPHET_GAS_FLOOR_MOTES).toString();
+}
 
 /**
  * Settle a Prophet's x402 requirement by moving real money from the Prophet's own purse.

@@ -13,6 +13,11 @@ import { GET as healthGET } from "@/app/api/health/route";
 import { probePersistence, __resetPersistenceForTests } from "@/adapters/persist/economy-state";
 import { appendAction, __resetActivity } from "@/adapters/mock/activity-log";
 import { __resetDemoSeed } from "@/adapters/mock/demo-seed";
+import { fleetTurnFloorMotes } from "@/lib/health";
+import { prophetTurnCostMotes, PROPHET_GAS_FLOOR_MOTES } from "@/agent/prophet";
+import { PROPHETS, MAX_CONVICTION_MULTIPLIER } from "@/core/prophet-strategies";
+import { csprToMotes } from "@/core/types";
+import { NATIVE_TRANSFER_MINIMUM_MOTES } from "@/config/network";
 
 const NOW = 1_780_000_000_000;
 
@@ -345,5 +350,24 @@ describe("GET /api/health", () => {
   it("falls back to the default network on a bogus ?network=", async () => {
     const res = await healthGET(new Request("http://localhost/api/health?network=solana"));
     expect((await res.json()).network).toBe("testnet");
+  });
+});
+
+/**
+ * Health's "is this purse funded?" and the cadence planner's "may this agent bet?" must be the
+ * same number. They drifted once — health billed a turn at the base stake while the planner billed
+ * Momentum's doubled conviction bet — so an operator could read every purse funded on a fleet the
+ * planner had already throttled out of betting. Structurally one function now; this pins the value.
+ */
+describe("the fleet turn floor is the cadence planner's number", () => {
+  it("covers the worst turn any Prophet can take: largest stake at full conviction, plus its gas", () => {
+    const largest = PROPHETS.reduce((max, p) => Math.max(max, p.stakeCspr), 0);
+    const worstCase = BigInt(csprToMotes(largest)) * BigInt(MAX_CONVICTION_MULTIPLIER) + PROPHET_GAS_FLOOR_MOTES;
+    expect(fleetTurnFloorMotes()).toBe(worstCase.toString());
+    expect(fleetTurnFloorMotes()).toBe(prophetTurnCostMotes());
+  });
+
+  it("stays above the chain's own transfer floor — a turn that cannot transfer is not a turn", () => {
+    expect(BigInt(fleetTurnFloorMotes())).toBeGreaterThan(NATIVE_TRANSFER_MINIMUM_MOTES);
   });
 });

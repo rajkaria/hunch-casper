@@ -12,12 +12,11 @@ import type { AgentAction } from "@/adapters/mock/activity-log";
 import type { AgentPnl } from "@/core/agent-leaderboard";
 import { computeAgentLeaderboard } from "@/core/agent-leaderboard";
 import type { OracleReputation } from "@/ports/oracle";
-import { runProphetFleet, prophetsPerTick, PROPHET_GAS_FLOOR_MOTES } from "@/agent/prophet";
+import { runProphetFleet, prophetsPerTick, prophetTurnCostMotes } from "@/agent/prophet";
 import { runArbiterSweep, resolveMarket } from "@/agent/arbiter";
-import { PROPHETS, MAX_CONVICTION_MULTIPLIER } from "@/core/prophet-strategies";
 import { planCadence, type CadencePlan } from "@/core/cadence";
 import { OPERATOR_AGENT_ID } from "@/adapters/casper/fleet-keys";
-import { csprToMotes } from "@/core/types";
+import { PROPHETS } from "@/core/prophet-strategies";
 import { chainMode } from "@/config/chain-mode";
 import { DEFAULT_BET_GAS_MOTES, DEFAULT_CREATE_GAS_MOTES } from "@/adapters/casper/deploy-plan";
 
@@ -50,15 +49,11 @@ function perRoundTreasuryCostMotes(): string {
 }
 
 /**
- * What one round costs a single agent: the most it could stake plus the gas on its own x402
- * transfer. "Most it could stake" includes Momentum's conviction multiplier — clearing an agent
- * for a round it can only half-afford is the same mistake as under-funding it.
+ * What one round costs a single agent. Shared with the health endpoint's funded/unfunded verdict
+ * (`agent/prophet.ts`) so an operator can never be told every purse is funded while this planner
+ * has already throttled betting off.
  */
-function perRoundAgentCostMotes(): string {
-  const largestStake = PROPHETS.reduce((max, p) => Math.max(max, p.stakeCspr), 0);
-  const worstCase = BigInt(csprToMotes(largestStake)) * BigInt(MAX_CONVICTION_MULTIPLIER);
-  return (worstCase + PROPHET_GAS_FLOOR_MOTES).toString();
-}
+const perRoundAgentCostMotes = prophetTurnCostMotes;
 
 /**
  * Read the purses and decide what this tick may afford.

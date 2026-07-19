@@ -16,8 +16,7 @@ import { probePersistence } from "@/adapters/persist/economy-state";
 import { exportActivityState } from "@/adapters/mock/activity-log";
 import { createContainer } from "@/lib/container";
 import { PROPHETS } from "@/core/prophet-strategies";
-import { PROPHET_GAS_FLOOR_MOTES } from "@/agent/prophet";
-import { csprToMotes } from "@/core/types";
+import { prophetTurnCostMotes } from "@/agent/prophet";
 
 function isSet(name: string): boolean {
   const v = process.env[name];
@@ -39,14 +38,12 @@ function economySnapshot(): { actionCount: number; newestActionTs: number | null
 }
 
 /**
- * The turn floor: the largest stake any Prophet places, plus the gas an agent's own transfer
- * costs. An agent below this sits out, so this is the number that decides whether a purse counts
- * as funded.
+ * The turn floor: what a Prophet's turn can cost it. Delegates to `prophetTurnCostMotes` — the
+ * same number the cadence planner throttles on — so "funded" here and "may bet" there can never
+ * disagree. They did, briefly: health billed a turn at the base stake while the planner billed
+ * the doubled conviction bet, so a purse could read funded and still be throttled out.
  */
-export function fleetTurnFloorMotes(): string {
-  const largestStake = PROPHETS.reduce((max, p) => Math.max(max, p.stakeCspr), 0);
-  return (BigInt(csprToMotes(largestStake)) + PROPHET_GAS_FLOOR_MOTES).toString();
-}
+export const fleetTurnFloorMotes = prophetTurnCostMotes;
 
 /**
  * Every agent's account and balance, read in parallel. A wallet that throws (unconfigured key,
