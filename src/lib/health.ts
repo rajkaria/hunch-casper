@@ -17,6 +17,7 @@ import { exportActivityState } from "@/adapters/mock/activity-log";
 import { createContainer } from "@/lib/container";
 import { PROPHETS } from "@/core/prophet-strategies";
 import { prophetTurnCostMotes } from "@/agent/prophet";
+import { breakerSnapshot } from "@/agent/bet-breaker";
 
 function isSet(name: string): boolean {
   const v = process.env[name];
@@ -118,6 +119,14 @@ export async function gatherHealth(
     csprCloudKeyConfigured: isSet("CSPR_CLOUD_API_KEY"),
     economy: economySnapshot(),
     fleet,
+    breaker: (() => {
+      const b = breakerSnapshot();
+      return {
+        consecutiveFailures: b.consecutiveFailures,
+        trippedAt: b.trippedAt,
+        lastFailureReason: b.lastFailure?.reason,
+      };
+    })(),
     fleetMinBalanceMotes: fleetTurnFloorMotes(),
     now: opts.now ?? Date.now(),
   };

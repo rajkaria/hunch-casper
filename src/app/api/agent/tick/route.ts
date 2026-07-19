@@ -4,9 +4,11 @@
  * literal — a Vercel cron (GET) fires it on a schedule; the demo can also POST it by hand.
  *
  * GET  — the cron entry point (Vercel issues GET). Runs a plain tick.
- * POST — manual/demo. Optional body `{ network?, seq?, resolveSlugs?: string[] }`; `resolveSlugs`
- *        force-closes those markets this tick (the weekly meta-market close) so their settlement
- *        against the freshly-updated boards is demoable on demand.
+ * POST — manual/demo. Optional body `{ network?, seq?, resolveSlugs?: string[], resetBreaker? }`;
+ *        `resolveSlugs` force-closes those markets this tick (the weekly meta-market close) so
+ *        their settlement against the freshly-updated boards is demoable on demand.
+ *        `resetBreaker: true` closes a tripped paid-but-not-placed breaker — the deliberate human
+ *        step after the escrow path has actually been fixed (see `agent/bet-breaker.ts`).
  *
  * Auth: open in the credential-free mock/demo. In real mode it requires the cron secret — either
  * Vercel's native `Authorization: Bearer <CRON_SECRET>` or an `x-cron-secret` header — because a
@@ -21,6 +23,7 @@ import { isCasperNetwork, DEFAULT_NETWORK } from "@/config/network";
 import { chainMode } from "@/config/chain-mode";
 import type { CasperNetwork } from "@/config/network";
 import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
+import { resetBreaker } from "@/agent/bet-breaker";
 
 function authorized(req: Request): boolean {
   const secret = process.env.CRON_SECRET ?? process.env.TICK_CRON_SECRET;
@@ -51,6 +54,7 @@ async function tick(network: CasperNetwork, seq: number, resolveSlugs?: string[]
     // all of them. The cadence plan and the candidate count make the tick self-explaining.
     cadence: report.cadence,
     marketsConsidered: report.marketsConsidered,
+    breaker: report.breaker,
   });
 }
 
@@ -89,5 +93,8 @@ export async function POST(req: Request): Promise<Response> {
   const resolveSlugs = Array.isArray(body.resolveSlugs)
     ? body.resolveSlugs.filter((s): s is string => typeof s === "string")
     : undefined;
+  // Reset BEFORE the tick, so the same request that clears the breaker also bets again — an
+  // operator who has fixed the cause should not need a second call to find out whether it worked.
+  if (body.resetBreaker === true) resetBreaker();
   return tick(network, seq, resolveSlugs);
 }

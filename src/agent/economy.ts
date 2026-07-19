@@ -13,6 +13,7 @@ import type { AgentPnl } from "@/core/agent-leaderboard";
 import { computeAgentLeaderboard } from "@/core/agent-leaderboard";
 import type { OracleReputation } from "@/ports/oracle";
 import { runProphetFleet, prophetsPerTick, prophetTurnCostMotes } from "@/agent/prophet";
+import { bettingHalted, breakerSnapshot, type BreakerSnapshot } from "@/agent/bet-breaker";
 import { runArbiterSweep, resolveMarket } from "@/agent/arbiter";
 import { planCadence, type CadencePlan } from "@/core/cadence";
 import { OPERATOR_AGENT_ID } from "@/adapters/casper/fleet-keys";
@@ -38,6 +39,11 @@ export interface EconomyTickReport {
    * problem. Without it the two are the same silence.
    */
   marketsConsidered: number;
+  /**
+   * The paid-but-not-placed breaker. Tripped means the fleet is NOT betting because agents were
+   * paying and getting nothing back — an operator has to fix the money path and reset it.
+   */
+  breaker: BreakerSnapshot;
 }
 
 /**
@@ -120,8 +126,18 @@ export async function runEconomyTick(
   const bettable = (await container.store.list({ network: container.network, status: "open" })).filter(
     (m) => m.category !== "meta",
   );
+  // The breaker outranks the cadence plan: affording a bet is irrelevant when the last few bets
+  // were paid for and never landed. Resolution below is deliberately NOT gated by it.
+  const halted = bettingHalted();
+  if (halted) {
+    console.error(
+      "[economy] prophet betting HALTED by the paid-but-not-placed breaker (%d consecutive failures) — " +
+        "fix the escrow path, then reset the breaker",
+      breakerSnapshot().consecutiveFailures,
+    );
+  }
   const prophetActions =
-    cadence && !cadence.allowProphetBets ? [] : await runProphetFleet(container, input.seq);
+    halted || (cadence && !cadence.allowProphetBets) ? [] : await runProphetFleet(container, input.seq);
 
   // 2. Arbiter resolves everything matured (unattended), then any explicit weekly closes. Explicit
   //    closes run last so meta-markets settle against the boards this tick's resolutions produced.
@@ -145,5 +161,6 @@ export async function runEconomyTick(
     oracleBoard,
     cadence,
     marketsConsidered: bettable.length,
+    breaker: breakerSnapshot(),
   };
 }

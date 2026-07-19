@@ -9,6 +9,7 @@ import { __resetActivity } from "@/adapters/mock/activity-log";
 import { __resetOracleLedger } from "@/adapters/mock/oracle-ledger";
 import { __resetConsumedNonces } from "@/lib/agent-bet";
 import { __resetCreatedMarkets } from "@/adapters/mock/market-source";
+import { BREAKER_TRIP_THRESHOLD, recordPaidNotPlaced, resetBreaker } from "@/agent/bet-breaker";
 
 beforeEach(() => {
   __resetLedger();
@@ -16,6 +17,7 @@ beforeEach(() => {
   __resetOracleLedger();
   __resetConsumedNonces();
   __resetCreatedMarkets();
+  resetBreaker();
 });
 
 const maxPnl = (board: { realizedPnlMotes: string }[]) =>
@@ -99,5 +101,47 @@ describe("The full economy loop (the recursion runs unattended)", () => {
     const closed = report.arbiterActions.find((a) => a.marketId.endsWith(":prophet-race-weekly"));
     expect(closed).toBeDefined();
     expect(await container.store.settlementFor("testnet:prophet-race-weekly")).not.toBeNull();
+  });
+});
+
+/**
+ * The breaker's job inside the loop. It outranks affordability: having the money to bet is
+ * irrelevant when the last few bets were paid for and never landed. Resolution is deliberately
+ * NOT gated by it — that pays people what they are owed, and withholding it to protect the
+ * operator's purse would strand user money.
+ */
+describe("the paid-but-not-placed breaker inside the tick", () => {
+  const trip = () => {
+    for (let i = 1; i <= BREAKER_TRIP_THRESHOLD; i++) {
+      recordPaidNotPlaced({ agentId: "agent:value", deployHash: "ab".repeat(32), reason: "boom", ts: i });
+    }
+  };
+
+  it("stops the fleet betting once tripped", async () => {
+    const container = createContainer("testnet");
+    const before = await runEconomyTick(container, { seq: 1 });
+    expect(before.prophetActions.length).toBeGreaterThan(0);
+
+    trip();
+    const after = await runEconomyTick(container, { seq: 2 });
+    expect(after.prophetActions).toEqual([]);
+    expect(after.breaker.trippedAt).not.toBeNull();
+  });
+
+  it("still resolves matured markets while betting is halted", async () => {
+    const container = createContainer("testnet");
+    trip();
+    // The sweep must still run: a tripped breaker is about the fleet's money, not the users'.
+    const report = await runEconomyTick(container, { seq: 3 });
+    expect(report.prophetActions).toEqual([]);
+    expect(Array.isArray(report.arbiterActions)).toBe(true);
+  });
+
+  it("bets again after an operator reset", async () => {
+    const container = createContainer("testnet");
+    trip();
+    expect((await runEconomyTick(container, { seq: 4 })).prophetActions).toEqual([]);
+    resetBreaker();
+    expect((await runEconomyTick(container, { seq: 5 })).prophetActions.length).toBeGreaterThan(0);
   });
 });

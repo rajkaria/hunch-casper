@@ -269,6 +269,29 @@ across the hour. `CASPER_PROPHETS_PER_TICK` raises it if you have funded for mor
 To stretch a fixed budget further, lower the tick frequency in
 `.github/workflows/economy.yml` (hourly ≈ 56 CSPR/day) before raising the fleet size.
 
+### The paid-but-not-placed breaker
+
+An agent bet is two transactions — the agent pays the treasury over x402, then the operator escrows
+the stake — and there is **no refund path between them**. If the escrow fails after the payment
+lands, the agent bought nothing and the stake is gone. Per tick that loss is small and bounded; on
+a 10-minute cron it is not.
+
+So the tick counts CONSECUTIVE paid-but-not-placed failures and halts betting at three
+(`src/agent/bet-breaker.ts`). The counter rides the KV envelope, because a counter that reset on
+every cold start would never reach a threshold on serverless. Resolution is never gated by it —
+that pays users what they are owed.
+
+When it trips, `/api/health` fails the `bets` check (so a monitor pages someone) and names the last
+failure's settlement hash to reconcile against. Nothing clears it but a bet that lands, or an
+operator who has fixed the cause:
+
+```bash
+curl -X POST -H "x-cron-secret: $CRON_SECRET" -H 'content-type: application/json' \
+  -d '{"resetBreaker":true}' https://casper.playhunch.xyz/api/agent/tick
+```
+
+That request resets and ticks in one call, so you find out immediately whether the fix worked.
+
 ### Automatic throttling
 
 The tick reads the purses before it spends anything and degrades in a fixed order, so a nearly

@@ -62,6 +62,11 @@ export interface HealthInputs {
    * whole fleet goes quiet.
    */
   fleetMinBalanceMotes: string;
+  /**
+   * The paid-but-not-placed breaker. Optional so a caller that does not track it (older tests,
+   * a mock-mode probe) is unchanged.
+   */
+  breaker?: { consecutiveFailures: number; trippedAt: number | null; lastFailureReason?: string };
   /** Epoch ms "now" — injected so tests never race the wall clock. */
   now: number;
 }
@@ -269,6 +274,34 @@ function fleetCheck(i: HealthInputs, unfunded: FleetBalance[]): HealthCheck {
   );
 }
 
+/**
+ * The paid-but-not-placed breaker. A TRIPPED breaker is a `fail`, not a warning: agents paid the
+ * treasury and got nothing back, and the fleet has stopped betting to keep that from repeating.
+ * It needs a human — nothing clears it on its own but a bet that lands.
+ */
+function breakerCheck(i: HealthInputs): HealthCheck {
+  const b = i.breaker;
+  if (!b) return check("bets", "skip", "paid-but-not-placed tracking is not wired on this instance");
+  if (b.trippedAt !== null) {
+    return check(
+      "bets",
+      "fail",
+      `prophet betting is HALTED — ${b.consecutiveFailures} consecutive bets were paid for and never ` +
+        `placed${b.lastFailureReason ? ` (last: ${b.lastFailureReason})` : ""}. Agents are losing their ` +
+        `stake for nothing; fix the escrow path, then POST the tick with {"resetBreaker":true}`,
+    );
+  }
+  if (b.consecutiveFailures > 0) {
+    return check(
+      "bets",
+      "warn",
+      `${b.consecutiveFailures} consecutive bet(s) were paid for and never placed — the breaker halts ` +
+        `betting if this keeps up${b.lastFailureReason ? ` (last: ${b.lastFailureReason})` : ""}`,
+    );
+  }
+  return check("bets", "ok", "every paid bet is landing on chain");
+}
+
 /** Evaluate every subsystem. Overall status is `degraded` iff any check failed. */
 export function buildHealthReport(i: HealthInputs): HealthReport {
   const floor = BigInt(i.fleetMinBalanceMotes);
@@ -282,6 +315,7 @@ export function buildHealthReport(i: HealthInputs): HealthReport {
     cronCheck(i),
     signalsCheck(i),
     fleetCheck(i, unfunded),
+    breakerCheck(i),
     economyCheck(i),
   ];
   const problems = checks.filter((c) => c.status === "fail" || c.status === "warn").map((c) => c.name);

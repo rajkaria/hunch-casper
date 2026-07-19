@@ -43,6 +43,7 @@ function healthyReal(): HealthInputs {
       { agentId: "Momentum", account: "01aa", accountHash: "account-hash-aa", balanceMotes: "40000000000" },
       { agentId: "Contrarian", account: "01bb", accountHash: "account-hash-bb", balanceMotes: "40000000000" },
     ],
+    breaker: { consecutiveFailures: 0, trippedAt: null },
     fleetMinBalanceMotes: "3200000000",
     now: NOW,
   };
@@ -369,5 +370,44 @@ describe("the fleet turn floor is the cadence planner's number", () => {
 
   it("stays above the chain's own transfer floor — a turn that cannot transfer is not a turn", () => {
     expect(BigInt(fleetTurnFloorMotes())).toBeGreaterThan(NATIVE_TRANSFER_MINIMUM_MOTES);
+  });
+});
+
+/**
+ * The paid-but-not-placed breaker on the health surface. This is the check that would have caught
+ * the real incident: agents paying the treasury every tick and getting no bet, for hours, while
+ * every other check stayed green.
+ */
+describe("the paid-but-not-placed breaker check", () => {
+  it("is ok while every paid bet lands", () => {
+    const r = buildHealthReport(healthyReal());
+    expect(r.checks.find((c) => c.name === "bets")!.status).toBe("ok");
+  });
+
+  it("warns on failures that have not yet tripped it", () => {
+    const r = buildHealthReport({
+      ...healthyReal(),
+      breaker: { consecutiveFailures: 2, trippedAt: null, lastFailureReason: "413 Payload Too Large" },
+    });
+    const c = r.checks.find((x) => x.name === "bets")!;
+    expect(c.status).toBe("warn");
+    expect(c.detail).toContain("413 Payload Too Large");
+  });
+
+  it("FAILS the whole report once tripped — money is being lost for nothing", () => {
+    const r = buildHealthReport({
+      ...healthyReal(),
+      breaker: { consecutiveFailures: 3, trippedAt: 1_700_000_000_000, lastFailureReason: "chain submission failed" },
+    });
+    const c = r.checks.find((x) => x.name === "bets")!;
+    expect(c.status).toBe("fail");
+    expect(r.status).toBe("degraded"); // a monitor pages someone
+    expect(c.detail).toMatch(/resetBreaker/);
+  });
+
+  it("skips when nothing tracks it, rather than claiming health it cannot see", () => {
+    const withoutBreaker = { ...healthyReal() };
+    delete (withoutBreaker as { breaker?: unknown }).breaker;
+    expect(buildHealthReport(withoutBreaker).checks.find((c) => c.name === "bets")!.status).toBe("skip");
   });
 });

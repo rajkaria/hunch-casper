@@ -46,6 +46,11 @@ import {
   importCreatedMarkets,
   type CreatedMarketsSnapshot,
 } from "@/adapters/mock/market-source";
+import {
+  exportBreakerState,
+  importBreakerState,
+  type BreakerSnapshot,
+} from "@/agent/bet-breaker";
 import { markDemoSeeded } from "@/adapters/mock/demo-seed";
 import { setEconomyPersistHook } from "@/adapters/persist/economy-persist-hook";
 
@@ -64,6 +69,8 @@ interface EconomyEnvelope {
   activity: ActivitySnapshot;
   oracle: OracleSnapshot;
   created: CreatedMarketsSnapshot;
+  /** Optional: absent in envelopes written before the bet breaker existed. */
+  breaker?: BreakerSnapshot;
 }
 
 // ── Config ──────────────────────────────────────────────────────────────────────────────────────
@@ -98,6 +105,7 @@ export function serializeEconomyState(): string {
     activity: exportActivityState(),
     oracle: exportOracleState(),
     created: exportCreatedMarkets(),
+    breaker: exportBreakerState(),
   };
   return JSON.stringify(envelope);
 }
@@ -168,6 +176,8 @@ export function applyEconomyState(json: string): boolean {
     importActivityState(parsed.activity);
     importOracleState(parsed.oracle);
     importCreatedMarkets(parsed.created);
+    // Optional: envelopes written before the breaker existed simply leave it closed.
+    if (parsed.breaker) importBreakerState(parsed.breaker);
   } catch {
     return false;
   }

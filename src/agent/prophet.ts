@@ -17,6 +17,7 @@ import { appendAction } from "@/adapters/mock/activity-log";
 import type { AgentAction } from "@/adapters/mock/activity-log";
 import type { X402PaymentProof, X402PaymentRequirement } from "@/ports/payment";
 import { chainMode } from "@/config/chain-mode";
+import { recordPaidNotPlaced, recordPlacement } from "@/agent/bet-breaker";
 
 /**
  * Motes a Prophet must hold ABOVE its stake before it is allowed to bet: the native-transfer
@@ -152,15 +153,26 @@ export async function runProphet(
     // treasury. Dropping this silently is how a live deployment leaked a stake per round while
     // recording no bets and looking merely idle. An operator must be able to see the paid-for-
     // nothing case in the logs, with the settlement hash to reconcile against.
+    const reason = placed.status === "error" ? placed.error : "unexpected placement status";
     console.error(
       "[prophet] %s PAID BUT DID NOT PLACE — settlement %s, status %s: %s",
       prophet.id,
       proof.deployHash,
       placed.status,
-      placed.status === "error" ? placed.error : "unexpected placement status",
+      reason,
     );
+    // Count it. Repeating this every tick is how a bounded per-bet loss becomes an unbounded one.
+    recordPaidNotPlaced({
+      agentId: prophet.id,
+      deployHash: proof.deployHash ?? "",
+      reason,
+      ts: Date.now(),
+    });
     return null;
   }
+
+  // The money path works right now — clear any accumulated failures.
+  recordPlacement();
 
   return appendAction({
     agent: prophet.name,
