@@ -32,6 +32,12 @@ export interface EconomyTickReport {
   oracleBoard: OracleReputation[];
   /** What this tick was allowed to do, and why. `null` in mock mode (nothing costs anything). */
   cadence: CadencePlan | null;
+  /**
+   * How many markets the fleet could have bet on this tick (open, non-meta). Zero here and zero
+   * `prophetActions` is a catalogue problem; a positive count with zero bets is a money-path
+   * problem. Without it the two are the same silence.
+   */
+  marketsConsidered: number;
 }
 
 /**
@@ -111,6 +117,9 @@ export async function runEconomyTick(
   const cadence = await currentCadence(container);
 
   // 1. Prophets bet — pools move, rivalry plays out.
+  const bettable = (await container.store.list({ network: container.network, status: "open" })).filter(
+    (m) => m.category !== "meta",
+  );
   const prophetActions =
     cadence && !cadence.allowProphetBets ? [] : await runProphetFleet(container, input.seq);
 
@@ -128,5 +137,13 @@ export async function runEconomyTick(
   const leaderboard = computeAgentLeaderboard(await container.store.settledEntries(container.network));
   const oracleBoard = await container.oracle.leaderboard();
 
-  return { seq: input.seq, prophetActions, arbiterActions, leaderboard, oracleBoard, cadence };
+  return {
+    seq: input.seq,
+    prophetActions,
+    arbiterActions,
+    leaderboard,
+    oracleBoard,
+    cadence,
+    marketsConsidered: bettable.length,
+  };
 }

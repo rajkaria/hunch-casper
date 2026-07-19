@@ -45,6 +45,12 @@ async function tick(network: CasperNetwork, seq: number, resolveSlugs?: string[]
     arbiterActions: report.arbiterActions,
     leaderboard: report.leaderboard,
     oracleAccuracy: report.oracleBoard,
+    // Why this tick did what it did. `placed: 0` used to be indistinguishable between "throttled
+    // for lack of funds", "no market was open to bet on", and "every agent's bet failed" — three
+    // problems with three different fixes, and the operator surface reported the same silence for
+    // all of them. The cadence plan and the candidate count make the tick self-explaining.
+    cadence: report.cadence,
+    marketsConsidered: report.marketsConsidered,
   });
 }
 
