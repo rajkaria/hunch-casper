@@ -21,6 +21,8 @@ import type {
 } from "@/ports";
 import type { AgentAccount, TransferInput, TransferResult, WalletPort } from "@/ports/wallet";
 import type { EventsPort } from "@/ports/events";
+import type { EvidenceStorePort } from "@/ports/evidence-store";
+import { createMockEvidenceStore } from "@/adapters/mock/mock-evidence-store";
 import { createMockChain } from "@/adapters/mock/mock-chain";
 import { createMockEvents } from "@/adapters/mock/mock-events";
 import { createStreamEvents } from "@/adapters/casper/stream-events";
@@ -42,6 +44,8 @@ export interface Container {
   wallet: WalletPort;
   /** The chain's event stream — the auditable source the boards rebuild from. */
   events: EventsPort;
+  /** Content-addressed store for resolution evidence bundles (S24). */
+  evidence: EvidenceStorePort;
   oracle: OraclePort;
   llm: LlmClient;
   store: MarketStorePort;
@@ -158,6 +162,7 @@ export function createContainer(network: CasperNetwork = DEFAULT_NETWORK): Conta
     payment,
     wallet,
     events,
+    evidence: createMockEvidenceStore(),
     oracle: createMockOracle(),
     llm: createMockLlm(),
     store: createMockMarketStore(),

@@ -24,6 +24,10 @@ import { findDefinition } from "@/adapters/mock/market-source";
 import { appendAction } from "@/adapters/mock/activity-log";
 import type { AgentAction } from "@/adapters/mock/activity-log";
 import { chainMode } from "@/config/chain-mode";
+import { recipeFromBinding, recipeHash } from "@/core/resolution-recipe";
+import { snapshotForOutcome } from "@/core/resolution-replay";
+import type { EvidenceBundle } from "@/core/evidence-bundle";
+import { recordResolutionEvidence } from "@/adapters/mock/resolution-evidence-ledger";
 
 const ARBITER_ID = "arbiter";
 
@@ -103,6 +107,13 @@ export async function resolveMarket(container: Container, slug: string): Promise
   // Settle off-chain through the pure engine — the exact numbers the on-chain claim() mirrors.
   await container.store.settle(market.id, winningOutcomeKey);
 
+  // S24: publish a replayable evidence bundle and record its hash. The recipe is derived from the
+  // market's declarative resolver (the same rule the catalogue ships), the snapshot is the datum
+  // that justifies the outcome, and the bundle is content-addressed so anyone can fetch it, verify
+  // the hash, and replay the recipe to confirm the winner. In real mode the vault's `commit_recipe`
+  // / `commit_bundle` entrypoints anchor these hashes on chain (see contracts/src/hunch_vault.rs).
+  const evidence = await publishEvidence(container, market, winningOutcomeKey, rationale);
+
   // Record the resolution against the Arbiter's reputation. External reads can be wrong (the mock
   // marks a deterministic minority inaccurate), so a bad call genuinely costs accuracy — the
   // reputation has two-sided teeth. Meta-markets resolve from board math and are accurate by
@@ -130,7 +141,50 @@ export async function resolveMarket(container: Container, slug: string): Promise
     deployHash,
     explorerUrl,
     simulated: chainMode() !== "real",
+    recipeHash: evidence?.recipeHash,
+    evidenceBundleHash: evidence?.bundleHash,
   });
+}
+
+/**
+ * Build + store the evidence bundle for a resolution and record the market→hash linkage. Returns
+ * the committed hashes, or `null` if the market has no catalogue definition (nothing to derive a
+ * recipe from). Best-effort: an evidence failure must never block settlement, which has already
+ * happened by the time this runs.
+ */
+async function publishEvidence(
+  container: Container,
+  market: Market,
+  winningOutcomeKey: string | null,
+  rationale: string,
+): Promise<{ recipeHash: string; bundleHash: string } | null> {
+  const def = findDefinition(market.slug);
+  if (!def) return null;
+  try {
+    const recipe = recipeFromBinding(def.resolver, market.outcomes.map((o) => o.key), def.deadlineIso);
+    const rHash = recipeHash(recipe);
+    const bundle: EvidenceBundle = {
+      version: 1,
+      marketId: market.id,
+      recipeHash: rHash,
+      winningOutcomeKey,
+      resolvedAtIso: new Date().toISOString(),
+      sources: [{ source: recipe.source, metric: recipe.metric, reference: def.resolver.description }],
+      snapshot: snapshotForOutcome(recipe, winningOutcomeKey),
+      reasoning: rationale,
+    };
+    const stored = await container.evidence.put(bundle);
+    recordResolutionEvidence({
+      marketId: market.id,
+      recipeHash: rHash,
+      bundleHash: stored.hash,
+      uri: stored.uri,
+      resolvedAtIso: bundle.resolvedAtIso,
+    });
+    return { recipeHash: rHash, bundleHash: stored.hash };
+  } catch {
+    return null;
+  }
 }
 
 /**

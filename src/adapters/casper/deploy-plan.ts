@@ -59,6 +59,11 @@ export const DEFAULT_RESOLVE_GAS_MOTES = (12n * MOTES_PER_CSPR).toString();
  * and the deploy driver are never priced differently for the same call.
  */
 export const DEFAULT_CREATE_GAS_MOTES = (8n * MOTES_PER_CSPR).toString();
+/**
+ * `commit_recipe` / `commit_bundle` (S24) are single-string storage writes — cheaper than
+ * `register_market` (measured ~0.976 consumed). 3 CSPR is ~3x headroom, netting ~1.5 like register.
+ */
+export const DEFAULT_COMMIT_GAS_MOTES = (3n * MOTES_PER_CSPR).toString();
 
 /**
  * A single runtime argument. Odra passes entry-point args 1:1 under their Rust name.
@@ -274,4 +279,43 @@ export function buildResolvePlan(input: ResolveMarketInput, opts: BuildPlanOptio
     gasMotes: opts.gasMotes ?? DEFAULT_RESOLVE_GAS_MOTES,
     usesProxy: false, // non-payable → direct package-targeting transaction
   };
+}
+
+/**
+ * S24 verifiable resolution: cheap non-payable storage-write entrypoints on the v2 vault that
+ * anchor the resolution-recipe hash and the evidence-bundle hash on chain. Both require a v2 vault
+ * target (`market_id` is the leading ABI arg); a per-market v1 package has no such entrypoint.
+ */
+export function buildCommitRecipePlan(marketId: string, recipeHash: string, opts: BuildPlanOptions): CasperCallPlan {
+  assertNonEmpty("marketContract", opts.marketContract);
+  assertNonEmpty("recipeHash", recipeHash);
+  assertVaultTarget("commit_recipe", opts);
+  return {
+    targetContract: opts.marketContract,
+    entryPoint: "commit_recipe",
+    args: [...vaultIdArgs(opts), { name: "recipe_hash", clType: "string", value: recipeHash }],
+    attachedMotes: "0",
+    gasMotes: opts.gasMotes ?? DEFAULT_COMMIT_GAS_MOTES,
+    usesProxy: false,
+  };
+}
+
+export function buildCommitBundlePlan(marketId: string, bundleHash: string, opts: BuildPlanOptions): CasperCallPlan {
+  assertNonEmpty("marketContract", opts.marketContract);
+  assertNonEmpty("bundleHash", bundleHash);
+  assertVaultTarget("commit_bundle", opts);
+  return {
+    targetContract: opts.marketContract,
+    entryPoint: "commit_bundle",
+    args: [...vaultIdArgs(opts), { name: "bundle_hash", clType: "string", value: bundleHash }],
+    attachedMotes: "0",
+    gasMotes: opts.gasMotes ?? DEFAULT_COMMIT_GAS_MOTES,
+    usesProxy: false,
+  };
+}
+
+function assertVaultTarget(entryPoint: string, opts: BuildPlanOptions): void {
+  if (opts.vaultMarketId === undefined) {
+    throw new Error(`${entryPoint} exists only on the singleton HunchVault v2 — set NEXT_PUBLIC_*_VAULT_V2`);
+  }
 }
