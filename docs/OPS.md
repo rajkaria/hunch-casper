@@ -99,6 +99,12 @@ the browser. Everything in §2.3 is a secret.
 | `CASPER_REAL_AGENT_X402` | legacy alternative | `true` keeps the weaker nonce-match verifier |
 | `CASPER_FLEET_SEED` | real-mode fleet | Derives one Ed25519 identity per agent (§5) |
 | `CASPER_PROPHET_KEY_<AGENT>` | optional | Explicit key for one agent; overrides derivation |
+| `HUNCH_BOTS_LIVE` | to post from bots | `true` unlocks outbound Telegram/X posts (§9); default off |
+| `TELEGRAM_BOT_TOKEN` | live Telegram bot | @BotFather token that authenticates `sendMessage` (§9) |
+| `TELEGRAM_WEBHOOK_SECRET` | recommended | Shared secret Telegram echoes on each webhook (§9) |
+| `X_BOT_BEARER_TOKEN` | live X bot | Token authorised to create reply tweets (§9) |
+| `X_WEBHOOK_SECRET` | optional | Shared secret gating the X webhook (§9) |
+| `NEXT_PUBLIC_SITE_URL` | optional | Overrides the base URL in embed/oEmbed/bot links |
 | `CASPER_ORACLE_ACCOUNT` | real-mode creation | Oracle bound to Genesis markets — **public**, not a secret |
 | `CSPR_CLOUD_API_KEY` | optional | Live validator signal for Genesis |
 | `LLM_API_KEY` | optional | Narration; absent ⇒ deterministic canned narration |
@@ -382,7 +388,56 @@ in-memory state. **KV downtime degrades durability, never availability.**
 
 ---
 
-## 9. Deploy pipeline
+## 9. Distribution: chat bots + embeds
+
+The Telegram and X bots and the embeddable odds widget let people bet where they already are.
+**They ship OFF.** Nothing is posted in your name until you deliberately turn it on — decision D2
+of the roadmap run. Everything below is built, tested, and one operator command away.
+
+### What runs without any configuration
+
+- `GET /embed/<slug>` — a chrome-free, self-contained odds widget (no client JS, no secrets,
+  cacheable, `frame-ancestors *`). Embed it anywhere with
+  `<iframe src="https://casper.playhunch.xyz/embed/<slug>"></iframe>`.
+- `GET /api/oembed?url=<market-url>` — the oEmbed provider, so Slack/Discord/CMS unfurl a market
+  link into that widget. Returns a `rich` card; `format=xml` is intentionally unimplemented (501).
+- `POST /api/bots/telegram` and `POST /api/bots/x` — the webhooks. In the default (not-live) state
+  they parse an update, run the full command handler (parse → dedupe → bet → reply) against the
+  configured chain mode, and **record** the reply instead of posting it. You can exercise the whole
+  bot locally by POSTing a webhook body and reading the reply back — zero external posts.
+
+The command grammar (`src/core/bot-command.ts`) is strict and exhaustively tested:
+`bet <amount> [CSPR] <outcome> on <slug>`, plus `odds <slug>`, `markets [n]`, `help`. Every bet is
+deduped by the platform's message id (`bot-idempotency.ts`), so a retried webhook never double-bets.
+
+### Turning the bots live (deliberate, per platform)
+
+1. **Chain readiness.** A live bet uses the same x402 money path as the REST/MCP rails. In real
+   mode that means `CASPER_X402_PAYTO` must be set (see §2.3) or the rail fails closed. In mock mode
+   the bots place deterministic demo bets — fine for a demo channel, never for real stakes.
+2. **Master switch.** `HUNCH_BOTS_LIVE=true`. Without it, every `send()` refuses — this is the
+   single gate that keeps a misconfigured deploy from posting.
+3. **Telegram.** Create a bot with @BotFather → set `TELEGRAM_BOT_TOKEN`. Register the webhook:
+   ```bash
+   curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+     -d url=https://casper.playhunch.xyz/api/bots/telegram \
+     -d secret_token=$TELEGRAM_WEBHOOK_SECRET
+   ```
+   Set `TELEGRAM_WEBHOOK_SECRET` to the same value here and above; the route rejects any update
+   that doesn't echo it.
+4. **X.** Set `X_BOT_BEARER_TOKEN` (a token authorised to post) and register the mention webhook to
+   `https://casper.playhunch.xyz/api/bots/x` (the `GET` handler answers the CRC challenge). Optional
+   `X_WEBHOOK_SECRET` gates inbound calls via the `x-webhook-secret` header.
+5. **Narrated alerts (optional).** `broadcastTickAlerts` (`src/lib/alerts.ts`) turns a tick's big
+   pool moves and resolutions into narrated pushes. It is deliberately **not** wired into the money
+   -moving tick — call it from an alerting cron with a broadcast chat id so a narration fault can
+   never break settlement.
+
+**To roll back:** unset `HUNCH_BOTS_LIVE`. Sends immediately revert to record-only; nothing posts.
+
+---
+
+## 10. Deploy pipeline
 
 - **Production:** push to `main` → Vercel builds and promotes to `casper.playhunch.xyz`.
 - **CI gate:** `.github/workflows/ci.yml` runs `pnpm typecheck && lint && test && build`, plus
