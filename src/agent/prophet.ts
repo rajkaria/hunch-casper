@@ -158,6 +158,35 @@ export interface FleetOptions {
 }
 
 /**
+ * Seed a freshly-created market with the fleet's long-tail liquidity (S23). A human-created market
+ * is empty at birth; without takers its odds are meaningless and nobody wants to be first. So the
+ * fleet steps in — up to `maxProphets` Prophets each place their normal strategy-sized x402 bet on
+ * this one market, through the exact same money path as any other bet (so the liquidity is real,
+ * not a fabricated pool). Bounded and best-effort: an unfunded Prophet in real mode simply sits out
+ * (`runProphet` returns null), and meta-markets are never seeded this way (they aren't user-created).
+ * Returns the bets actually placed.
+ */
+export async function seedNewMarketByFleet(
+  container: Container,
+  slug: string,
+  opts: { maxProphets?: number; startSeq?: number } = {},
+): Promise<AgentAction[]> {
+  const market = await container.store.get(slug, container.network);
+  if (!market || market.category === "meta" || market.status !== "open") return [];
+  const count = Math.min(opts.maxProphets ?? 2, PROPHETS.length);
+  const start = opts.startSeq ?? 0;
+  const actions: AgentAction[] = [];
+  for (let i = 0; i < count; i++) {
+    // Different seq per prophet so their strategies diverge onto different sides — real two-sided
+    // liquidity, not everyone piling onto the favourite.
+    const prophet = PROPHETS[i % PROPHETS.length];
+    const action = await runProphet(container, prophet, slug, start + i);
+    if (action) actions.push(action);
+  }
+  return actions;
+}
+
+/**
  * Run the fleet for one round. Picks a target market (deterministic by `seq`) among the open
  * markets and sends the round's Prophets at it in order, so the pool shifts between them.
  *
