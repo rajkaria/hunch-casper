@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import type { Market } from "@/core/types";
 import { csprToMotes, motesToCspr } from "@/core/types";
 import { previewPayoutMotes } from "@/core/market-payout";
@@ -204,9 +205,9 @@ export function BetPanel({ market }: { market: Market }) {
         <p className="mt-4 border-t border-border pt-4 text-[11px] text-muted">
           Resolution is the autonomous <span className="text-foreground">Arbiter</span>’s job — it
           posts the winning outcome on-chain with its reputation staked. Watch it on the{" "}
-          <a href="/agents" className="underline decoration-border underline-offset-2 hover:text-accent">
+          <Link href="/agents" className="underline decoration-border underline-offset-2 hover:text-accent">
             swarm dashboard
-          </a>
+          </Link>
           .
         </p>
       )}
