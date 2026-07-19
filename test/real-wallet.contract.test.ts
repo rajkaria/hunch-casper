@@ -16,6 +16,7 @@ import {
   FleetKeyError,
   parseBalanceResult,
 } from "@/adapters/casper/fleet-keys";
+import { NATIVE_TRANSFER_MINIMUM_MOTES } from "@/config/network";
 import { runWalletContract } from "./contract/wallet.shared";
 
 const SEED = "ocean-test-fleet-seed-do-not-use-in-production";
@@ -151,12 +152,13 @@ describe("real wallet transfer construction", () => {
         signed = true;
         return "ab".repeat(32);
       },
+      confirmImpl: async () => ({ state: "success" }),
     });
     const account = await wallet.accountFor("agent:momentum");
     const res = await wallet.transfer({
       agentId: "agent:momentum",
       toAccount: "01" + "cd".repeat(32),
-      amountMotes: "1000000000",
+      amountMotes: "3000000000",
     });
     expect(signed).toBe(true);
     expect(res.deployHash).toBe("ab".repeat(32));
@@ -166,11 +168,14 @@ describe("real wallet transfer construction", () => {
   });
 
   it("accepts an account-hash recipient as well as a public key", async () => {
-    const wallet = createRealWallet("testnet", { submitImpl: async () => "cd".repeat(32) });
+    const wallet = createRealWallet("testnet", {
+      submitImpl: async () => "cd".repeat(32),
+      confirmImpl: async () => ({ state: "success" }),
+    });
     const res = await wallet.transfer({
       agentId: "agent:momentum",
       toAccount: "account-hash-" + "ef".repeat(32),
-      amountMotes: "1000000000",
+      amountMotes: "3000000000",
     });
     expect(res.deployHash).toBe("cd".repeat(32));
   });
@@ -184,6 +189,104 @@ describe("real wallet transfer construction", () => {
 
   it("prices the transfer at the native-transfer limit", () => {
     expect(TRANSFER_PAYMENT_MOTES).toBe(100_000_000);
+  });
+});
+
+describe("real wallet transfer — the chainspec native-transfer floor", () => {
+  beforeEach(() => {
+    vi.stubEnv("CASPER_FLEET_SEED", SEED);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("refuses a sub-minimum transfer BEFORE submitting, naming the rule", async () => {
+    // Three of the four Prophets staked 1–2 CSPR against a 2.5 CSPR consensus floor. The node
+    // answered `-32016 insufficient transfer amount` and the fleet looked idle rather than broken.
+    let submitted = false;
+    const wallet = createRealWallet("testnet", {
+      submitImpl: async () => {
+        submitted = true;
+        return "ab".repeat(32);
+      },
+      confirmImpl: async () => ({ state: "success" }),
+    });
+    const tooSmall = wallet.transfer({
+      agentId: "agent:momentum",
+      toAccount: "01" + "cd".repeat(32),
+      amountMotes: (NATIVE_TRANSFER_MINIMUM_MOTES - 1n).toString(),
+    });
+    await expect(tooSmall).rejects.toThrow(FleetWalletError);
+    await expect(tooSmall).rejects.toThrow(/native-transfer minimum/);
+    expect(submitted).toBe(false);
+  });
+
+  it("allows a transfer exactly at the floor", async () => {
+    const wallet = createRealWallet("testnet", {
+      submitImpl: async () => "ab".repeat(32),
+      confirmImpl: async () => ({ state: "success" }),
+    });
+    const res = await wallet.transfer({
+      agentId: "agent:momentum",
+      toAccount: "01" + "cd".repeat(32),
+      amountMotes: NATIVE_TRANSFER_MINIMUM_MOTES.toString(),
+    });
+    expect(res.deployHash).toBe("ab".repeat(32));
+  });
+});
+
+describe("real wallet transfer — confirmation before it counts as a payment", () => {
+  beforeEach(() => {
+    vi.stubEnv("CASPER_FLEET_SEED", SEED);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("does not return a proof until the chain has EXECUTED the transfer — THE regression", async () => {
+    // The bug: transfer resolved on `putTransaction` (queued), the verifier then found no
+    // execution result and rejected the proof — after 3 CSPR had already left the purse.
+    const order: string[] = [];
+    const wallet = createRealWallet("testnet", {
+      submitImpl: async () => {
+        order.push("submit");
+        return "ab".repeat(32);
+      },
+      confirmImpl: async () => {
+        order.push("confirm");
+        return { state: "success" };
+      },
+    });
+    await wallet.transfer({
+      agentId: "agent:momentum",
+      toAccount: "01" + "cd".repeat(32),
+      amountMotes: "3000000000",
+    });
+    expect(order).toEqual(["submit", "confirm"]);
+  });
+
+  it("throws instead of returning a proof when the transfer reverted", async () => {
+    const wallet = createRealWallet("testnet", {
+      submitImpl: async () => "ab".repeat(32),
+      confirmImpl: async () => ({ state: "failure", error: "insufficient balance" }),
+    });
+    await expect(
+      wallet.transfer({ agentId: "agent:momentum", toAccount: "01" + "cd".repeat(32), amountMotes: "3000000000" }),
+    ).rejects.toThrow(/REVERTED/);
+  });
+
+  it("throws — and points at the explorer — when execution does not land in the window", async () => {
+    const wallet = createRealWallet("testnet", {
+      submitImpl: async () => "ab".repeat(32),
+      confirmImpl: async () => ({ state: "pending" }),
+    });
+    const pending = wallet.transfer({
+      agentId: "agent:momentum",
+      toAccount: "01" + "cd".repeat(32),
+      amountMotes: "3000000000",
+    });
+    await expect(pending).rejects.toThrow(FleetWalletError);
+    await expect(pending).rejects.toThrow(/testnet\.cspr\.live\/transaction\//);
   });
 });
 

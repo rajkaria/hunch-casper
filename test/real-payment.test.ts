@@ -311,3 +311,75 @@ describe("real-mode agent rail gating (container + agent-bet)", () => {
     expect(res.status).toBe("payment_required");
   });
 });
+
+/**
+ * Verification races block production. An agent that pays and immediately presents its transfer
+ * hash is asking about a transaction the network has queued but not yet executed — and answering
+ * "unverifiable" there charges the agent for nothing. The retry is bounded and still fails closed.
+ */
+describe("createRealPayment — pending transfers", () => {
+  const nonce = { nonce: "nonce-1" };
+
+  it("re-reads a queued transfer until it executes, then verifies it", async () => {
+    let call = 0;
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const method = JSON.parse(String(init?.body)).method;
+      if (method !== "info_get_transaction") {
+        return new Response(JSON.stringify({ error: { code: -32001 } }), { status: 200 });
+      }
+      call++;
+      // Accepted by a node but not yet in a block for the first two reads.
+      const body =
+        call < 3
+          ? { jsonrpc: "2.0", id: 1, result: { transaction: { Version1: { hash: TX_HASH } } } }
+          : txV1Fixture();
+      return new Response(JSON.stringify(body), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const payment = createRealPayment("testnet", PAY_TO, {
+      fetchImpl,
+      sleepImpl: async () => {},
+      pendingIntervalMs: 1,
+    });
+    expect(await payment.verify(REQ, { ...PROOF, ...nonce })).toBe(true);
+    expect(call).toBe(3);
+  });
+
+  it("rejects an EXECUTED but non-conforming transfer immediately — no waiting on a settled no", async () => {
+    let call = 0;
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const method = JSON.parse(String(init?.body)).method;
+      if (method !== "info_get_transaction") {
+        return new Response(JSON.stringify({ error: { code: -32001 } }), { status: 200 });
+      }
+      call++;
+      return new Response(JSON.stringify(txV1Fixture({ payer: OTHER_PAYER })), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const payment = createRealPayment("testnet", PAY_TO, {
+      fetchImpl,
+      sleepImpl: async () => {},
+      pendingIntervalMs: 1,
+    });
+    expect(await payment.verify(REQ, { ...PROOF, ...nonce })).toBe(false);
+    expect(call).toBe(1); // asked once and stopped — a wrong payer cannot become right
+  });
+
+  it("fails closed when the transfer never executes within the window", async () => {
+    let clock = 0;
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { transaction: { Version1: { hash: TX_HASH } } } }), {
+          status: 200,
+        }),
+    ) as unknown as typeof fetch;
+
+    const payment = createRealPayment("testnet", PAY_TO, {
+      fetchImpl,
+      sleepImpl: async () => {},
+      nowImpl: () => (clock += 10_000),
+      pendingRetryMs: 20_000,
+    });
+    expect(await payment.verify(REQ, { ...PROOF, ...nonce })).toBe(false);
+  });
+});

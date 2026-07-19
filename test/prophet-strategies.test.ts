@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { decide } from "@/core/prophet-strategies";
+import { decide, PROPHETS, MAX_CONVICTION_MULTIPLIER } from "@/core/prophet-strategies";
+import { NATIVE_TRANSFER_MINIMUM_MOTES } from "@/config/network";
 import { buildMarket, findDefinition } from "@/core/catalogue";
 import { csprToMotes } from "@/core/types";
 import { computeOdds } from "@/core/parimutuel-odds";
@@ -41,5 +42,28 @@ describe("Prophet strategies", () => {
 
   it("skips a market that isn't open", () => {
     expect(decide("momentum", { ...market, status: "resolved" }, odds, 0, 1)).toBeNull();
+  });
+});
+
+/**
+ * The stake floor is a CHAIN rule, not a preference: an agent bet settles as a native CSPR
+ * transfer, and Casper rejects native transfers below `NATIVE_TRANSFER_MINIMUM_MOTES`. Sizing a
+ * Prophet under it does not make it bet small — it makes it unable to bet at all, silently. This
+ * shipped once (3/2/2/1 against a 2.5 CSPR floor); the fleet looked idle for a whole deployment.
+ */
+describe("Prophet stakes clear the chainspec native-transfer floor", () => {
+  it("every Prophet can actually pay its own stake on chain", () => {
+    for (const prophet of PROPHETS) {
+      expect(
+        BigInt(csprToMotes(prophet.stakeCspr)),
+        `${prophet.name} stakes ${prophet.stakeCspr} CSPR — below the ${NATIVE_TRANSFER_MINIMUM_MOTES} motes floor, so it can never bet in real mode`,
+      ).toBeGreaterThanOrEqual(NATIVE_TRANSFER_MINIMUM_MOTES);
+    }
+  });
+
+  it("holds for Momentum's doubled conviction bet too", () => {
+    const momentum = PROPHETS.find((p) => p.strategy === "momentum")!;
+    const doubled = BigInt(csprToMotes(momentum.stakeCspr)) * BigInt(MAX_CONVICTION_MULTIPLIER);
+    expect(doubled).toBeGreaterThanOrEqual(NATIVE_TRANSFER_MINIMUM_MOTES);
   });
 });

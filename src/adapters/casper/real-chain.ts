@@ -57,12 +57,28 @@ import {
   type CasperCallPlan,
   type MarketCallTarget,
 } from "./deploy-plan";
+import { awaitExecution, type AwaitExecutionOptions, type ExecutionOutcome } from "./confirm";
 
 /** Thrown when the real adapter is selected but its credentials/addresses are not configured. */
 export class CasperConfigError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CasperConfigError";
+  }
+}
+
+/**
+ * Thrown when a transaction was submitted but did not end in a successful execution — it reverted,
+ * or it had not executed when the confirmation window closed. Carries the hash so an operator can
+ * look up what actually happened rather than guessing from a message.
+ */
+export class CasperSubmitError extends Error {
+  constructor(
+    message: string,
+    readonly transactionHash: string,
+  ) {
+    super(message);
+    this.name = "CasperSubmitError";
   }
 }
 
@@ -79,6 +95,13 @@ export interface RealChainOptions {
   vaultV2PackageHash?: string;
   /** Filesystem path to Odra's `proxy_caller_with_return.wasm` (required for payable bets). */
   proxyWasmPath: string;
+  /**
+   * Injectable confirmation seam. Every submit waits for the chain to execute before reporting
+   * success, so a reverted escrow can never be indexed as a placed bet. Tests stub this.
+   */
+  confirmImpl?: (hash: string) => Promise<ExecutionOutcome>;
+  /** Tuning/injection for the default confirmation poll. */
+  confirmOptions?: AwaitExecutionOptions;
 }
 
 /** The proxy wasm shipped in-repo (exact Odra 2.8.2 build, from the odra-casper crate). */
@@ -197,6 +220,24 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
     tx.sign(key);
     const res = await rpc.putTransaction(tx);
     const hash = res.transactionHash.toHex();
+
+    // `putTransaction` means "a node queued it", not "it happened". Reporting success here let a
+    // reverted escrow — an out-of-gas bet, a closed market, a revert code — be indexed as a placed
+    // bet and shown on the boards, so the read model claimed money that never moved. Wait for the
+    // execution result and let a failure surface as a failure.
+    const outcome = opts.confirmImpl
+      ? await opts.confirmImpl(hash)
+      : await awaitExecution(network, hash, opts.confirmOptions);
+    if (outcome.state === "failure") {
+      throw new CasperSubmitError(`transaction ${hash} reverted on chain: ${outcome.error}`, hash);
+    }
+    if (outcome.state === "pending") {
+      throw new CasperSubmitError(
+        `transaction ${hash} did not execute within the confirmation window — check ` +
+          `${explorerTransactionUrl(network, hash)} before retrying`,
+        hash,
+      );
+    }
     return { deployHash: hash, explorerUrl: explorerTransactionUrl(network, hash) };
   }
 

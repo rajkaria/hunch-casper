@@ -105,7 +105,18 @@ export async function runProphet(
     bettor: prophet.id,
     payerAccount: account.publicKeyHex,
   });
-  if (quote.status !== "payment_required") return null;
+  if (quote.status !== "payment_required") {
+    // A quote that is not a 402 challenge means the rail itself is closed (misconfigured real-mode
+    // x402, a market that just closed, a cap). Silence here read as "the fleet is quiet" for a
+    // whole deployment; say why.
+    console.warn(
+      "[prophet] %s could not get a payment quote (status %s): %s",
+      prophet.id,
+      quote.status,
+      quote.status === "error" ? quote.error : "unexpected quote status",
+    );
+    return null;
+  }
 
   const proof = await settleFromAgentPurse(container, prophet.id, quote.requirement);
   if (!proof) return null; // unfunded or transfer failed — sit this round out
@@ -118,7 +129,20 @@ export async function runProphet(
     payerAccount: account.publicKeyHex,
     paymentProof: proof,
   });
-  if (placed.status !== "placed") return null;
+  if (placed.status !== "placed") {
+    // THE EXPENSIVE ONE. The agent has already paid: money left its purse and landed in the
+    // treasury. Dropping this silently is how a live deployment leaked a stake per round while
+    // recording no bets and looking merely idle. An operator must be able to see the paid-for-
+    // nothing case in the logs, with the settlement hash to reconcile against.
+    console.error(
+      "[prophet] %s PAID BUT DID NOT PLACE — settlement %s, status %s: %s",
+      prophet.id,
+      proof.deployHash,
+      placed.status,
+      placed.status === "error" ? placed.error : "unexpected placement status",
+    );
+    return null;
+  }
 
   return appendAction({
     agent: prophet.name,

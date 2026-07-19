@@ -12,9 +12,9 @@ import type { AgentAction } from "@/adapters/mock/activity-log";
 import type { AgentPnl } from "@/core/agent-leaderboard";
 import { computeAgentLeaderboard } from "@/core/agent-leaderboard";
 import type { OracleReputation } from "@/ports/oracle";
-import { runProphetFleet, PROPHET_GAS_FLOOR_MOTES } from "@/agent/prophet";
+import { runProphetFleet, prophetsPerTick, PROPHET_GAS_FLOOR_MOTES } from "@/agent/prophet";
 import { runArbiterSweep, resolveMarket } from "@/agent/arbiter";
-import { PROPHETS } from "@/core/prophet-strategies";
+import { PROPHETS, MAX_CONVICTION_MULTIPLIER } from "@/core/prophet-strategies";
 import { planCadence, type CadencePlan } from "@/core/cadence";
 import { OPERATOR_AGENT_ID } from "@/adapters/casper/fleet-keys";
 import { csprToMotes } from "@/core/types";
@@ -42,13 +42,22 @@ export interface EconomyTickReport {
  * figure — the floors in `core/cadence.ts` carry enough margin to cover them.
  */
 function perRoundTreasuryCostMotes(): string {
-  return (BigInt(DEFAULT_BET_GAS_MOTES) * BigInt(PROPHETS.length)).toString();
+  // Charge for the Prophets that ACTUALLY act this round, not the whole roster. Real mode sends
+  // one Prophet per tick by default (`prophetsPerTick`), so billing the round at four escrows
+  // understated the treasury's runway ~4× — enough to throttle house seeding off against a purse
+  // that could comfortably afford it. The cadence planner is only as honest as this number.
+  return (BigInt(DEFAULT_BET_GAS_MOTES) * BigInt(prophetsPerTick())).toString();
 }
 
-/** What one round costs a single agent: its stake plus the gas on its own x402 transfer. */
+/**
+ * What one round costs a single agent: the most it could stake plus the gas on its own x402
+ * transfer. "Most it could stake" includes Momentum's conviction multiplier — clearing an agent
+ * for a round it can only half-afford is the same mistake as under-funding it.
+ */
 function perRoundAgentCostMotes(): string {
   const largestStake = PROPHETS.reduce((max, p) => Math.max(max, p.stakeCspr), 0);
-  return (BigInt(csprToMotes(largestStake)) + PROPHET_GAS_FLOOR_MOTES).toString();
+  const worstCase = BigInt(csprToMotes(largestStake)) * BigInt(MAX_CONVICTION_MULTIPLIER);
+  return (worstCase + PROPHET_GAS_FLOOR_MOTES).toString();
 }
 
 /**

@@ -35,6 +35,7 @@ import type {
   X402PaymentRequirement,
 } from "@/ports/payment";
 import { pseudoDeployHash } from "@/adapters/mock/mock-chain";
+import { readExecutionOutcome } from "./confirm";
 
 const RPC_TIMEOUT_MS = 5_000;
 
@@ -217,7 +218,28 @@ export function verifyTransferResult(
 export interface RealPaymentOptions {
   /** Injectable fetch for tests. */
   fetchImpl?: typeof fetch;
+  /**
+   * How long to keep re-reading a transaction that exists but has not executed yet. An agent that
+   * pays and immediately presents its hash is racing block production, and answering "unverifiable"
+   * to a transfer that is merely *young* charges the agent for nothing. Bounded, and a timeout
+   * still answers false — the rail fails closed.
+   */
+  pendingRetryMs?: number;
+  /** Gap between pending re-reads. */
+  pendingIntervalMs?: number;
+  /** Injectable sleep + clock so tests do not spend real seconds. */
+  sleepImpl?: (ms: number) => Promise<void>;
+  nowImpl?: () => number;
 }
+
+/**
+ * Default window to let a just-submitted transfer reach a block before calling it unverifiable.
+ * Deliberately short: an unknown hash and a young one are indistinguishable from outside, so this
+ * window is also how long a bogus hash can hold a request open. Long enough to cross a block,
+ * short enough that it is not a lever.
+ */
+export const DEFAULT_PENDING_RETRY_MS = 20_000;
+const DEFAULT_PENDING_INTERVAL_MS = 4_000;
 
 /**
  * The transfer-verifying PaymentPort. `payTo` is the operator treasury account
@@ -231,6 +253,8 @@ export function createRealPayment(
 ): PaymentPort {
   const cfg = getNetworkConfig(network);
   const treasury = payTo.trim();
+  const now = opts.nowImpl ?? Date.now;
+  const nap = opts.sleepImpl ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   /** POST one JSON-RPC call; returns the parsed `result`-bearing body or null on ANY failure. */
   async function rpc(method: string, params: unknown): Promise<Record<string, unknown> | null> {
@@ -277,13 +301,33 @@ export function createRealPayment(
       if (proof.scheme !== "casper-x402" || proof.nonce !== requirement.nonce) return false;
       if (typeof proof.deployHash !== "string" || !TX_HASH.test(proof.deployHash)) return false;
 
-      // Casper 2.0 first (native transfers submitted via putTransaction are TransactionV1),
-      // then the legacy Deploy lookup for older tooling. Both miss → false.
-      const tx = await rpc("info_get_transaction", { transaction_hash: { Version1: proof.deployHash } });
-      if (tx) return verifyTransferResult(tx, requirement, proof);
-      const deploy = await rpc("info_get_deploy", { deploy_hash: proof.deployHash });
-      if (deploy) return verifyTransferResult(deploy, requirement, proof);
-      return false;
+      const deadline = now() + (opts.pendingRetryMs ?? DEFAULT_PENDING_RETRY_MS);
+      const interval = opts.pendingIntervalMs ?? DEFAULT_PENDING_INTERVAL_MS;
+
+      for (;;) {
+        // Casper 2.0 first (native transfers submitted via putTransaction are TransactionV1),
+        // then the legacy Deploy lookup for older tooling. Both miss → false.
+        const body =
+          (await rpc("info_get_transaction", { transaction_hash: { Version1: proof.deployHash } })) ??
+          (await rpc("info_get_deploy", { deploy_hash: proof.deployHash }));
+
+        // Unknown to the node, or the node could not be asked. RETRY NOTHING here: a node that
+        // accepted a transfer serves it immediately (with a null execution result) while it waits
+        // for a block, so "never heard of it" is an answer, not a race. Waiting on it would let
+        // any invented hash hold a request open for the whole window.
+        if (!body) return false;
+
+        if (verifyTransferResult(body, requirement, proof)) return true;
+
+        // It EXECUTED and does not satisfy the requirement (wrong payer, wrong recipient, too
+        // little, reverted). A settled no — retrying cannot change it.
+        if (readExecutionOutcome(body).state !== "pending") return false;
+
+        // Seen but not yet executed: the agent paid moments ago and is racing block production.
+        // Re-read until the window closes, then fail closed.
+        if (now() >= deadline) return false;
+        await nap(interval);
+      }
     },
   };
 }

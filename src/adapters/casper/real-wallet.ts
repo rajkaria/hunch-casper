@@ -27,9 +27,14 @@ import {
   type Transaction,
 } from "casper-js-sdk";
 import type { CasperNetwork } from "@/config/network";
-import { explorerTransactionUrl, getNetworkConfig } from "@/config/network";
+import {
+  explorerTransactionUrl,
+  getNetworkConfig,
+  NATIVE_TRANSFER_MINIMUM_MOTES,
+} from "@/config/network";
 import type { AgentAccount, TransferInput, TransferResult, WalletPort } from "@/ports/wallet";
 import { agentSecretKey, parseBalanceResult } from "./fleet-keys";
+import { awaitExecution, type AwaitExecutionOptions, type ExecutionOutcome } from "./confirm";
 
 const RPC_TIMEOUT_MS = 5_000;
 
@@ -54,6 +59,13 @@ export interface RealWalletOptions {
   submitImpl?: (tx: Transaction, key: PrivateKey) => Promise<string>;
   /** Payment limit override for the transfer transaction, in motes. */
   transferPaymentMotes?: number;
+  /**
+   * Injectable confirmation seam. A transfer is not a payment until the chain has executed it, so
+   * `transfer` waits — tests stub this rather than spending real seconds against a real node.
+   */
+  confirmImpl?: (hash: string) => Promise<ExecutionOutcome>;
+  /** Tuning/injection for the default confirmation poll. */
+  confirmOptions?: AwaitExecutionOptions;
 }
 
 /** PEM contents or a 32-byte hex seed → an Ed25519 private key (same shapes `real-chain.ts` accepts). */
@@ -85,6 +97,11 @@ export function createRealWallet(network: CasperNetwork, opts: RealWalletOptions
     tx.sign(key);
     const res = await rpc.putTransaction(tx);
     return res.transactionHash.toHex();
+  }
+
+  function confirm(hash: string): Promise<ExecutionOutcome> {
+    if (opts.confirmImpl) return opts.confirmImpl(hash);
+    return awaitExecution(network, hash, { fetchImpl: opts.fetchImpl, ...opts.confirmOptions });
   }
 
   return {
@@ -134,6 +151,17 @@ export function createRealWallet(network: CasperNetwork, opts: RealWalletOptions
     async transfer(input: TransferInput): Promise<TransferResult> {
       const amount = BigInt(input.amountMotes);
       if (amount <= 0n) throw new FleetWalletError("transfer amount must be positive");
+      // The chainspec floor is a consensus rule: submitting below it burns nothing but returns a
+      // raw `-32016 insufficient transfer amount` from the node. Naming the rule and the actual
+      // shortfall here is the difference between "this agent's stake is mis-sized" and an opaque
+      // RPC code in a cron log.
+      if (amount < NATIVE_TRANSFER_MINIMUM_MOTES) {
+        throw new FleetWalletError(
+          `transfer of ${amount} motes is below the chainspec native-transfer minimum of ` +
+            `${NATIVE_TRANSFER_MINIMUM_MOTES} motes (2.5 CSPR) — the node would reject it ` +
+            `(-32016 insufficient transfer amount); size the agent's stake above the floor`,
+        );
+      }
       const key = keyForAgent(input.agentId);
 
       const builder = new NativeTransferBuilder()
@@ -152,6 +180,23 @@ export function createRealWallet(network: CasperNetwork, opts: RealWalletOptions
       }
 
       const hash = await submit(builder.build(), key);
+
+      // Wait for the chain to EXECUTE the transfer before calling it a payment. `putTransaction`
+      // only means a node queued it; a hash handed back at that point names a transaction with no
+      // execution result, which every verifier — ours included — must refuse. Returning here
+      // without waiting is what made a Prophet pay the treasury and receive nothing back.
+      const outcome = await confirm(hash);
+      if (outcome.state === "failure") {
+        throw new FleetWalletError(
+          `transfer ${hash} was executed and REVERTED: ${outcome.error} — no payment was made`,
+        );
+      }
+      if (outcome.state === "pending") {
+        throw new FleetWalletError(
+          `transfer ${hash} did not execute within the confirmation window — it may still land, so ` +
+            `do not re-send blind; check ${explorerTransactionUrl(network, hash)} before retrying`,
+        );
+      }
       return { deployHash: hash, explorerUrl: explorerTransactionUrl(network, hash) };
     },
   };

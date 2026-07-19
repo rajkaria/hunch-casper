@@ -48,6 +48,15 @@ async function tick(network: CasperNetwork, seq: number, resolveSlugs?: string[]
   });
 }
 
+/**
+ * A real-mode tick WAITS on the chain: the agent's x402 transfer and the operator's escrow must
+ * each be executed (not merely queued) before the bet counts, which is two block confirmations of
+ * roughly 16s apiece, plus the Arbiter's resolutions. The platform default would cut a tick off
+ * mid-settlement and leave a paid-for-nothing bet behind — the exact failure the confirmation
+ * waits exist to prevent. Mock mode never gets near this.
+ */
+export const maxDuration = 300;
+
 export async function GET(req: Request): Promise<Response> {
   if (!authorized(req)) {
     return NextResponse.json({ error: "unauthorized: the tick is gated by the cron secret" }, { status: 401 });

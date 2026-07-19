@@ -146,6 +146,21 @@ export function getNetworkConfig(network: CasperNetwork): NetworkConfig {
 }
 
 /**
+ * The chainspec floor on a NATIVE CSPR transfer, in motes (2.5 CSPR).
+ *
+ * This is a hard consensus rule, not a policy of ours: `core.native_transfer_minimum_motes` in the
+ * Casper 2.0 chainspec (read back from a live node via `info_get_chainspec`). A native transfer
+ * below it is rejected by the node at submit time with `-32016 insufficient transfer amount` — the
+ * transaction never executes and no money moves.
+ *
+ * It is a config-level fact rather than an adapter detail because it constrains *product*
+ * decisions, not just plumbing: any agent stake settled over the x402 rail is a native transfer,
+ * so a strategy that stakes less than this can never bet at all. Three of the four Prophets were
+ * sized below it (1–2 CSPR) and silently sat out every real-mode round until this was discovered.
+ */
+export const NATIVE_TRANSFER_MINIMUM_MOTES = 2_500_000_000n;
+
+/**
  * Per-bet cap in whole CSPR for a network, or `null` if uncapped. Delegates to the audit-gated
  * cap-ramp policy (`caps.ts`): with no audit env set this returns the static unaudited ceiling
  * (25 CSPR on mainnet, uncapped on testnet), so it is a superset of the old static behaviour.

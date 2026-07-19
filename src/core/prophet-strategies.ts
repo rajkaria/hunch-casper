@@ -26,11 +26,31 @@ export interface Prophet {
   stakeCspr: number;
 }
 
+/**
+ * Momentum's conviction multiplier on a strong favourite (see the `momentum` case). Exported so
+ * the treasury/purse arithmetic in `agent/economy.ts` sizes a round by what an agent can ACTUALLY
+ * spend, not by its base stake — an agent that doubles down and then cannot afford the round it
+ * was cleared for is exactly the throttle bug the cadence planner exists to avoid.
+ */
+export const MAX_CONVICTION_MULTIPLIER = 2;
+
+/**
+ * Stakes are floored by the chain, not by taste: every agent bet settles as a NATIVE CSPR transfer
+ * over the x402 rail, and Casper's chainspec rejects native transfers below
+ * `NATIVE_TRANSFER_MINIMUM_MOTES` (2.5 CSPR) outright. The original 3/2/2/1 sizing put three of
+ * the four Prophets under that floor, so in real mode they submitted transfers the node refused
+ * (`-32016`) and silently sat out every round — the fleet looked idle rather than broken.
+ *
+ * Sizes now sit just above the floor, keeping the conviction ordering (Momentum highest, and it
+ * still doubles on a strong favourite) while staying small enough that a funded purse lasts many
+ * rounds. `config/network.ts` owns the floor; `test/prophet-strategies.test.ts` asserts every
+ * Prophet clears it, so a future re-tune cannot silently reintroduce this.
+ */
 export const PROPHETS: readonly Prophet[] = [
-  { id: "agent:momentum", name: "Momentum", strategy: "momentum", accent: "text-up", stakeCspr: 3 },
-  { id: "agent:contrarian", name: "Contrarian", strategy: "contrarian", accent: "text-down", stakeCspr: 2 },
-  { id: "agent:value", name: "Value", strategy: "value", accent: "text-gold", stakeCspr: 2 },
-  { id: "agent:chaos", name: "Chaos", strategy: "chaos", accent: "text-accent-2", stakeCspr: 1 },
+  { id: "agent:momentum", name: "Momentum", strategy: "momentum", accent: "text-up", stakeCspr: 4 },
+  { id: "agent:contrarian", name: "Contrarian", strategy: "contrarian", accent: "text-down", stakeCspr: 3 },
+  { id: "agent:value", name: "Value", strategy: "value", accent: "text-gold", stakeCspr: 3 },
+  { id: "agent:chaos", name: "Chaos", strategy: "chaos", accent: "text-accent-2", stakeCspr: 3 },
 ];
 
 export interface ProphetDecision {
@@ -73,7 +93,7 @@ export function decide(
       // Conviction sizing: when the favourite is strong (> 70%), Momentum backs it HARDER (2×).
       // This is what separates Momentum from a flat bet — and from the other strategies — on
       // lopsided binaries where the raw outcome pick would otherwise coincide.
-      const conviction = pick.impliedProbability > 0.7 ? 2n : 1n;
+      const conviction = pick.impliedProbability > 0.7 ? BigInt(MAX_CONVICTION_MULTIPLIER) : 1n;
       const staked = (BigInt(amountMotes) * conviction).toString();
       const size = conviction === 2n ? " Doubling down — the crowd is decisive." : "";
       return { outcomeKey: pick.outcomeKey, amountMotes: staked, reason: `${label(market, pick.outcomeKey)} is the favourite — riding the crowd.${size}` };
