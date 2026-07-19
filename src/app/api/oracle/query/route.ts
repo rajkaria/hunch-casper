@@ -12,29 +12,12 @@
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { isCasperNetwork } from "@/config/network";
-import { meterQuery, queryTierFromEnv, type MeterWindow } from "@/core/query-pricing";
 import { resolutionEvidenceFor } from "@/adapters/mock/resolution-evidence-ledger";
-import type { X402PaymentProof } from "@/ports/payment";
+import { meterCall, enforcePayment, readPaymentProof, __resetSharedQueryMeter } from "@/lib/query-meter";
 
-/** Per-caller free-tier meter state (in-process demo; KV behind the same shape in production). */
-const METER = new Map<string, MeterWindow>();
-/** Spent paid-query settlements — a proof settles exactly one query. */
-const CONSUMED = new Set<string>();
-
-/** Test-only resets. */
+/** Test-only reset — delegates to the shared meter so this and /api/odds share one pool. */
 export function __resetQueryMeter(): void {
-  METER.clear();
-  CONSUMED.clear();
-}
-
-function readPaymentHeader(req: Request): X402PaymentProof | undefined {
-  const header = req.headers.get("x-payment");
-  if (!header) return undefined;
-  try {
-    return JSON.parse(Buffer.from(header, "base64").toString("utf8")) as X402PaymentProof;
-  } catch {
-    return undefined;
-  }
+  __resetSharedQueryMeter();
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -54,52 +37,22 @@ export async function POST(req: Request): Promise<Response> {
   const caller = String(body.caller ?? req.headers.get("x-oracle-key") ?? "anonymous");
 
   const container = createContainer(network);
-  const tier = queryTierFromEnv();
-  const decision = meterQuery(caller, Date.now(), METER, tier);
+  const decision = meterCall(caller, Date.now());
 
   // Paid path: a valid, unspent proof is required once the free tier is exhausted.
   if (decision.requiresPayment) {
-    const proof = readPaymentHeader(req);
-    if (!proof) {
-      const requirement = await container.payment.quote({
-        marketId: `${network}:${slug}`,
-        outcomeKey: "__query__",
-        amountMotes: decision.priceMotes,
-        payer: caller,
-      });
-      return NextResponse.json(
-        {
-          x402Version: 1,
-          error: "payment required — free query tier exhausted",
-          accepts: [
-            {
-              scheme: "casper-x402",
-              network: requirement.network,
-              asset: "CSPR",
-              maxAmountRequired: decision.priceMotes,
-              payTo: requirement.payTo,
-              nonce: requirement.nonce,
-              resource: `/api/oracle/query#${slug}`,
-            },
-          ],
-        },
-        { status: 402 },
-      );
+    const gate = await enforcePayment(
+      container,
+      decision,
+      caller,
+      `${network}:${slug}`,
+      `/api/oracle/query#${slug}`,
+      readPaymentProof(req),
+    );
+    if (!gate.ok) {
+      const payload = "challenge" in gate ? gate.challenge : { error: gate.error };
+      return NextResponse.json(payload as object, { status: 402 });
     }
-    const requirement = await container.payment.quote({
-      marketId: `${network}:${slug}`,
-      outcomeKey: "__query__",
-      amountMotes: decision.priceMotes,
-      payer: caller,
-    });
-    const ok = await container.payment.verify(requirement, proof);
-    if (!ok || !proof.deployHash) {
-      return NextResponse.json({ error: "invalid or unverifiable x402 payment proof" }, { status: 402 });
-    }
-    if (CONSUMED.has(proof.deployHash)) {
-      return NextResponse.json({ error: "x402 payment already spent" }, { status: 402 });
-    }
-    CONSUMED.add(proof.deployHash);
   }
 
   // Compose the answer.

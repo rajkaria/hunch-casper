@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { HunchCasperClient } from "@/agent/sdk";
+import { MARKET_DEFINITIONS } from "@/core/catalogue";
 import { GET as marketsGET } from "@/app/api/markets/route";
 import { GET as marketGET } from "@/app/api/markets/[slug]/route";
 import { GET as oracleGET } from "@/app/api/oracle/[id]/route";
@@ -37,7 +38,7 @@ function client() {
 describe("Agent SDK", () => {
   it("discovers markets", async () => {
     const markets = await client().listMarkets();
-    expect(markets.length).toBe(16);
+    expect(markets.length).toBe(MARKET_DEFINITIONS.length);
     expect(markets.every((m) => m.network === "testnet")).toBe(true);
   });
 

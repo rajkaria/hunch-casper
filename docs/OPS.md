@@ -466,6 +466,26 @@ against the mainnet node via `contracts/bin/cli.rs` (odra-cli livenet) + the cat
 `contracts/bin/catalogue.rs` — see [`contracts/DEPLOY.md`](../contracts/DEPLOY.md). That is a
 separate, deliberate command; this run does not execute it (decision D2).
 
+---
+
+## 11. Feed economics (S27)
+
+The probability feed (`/api/odds`) and the oracle query API (`/api/oracle/query`) are metered by one
+shared meter (`lib/query-meter.ts`): a free ecosystem tier per caller per hour, then x402 per call.
+
+- **Marginal cost of a feed read** ≈ the cost of a cache-fronted GET. `/api/odds` sets
+  `s-maxage=30` and `/api/odds/history` `s-maxage=300`, so a widely-embedded or high-traffic feed is
+  served from the edge and barely touches the origin. The number itself is already computed for the
+  UI — the feed adds no new money-path cost.
+- **Revenue** is the paid-tier x402 (`ORACLE_PAID_QUERY_MOTES`, default 0.1 CSPR) on calls past the
+  free allowance (`ORACLE_FREE_QUERIES_PER_HOUR`, default 20). Tune both to the ecosystem's appetite;
+  a generous free tier is a distribution investment, the paid tier monetises heavy programmatic use.
+- **Public-good markets** (Condor upgrade, validator health, grant milestones) are seeded from house
+  liquidity like any catalogue market. Their return is ecosystem signal, not fee revenue — price the
+  seed as marketing, not as a position expected to profit.
+
+See [`docs/FEEDS.md`](FEEDS.md) for the response contracts and the calibration export.
+
 The local pre-commit gate is the same command CI runs:
 
 ```bash

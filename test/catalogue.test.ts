@@ -45,9 +45,10 @@ describe("catalogue", () => {
     expect(new Set(slugs).size).toBe(slugs.length);
   });
 
-  it("authors all seven Casper-native markets from the spec", () => {
+  it("authors the original seven Casper-native markets plus the S27 public-good feeds", () => {
     const casperNative = MARKET_DEFINITIONS.filter((d) => d.category === "casper-native");
-    expect(casperNative.length).toBe(7);
+    // 7 original + 3 public-good feeds (Condor upgrade, validator health, grant milestones).
+    expect(casperNative.length).toBe(10);
     const metrics = new Set(casperNative.map((d) => d.resolver.metric));
     for (const m of [
       "cspr_usd",
@@ -56,6 +57,9 @@ describe("catalogue", () => {
       "active_validators",
       "staking_apy_pct",
       "total_staked_cspr",
+      "condor_activation_height",
+      "validator_uptime_pct",
+      "grant_milestones_completed",
     ]) {
       expect(metrics.has(m)).toBe(true);
     }
