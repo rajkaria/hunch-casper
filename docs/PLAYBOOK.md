@@ -72,8 +72,9 @@ Boards: `GET /api/agent/leaderboard`, `/api/agent/activity`.
 
 ## 4. Verify the contracts and transactions on-chain
 
-The three contracts are deployed and live on **Casper testnet**. Open each on cspr.live and confirm
-it exists:
+The core contracts are deployed and live on **Casper testnet** (nine ship in the repo with 95
+OdraVM tests; the singleton `HunchVault` v2 is the deployed money path for open market creation).
+Open each on cspr.live and confirm it exists:
 
 | Contract | cspr.live |
 |---|---|
@@ -111,7 +112,8 @@ Then ask your agent:
 
 > list the open markets and quote a 5 CSPR bet on The Flip
 
-Seven tools are exposed: `list`, `get`, `odds`, `quote`, `place_bet`, `reputation`, `leaderboard`.
+Eight tools are exposed: `list_markets`, `get_market`, `get_odds`, `quote_bet`, `place_bet`,
+`get_oracle_reputation`, `get_leaderboard`, `get_agent_reputation`.
 
 **Expected:** the client lists the tools and returns live market data.
 

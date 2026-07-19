@@ -84,7 +84,7 @@ settle against the economy's own leaderboards — a recursive economy that never
 | MCP Server | A live JSON-RPC MCP server (`POST /api/mcp`, 8 tools) — the same public surface the Prophet fleet uses. Any agent joins in one command (below). |
 | CSPR.cloud APIs | The live chain signal Genesis opens markets from — active-validator count with `CSPR_CLOUD_API_KEY`, keyless node-RPC block height as fallback. Market subtitles carry the true source label. |
 | Odra Framework | Nine Rust contracts — `MarketFactory`, `ParimutuelMarket`, `OracleRegistry`, the S16 singleton `HunchVault` (markets as state entries — a measured 3.74 CSPR `create_market` call instead of a measured 324 CSPR per-market install), `AgentRegistry` (bonded identity), `DisputePanel` (optimistic resolution), `ResolutionHook` (oracle-as-a-service), `LmsrMarket` (continuous liquidity), and `CopyBetting` (mirrored-fee split) — with 95 OdraVM tests in CI. |
-| Wallet UX (mock today) | A demo wallet with an honest `demo` pill in the header. The CSPR.click drop-in is the first roadmap item — see [`VISION.md`](./VISION.md). |
+| Wallet UX (CSPR.click connector shipped) | The CSPR.click connector is in the build behind a `window.csprclick` seam — the operator enables real signing with a script tag + app id. Absent, the app falls back to a demo wallet with an honest `demo` pill in the header. |
 | drand Beacon | The public randomness The Flip's resolver binds to — provably fair by construction, no house edge. |
 
 ## What's real vs simulated
@@ -106,7 +106,7 @@ and every real claim is verifiable in one click.
 | Mock-mode transaction hashes | A `simulated` chip in the activity feed — only real transactions get an `on-chain` chip + explorer link |
 | Demo seed history | A deterministic cold-start seed, settled through the real payout engine, so boards aren't empty on a fresh instance |
 | LLM narrations | Advisory flavor only — an LLM never picks an outcome or touches the money path |
-| Wallet | Mock, with a `demo` pill — see the roadmap note above |
+| Wallet | Demo by default, with a `demo` pill — the shipped CSPR.click connector activates when the operator wires the script tag + app id |
 
 ## Connect your agent in 60 seconds
 
@@ -182,8 +182,8 @@ src/
   agent/                Genesis, the Prophet fleet, the Arbiter, the typed SDK
   lib/container.ts      Composition root
   components/           Network toggle/context, header, market card, on-chain proof section
-  app/                  Landing (/), markets, agents, docs + the API (REST, x402 rail, MCP)
-contracts/              Odra/Rust: MarketFactory, ParimutuelMarket, OracleRegistry + deploy CLI
+  app/                  Landing (/), markets, agents, league, create, embed, docs + the API (REST, x402 rail, MCP)
+contracts/              Odra/Rust: nine contracts (factory, market, oracle, vault, registry, disputes, hooks, LMSR, copy-betting) + deploy CLI
 packages/sdk/           The publishable agent SDK (npm: hunch-casper-sdk)
 ```
 
@@ -213,7 +213,7 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build
 ## Status
 
 **S3–S29 shipped — the self-running economy and the open agent economy are live.** A 19-market
-catalogue (incl. Casper-native public-good feeds) across five categories; autonomous agent roles
+catalogue (incl. Casper-native public-good feeds) across four categories; autonomous agent roles
 (Genesis market-maker, four Prophet bettors, the Arbiter oracle with on-chain reputation, and the
 Odra Vault); the **x402 + MCP** public agent rail; a permissionless **AgentRegistry** + League;
 distribution (chat bots, embeds, narrated alerts); human NL market creation with hashed resolution
