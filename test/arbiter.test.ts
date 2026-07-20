@@ -101,3 +101,48 @@ describe("POST /api/agent/arbiter/run", () => {
     expect(json.resolved).toBe(0); // seed deadlines are in the future
   });
 });
+
+describe("Arbiter sweep — fault isolation (one bad market must not kill the tick)", () => {
+  function withChain(overrides: Partial<ReturnType<typeof createContainer>["chain"]>) {
+    const base = createContainer("testnet");
+    return { ...base, chain: { ...base.chain, ...overrides } };
+  }
+
+  it("a market whose on-chain resolve reverts is skipped and retried, not fatal", async () => {
+    // Freeze past the catalogue deadlines so the sweep actually reaches the chain call.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-02T00:00:00.000Z"));
+    try {
+      const boom = vi
+        .fn()
+        .mockRejectedValue(new Error("transaction reverted: User error: 1 (NotOracle)"));
+      const container = withChain({ resolveMarket: boom });
+
+      // The sweep must complete without throwing even though every chain resolve fails…
+      const actions = await runArbiterSweep(container);
+      expect(boom).toHaveBeenCalled();
+      expect(actions.length).toBe(0);
+
+      // …and nothing may be settled off-chain for a market the chain refused: the mirror
+      // would claim a resolution the vault never made, and the retry next tick would stop.
+      const settlement = await container.store.settlementFor("testnet:cspr-price-05-aug");
+      expect(settlement).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a chain that already settled the market reconciles the mirror instead of retrying forever", async () => {
+    const already = vi
+      .fn()
+      .mockRejectedValue(new Error("transaction reverted: User error: 5 (AlreadySettled)"));
+    const container = withChain({ resolveMarket: already });
+
+    const action = await resolveMarket(container, "cspr-price-05-aug");
+    // Settled off-chain by the recipe's answer, with no new transaction to point at.
+    expect(action).not.toBeNull();
+    expect(action?.deployHash).toBeUndefined();
+    const settlement = await container.store.settlementFor("testnet:cspr-price-05-aug");
+    expect(settlement).not.toBeNull();
+  });
+});

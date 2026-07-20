@@ -80,6 +80,18 @@ async function decide(container: Container, market: Market): Promise<Decision> {
  * is skipped (returns `null`). Posts on-chain (unless voided), settles off-chain, records the
  * resolution against the Arbiter's reputation, and logs a narrated `market_resolved` action.
  */
+/**
+ * The vault's `AlreadySettled` (User error: 5) — the chain resolved this market before the
+ * mirror did, e.g. a manual operator `resolve-v2`. Distinct from every other revert: retrying
+ * cannot succeed, and the mirror can settle safely because both sides answer from the same
+ * recipe. Everything else (NotOracle, RPC outage, gas) stays fatal to THIS market's attempt so
+ * the sweep's per-market guard logs it and the next tick retries.
+ */
+function chainAlreadySettled(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /User error:\s*5\b/.test(message);
+}
+
 export async function resolveMarket(container: Container, slug: string): Promise<AgentAction | null> {
   const market = await container.store.get(slug, container.network);
   if (!market) return null;
@@ -95,13 +107,20 @@ export async function resolveMarket(container: Container, slug: string): Promise
   let deployHash: string | undefined;
   let explorerUrl: string | undefined;
   if (winningOutcomeKey !== null) {
-    const res = await container.chain.resolveMarket({
-      marketId: market.id,
-      winningOutcomeKey,
-      oracleId: ARBITER_ID,
-    });
-    deployHash = res.deployHash;
-    explorerUrl = res.explorerUrl;
+    try {
+      const res = await container.chain.resolveMarket({
+        marketId: market.id,
+        winningOutcomeKey,
+        oracleId: ARBITER_ID,
+      });
+      deployHash = res.deployHash;
+      explorerUrl = res.explorerUrl;
+    } catch (err) {
+      // The vault settled this market before the mirror did (e.g. a manual operator
+      // `resolve-v2`). Both sides resolve by the same recipe, so settle the mirror and stop —
+      // retrying a transaction that can only revert again would burn oracle gas every tick.
+      if (!chainAlreadySettled(err)) throw err;
+    }
   }
 
   // Settle off-chain through the pure engine — the exact numbers the on-chain claim() mirrors.
@@ -198,8 +217,19 @@ export async function runArbiterSweep(container: Container): Promise<AgentAction
   const actions: AgentAction[] = [];
   for (const m of markets) {
     if (m.status !== "locked") continue; // only matured, still-open markets
-    const action = await resolveMarket(container, m.slug);
-    if (action) actions.push(action);
+    // Per-market isolation: one market whose resolve fails (bad oracle key, revert, RPC outage)
+    // must not abort the sweep — that would let a single broken market freeze every OTHER
+    // market's settlement and kill the tick that carries the whole economy. No settlement is
+    // stored for the failed market, so the next sweep retries it.
+    try {
+      const action = await resolveMarket(container, m.slug);
+      if (action) actions.push(action);
+    } catch (err) {
+      console.error(
+        `[arbiter] resolve of '${m.slug}' failed — skipped this tick, retrying next:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
   return actions;
 }

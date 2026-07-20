@@ -164,6 +164,11 @@ fn main() {
         "vault-info" => {
             vault_info(&env, args.get(2).map(String::as_str));
         }
+        "resolve-v2" => {
+            let slug = args.get(2).expect("usage: resolve-v2 <slug> <winning-outcome>");
+            let outcome = args.get(3).expect("missing winning outcome");
+            resolve_v2(&env, slug, outcome);
+        }
         "approve-oracle" => {
             let oracle = args
                 .get(2)
@@ -707,6 +712,20 @@ fn create_register_seed_v2(
     }
 
     println!("HUNCH_BALANCE after-{} {}", slug, env.balance_of(&caller));
+}
+
+/// Manual vault resolution — the operator's backstop when the app's Arbiter cannot resolve a
+/// vault market (its `config.oracle` must equal the signer of THIS command, i.e. the deployer
+/// for every catalogue market). Sweeps the fee, refunds the creation bond, opens claims.
+fn resolve_v2(env: &HostEnv, slug: &str, outcome: &str) {
+    let caller = env.caller();
+    let mut vault = load_vault(env);
+    println!("HUNCH_BALANCE start {}", env.balance_of(&caller));
+    println!("HUNCH_STEP resolve-v2 {slug} -> {outcome}");
+    env.set_gas(SETTLE_GAS);
+    vault.resolve(slug.to_string(), outcome.to_string());
+    println!("HUNCH_RESOLVED slug={slug} outcome={outcome}");
+    println!("HUNCH_BALANCE end {}", env.balance_of(&caller));
 }
 
 /// Read-only probe of the singleton vault's creation policy — bond, open-creation flag, and
