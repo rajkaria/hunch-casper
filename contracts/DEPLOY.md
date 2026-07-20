@@ -139,6 +139,21 @@ HUNCH_VAULT_V2=hash-<vault-v2> \
   cargo run --bin contracts_catalogue -- lifecycle-v2
 ```
 
+Two repair/diagnosis commands round out the v2 set. `market-info` is a free read of a deployed
+v1 `ParimutuelMarket` — question, status, outcome keys, pools — i.e. what the package will
+*actually* accept, independent of what the env map claims. `create-v2` force-creates ONE
+manifest market inside the vault even when the factory registry already has its id —
+`catalogue-v2` refuses that case, which is correct for a healthy v1 contract and wrong when the
+registered contract is bad (the shipped case: `coin-flip-5m`'s registry entry is the bootstrap
+sample market keyed `HEADS`/`TAILS`/`TIE`, so catalogue bets on `heads`/`tails`/`tie` always
+reverted `UnknownOutcome`; see docs/OPS.md "Quarantined markets"):
+
+```bash
+cargo run --bin contracts_catalogue -- market-info hash-<package>
+HUNCH_FACTORY=hash-<factory> HUNCH_VAULT_V2=hash-<vault-v2> \
+  cargo run --bin contracts_catalogue -- create-v2 /tmp/deploy-plan.json coin-flip-5m 100
+```
+
 Wire the vault into the app with `NEXT_PUBLIC_TESTNET_VAULT_V2=hash-<vault-v2>` (§5):
 slugs absent from `NEXT_PUBLIC_TESTNET_MARKET_ADDRS` then route to the vault carrying the
 slug as the `market_id` runtime arg — `bet(market_id, outcome)` / `resolve(market_id,

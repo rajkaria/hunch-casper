@@ -315,6 +315,18 @@ curl -X POST -H "x-cron-secret: $CRON_SECRET" -H 'content-type: application/json
 
 `{"releaseMarkets": true}` releases all of them.
 
+The shipped case of exactly this fault — `coin-flip-5m`, quarantined 2026-07-19, repaired
+2026-07-20: its `NEXT_PUBLIC_TESTNET_MARKET_ADDRS` entry pointed at the **bootstrap sample
+market** (`contracts_cli deploy`, bin/cli.rs), whose outcome keys are uppercase
+`HEADS`/`TAILS`/`TIE` while the catalogue bets lowercase `heads`/`tails`/`tie` — so every bet
+reverted `UnknownOutcome`, and `catalogue-v2` had refused to create a vault twin because the
+factory registry already had the id. The repair: `contracts_catalogue create-v2 <manifest>
+coin-flip-5m 100` (force-creates the market inside vault v2 with the catalogue keys; the seed
+bets double as on-chain proof the keys are accepted), then drop the slug from
+`NEXT_PUBLIC_TESTNET_MARKET_ADDRS` so routing falls through to the vault, redeploy, release.
+`contracts_catalogue market-info <package-hash>` prints what a deployed v1 package will
+actually accept when you need to diagnose the next one.
+
 ### Automatic throttling
 
 The tick reads the purses before it spends anything and degrades in a fixed order, so a nearly

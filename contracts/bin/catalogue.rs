@@ -145,8 +145,22 @@ fn main() {
                 .expect("seed divisor must be a u64");
             catalogue_v2(&env, manifest, selector, divisor);
         }
+        "create-v2" => {
+            let manifest = args.get(2).expect("usage: create-v2 <deploy-plan.json> <slug> <seed-divisor>");
+            let slug = args.get(3).expect("missing slug");
+            let divisor: u64 = args
+                .get(4)
+                .expect("missing seed divisor (0 = no seeding)")
+                .parse()
+                .expect("seed divisor must be a u64");
+            create_v2(&env, manifest, slug, divisor);
+        }
         "lifecycle-v2" => lifecycle_v2(&env),
         "list-markets" => list_markets(&env),
+        "market-info" => {
+            let package = args.get(2).expect("usage: market-info <parimutuel-market-package-hash>");
+            market_info(&env, package);
+        }
         "approve-oracle" => {
             let oracle = args
                 .get(2)
@@ -178,8 +192,8 @@ fn main() {
         _ => {
             eprintln!(
                 "usage: contracts_catalogue <balance|lifecycle|catalogue|vault-deploy|\
-                 catalogue-v2|lifecycle-v2|list-markets|approve-oracle|open-creation|\
-                 fleet-fund|plan-cost> ..."
+                 catalogue-v2|create-v2|lifecycle-v2|list-markets|market-info|\
+                 approve-oracle|open-creation|fleet-fund|plan-cost> ..."
             );
             std::process::exit(2);
         }
@@ -545,11 +559,10 @@ fn catalogue_v2(env: &HostEnv, manifest_path: &str, selector: &str, divisor: u64
         .expect("set HUNCH_FACTORY to the deployed MarketFactory package hash");
     let mut factory =
         MarketFactory::load(env, Address::from_str(&factory_addr).expect("bad HUNCH_FACTORY"));
-    let vault = load_vault(env);
+    let mut vault = load_vault(env);
     let bond = vault.creation_bond();
 
     let selected: Option<Vec<&str>> = (selector != "all").then(|| selector.split(',').collect());
-    let caller = env.caller();
 
     for m in markets {
         let slug = m["slug"].as_str().expect("market without slug");
@@ -570,79 +583,147 @@ fn catalogue_v2(env: &HostEnv, manifest_path: &str, selector: &str, divisor: u64
             continue;
         }
 
-        let question = m["init"]["question"].as_str().expect("init.question").to_string();
-        let fee_bps = m["init"]["feeBps"].as_u64().expect("init.feeBps") as u32;
-        let deadline = m["init"]["deadlineMs"].as_u64().expect("init.deadlineMs");
-        let outcomes: Vec<String> = m["init"]["outcomeKeys"]
-            .as_array()
-            .expect("init.outcomeKeys")
-            .iter()
-            .map(|o| o.as_str().expect("outcome key").to_string())
-            .collect();
-        let category = m["registration"]["category"]
-            .as_str()
-            .unwrap_or("casper-native")
-            .to_string();
-
-        println!("HUNCH_STEP create-market {slug}");
-        let before = env.balance_of(&caller);
-        env.set_gas(CREATE_GAS);
-        vault.with_tokens(bond).create_market(
-            slug.to_string(),
-            question.clone(),
-            category.clone(),
-            caller,
-            fee_bps,
-            deadline,
-            outcomes,
-        );
-        // Bond comes back at settlement, so the true creation cost is delta minus bond.
-        let spent = before - env.balance_of(&caller) - bond;
-        println!("HUNCH_GAS create_market slug={slug} motes={spent}");
-
-        if factory.is_registered(slug.to_string()) {
-            println!("HUNCH_SKIP_REGISTER slug={slug} (already in the registry)");
-        } else {
-            println!("HUNCH_STEP register-v2 {slug}");
-            env.set_gas(REGISTRY_GAS);
-            // v1-compatible registration: pass the vault as the market address explicitly
-            // instead of `register_vault_market`, which a pre-S16 factory doesn't have.
-            factory.register_market(
-                slug.to_string(),
-                question,
-                category,
-                vault.address(),
-                deadline,
-            );
-            println!("HUNCH_REGISTERED slug={slug}");
-        }
-
-        if divisor > 0 {
-            if let Some(seeds) = m["seedBets"].as_object() {
-                for (outcome, motes) in seeds {
-                    let motes: u64 = motes
-                        .as_str()
-                        .expect("seed motes must be a string")
-                        .parse()
-                        .expect("seed motes must be numeric");
-                    let stake = motes / divisor;
-                    if stake == 0 {
-                        continue;
-                    }
-                    println!("HUNCH_STEP seed {slug} {outcome}");
-                    env.set_gas(BET_GAS);
-                    vault
-                        .with_tokens(U512::from(stake))
-                        .bet(slug.to_string(), outcome.to_string());
-                    println!("HUNCH_SEEDED slug={slug} outcome={outcome} motes={stake}");
-                }
-            }
-        }
-
-        println!("HUNCH_BALANCE after-{} {}", slug, env.balance_of(&caller));
+        create_register_seed_v2(env, &mut factory, &mut vault, m, slug, bond, divisor);
     }
 
     println!("HUNCH_STEP done");
+}
+
+/// Repair path: create ONE manifest market inside the vault even when the factory registry
+/// already has its id. `catalogue-v2` refuses that case on the assumption the registered v1
+/// contract is good — found false in production with `coin-flip-5m`, whose registry entry is the
+/// bootstrap sample market (bin/cli.rs) keyed `HEADS`/`TAILS`/`TIE` while the catalogue bets
+/// `heads`/`tails`/`tie`, so every bet reverts `UnknownOutcome`. This command is the operator's
+/// explicit override for exactly that repair: it skips only when the vault itself already has the
+/// slug, and (like catalogue-v2) never re-registers an id the factory knows (`DuplicateId`).
+fn create_v2(env: &HostEnv, manifest_path: &str, slug: &str, divisor: u64) {
+    let raw = fs::read_to_string(manifest_path).expect("cannot read manifest");
+    let manifest: serde_json::Value = serde_json::from_str(&raw).expect("manifest is not JSON");
+    let markets = manifest["markets"].as_array().expect("manifest has no markets[]");
+    let m = markets
+        .iter()
+        .find(|m| m["slug"].as_str() == Some(slug))
+        .unwrap_or_else(|| panic!("slug '{slug}' not in manifest"));
+
+    let factory_addr = std::env::var("HUNCH_FACTORY")
+        .expect("set HUNCH_FACTORY to the deployed MarketFactory package hash");
+    let mut factory =
+        MarketFactory::load(env, Address::from_str(&factory_addr).expect("bad HUNCH_FACTORY"));
+    let mut vault = load_vault(env);
+    let bond = vault.creation_bond();
+
+    if vault.market_exists(slug.to_string()) {
+        println!("HUNCH_SKIP_CREATE slug={slug} (already in the vault)");
+        return;
+    }
+    create_register_seed_v2(env, &mut factory, &mut vault, m, slug, bond, divisor);
+    println!("HUNCH_STEP done");
+}
+
+/// The shared v2 per-market money path: `create_market` in the vault (bond attached), register
+/// into the factory unless the id is already taken, then ratio-preserving seed bets. Every seed
+/// is a REAL `bet` on the new vault entry, so a successful seeded create is also on-chain proof
+/// that the market accepts its catalogue outcome keys.
+fn create_register_seed_v2(
+    env: &HostEnv,
+    factory: &mut contracts::market_factory::MarketFactoryHostRef,
+    vault: &mut contracts::hunch_vault::HunchVaultHostRef,
+    m: &serde_json::Value,
+    slug: &str,
+    bond: U512,
+    divisor: u64,
+) {
+    let caller = env.caller();
+    let question = m["init"]["question"].as_str().expect("init.question").to_string();
+    let fee_bps = m["init"]["feeBps"].as_u64().expect("init.feeBps") as u32;
+    let deadline = m["init"]["deadlineMs"].as_u64().expect("init.deadlineMs");
+    let outcomes: Vec<String> = m["init"]["outcomeKeys"]
+        .as_array()
+        .expect("init.outcomeKeys")
+        .iter()
+        .map(|o| o.as_str().expect("outcome key").to_string())
+        .collect();
+    let category = m["registration"]["category"]
+        .as_str()
+        .unwrap_or("casper-native")
+        .to_string();
+
+    println!("HUNCH_STEP create-market {slug}");
+    let before = env.balance_of(&caller);
+    env.set_gas(CREATE_GAS);
+    vault.with_tokens(bond).create_market(
+        slug.to_string(),
+        question.clone(),
+        category.clone(),
+        caller,
+        fee_bps,
+        deadline,
+        outcomes,
+    );
+    // Bond comes back at settlement, so the true creation cost is delta minus bond.
+    let spent = before - env.balance_of(&caller) - bond;
+    println!("HUNCH_GAS create_market slug={slug} motes={spent}");
+
+    if factory.is_registered(slug.to_string()) {
+        println!("HUNCH_SKIP_REGISTER slug={slug} (already in the registry)");
+    } else {
+        println!("HUNCH_STEP register-v2 {slug}");
+        env.set_gas(REGISTRY_GAS);
+        // v1-compatible registration: pass the vault as the market address explicitly
+        // instead of `register_vault_market`, which a pre-S16 factory doesn't have.
+        factory.register_market(
+            slug.to_string(),
+            question,
+            category,
+            vault.address(),
+            deadline,
+        );
+        println!("HUNCH_REGISTERED slug={slug}");
+    }
+
+    if divisor > 0 {
+        if let Some(seeds) = m["seedBets"].as_object() {
+            for (outcome, motes) in seeds {
+                let motes: u64 = motes
+                    .as_str()
+                    .expect("seed motes must be a string")
+                    .parse()
+                    .expect("seed motes must be numeric");
+                let stake = motes / divisor;
+                if stake == 0 {
+                    continue;
+                }
+                println!("HUNCH_STEP seed {slug} {outcome}");
+                env.set_gas(BET_GAS);
+                vault
+                    .with_tokens(U512::from(stake))
+                    .bet(slug.to_string(), outcome.to_string());
+                println!("HUNCH_SEEDED slug={slug} outcome={outcome} motes={stake}");
+            }
+        }
+    }
+
+    println!("HUNCH_BALANCE after-{} {}", slug, env.balance_of(&caller));
+}
+
+/// Read-only probe of a deployed v1 `ParimutuelMarket` — the on-chain truth about what a
+/// package will accept, independent of what any catalogue or env map claims about it.
+fn market_info(env: &HostEnv, package: &str) {
+    let market =
+        ParimutuelMarket::load(env, Address::from_str(package).expect("bad package hash"));
+    println!("HUNCH_MARKET_INFO package={package}");
+    println!("HUNCH_MARKET_INFO question={}", market.question());
+    println!("HUNCH_MARKET_INFO status={}", market.status());
+    let outcomes = market.outcomes();
+    println!("HUNCH_MARKET_INFO outcomes={}", outcomes.join(","));
+    for outcome in &outcomes {
+        println!(
+            "HUNCH_MARKET_INFO pool outcome={} motes={}",
+            outcome,
+            market.pool_of(outcome.clone())
+        );
+    }
+    println!("HUNCH_MARKET_INFO total_pool={}", market.total_pool());
 }
 
 /// Drive the full money path INSIDE the vault on a dedicated receipts market: create →
