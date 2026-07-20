@@ -389,20 +389,41 @@ async function withTimeout(run: (signal: AbortSignal) => Promise<Response>): Pro
 }
 
 let hydrated = false;
+let hydratedAt = 0;
 let hydrating: Promise<void> | null = null;
 
 /**
- * Hydrate the economy from KV, once per instance. Callers MUST await this before their first read
- * (the mock store's port methods and the read routes do). Unconfigured → instant no-op. Errors
- * (network, timeout, bad payload) are warned once and swallowed — the app must never die from KV
- * downtime; it just serves this instance's in-memory state.
+ * How long a hydrated view is trusted before the next read re-reads KV.
+ *
+ * Once-per-instance hydration pinned a warm reader to whatever it saw on first load — forever.
+ * Observed live 2026-07-20: 3 of 25 concurrent `/api/agent/activity` responses served 9 stale
+ * actions while KV and every cold instance held 12. Merge-on-persist means such a reader can no
+ * longer clobber anyone, but it still renders a truncated board.
+ *
+ * 30s is chosen against the tick cadence (minutes): the board is never more than one TTL behind
+ * the chain, for at most one extra ~20-40ms KV GET per instance per 30s. Reads inside the window
+ * stay pure in-memory, so this is not a per-request round trip.
+ */
+export const HYDRATE_TTL_MS = 30_000;
+
+/**
+ * Hydrate the economy from KV. Callers MUST await this before their first read (the mock store's
+ * port methods and the read routes do). Cached for `HYDRATE_TTL_MS`, then the next read re-reads so
+ * a long-lived warm instance converges on what other instances wrote. Unconfigured → instant no-op.
+ * Errors (network, timeout, bad payload) are warned once and swallowed — the app must never die
+ * from KV downtime; it just serves this instance's in-memory state.
  */
 export function hydrateEconomyState(fetchImpl?: typeof fetch): Promise<void> {
-  if (hydrated) return Promise.resolve();
   if (hydrating) return hydrating;
+  // A re-read REPLACES memory wholesale, so it must never land on top of an unflushed mutation:
+  // the write in flight would then publish a merge that never saw it. Staleness is recoverable
+  // (the next read re-reads); a dropped write is not. Freshness yields to durability here.
+  const writePending = dirty || writer !== null;
+  if (hydrated && (writePending || Date.now() - hydratedAt < HYDRATE_TTL_MS)) return Promise.resolve();
   const cfg = kvConfig();
   if (!cfg) {
     hydrated = true; // unconfigured is a terminal state for this instance — don't re-check per read
+    hydratedAt = Number.POSITIVE_INFINITY; // ...and no TTL can ever expire it back into a re-check
     return Promise.resolve();
   }
   hydrating = (async () => {
@@ -425,7 +446,10 @@ export function hydrateEconomyState(fetchImpl?: typeof fetch): Promise<void> {
     } catch (err) {
       console.warn("[economy-state] KV hydrate failed — continuing with in-memory state:", err);
     } finally {
-      hydrated = true; // even on failure: one attempt per instance, no retry storm on every read
+      // Even on failure: stamping the clock means a KV outage costs one attempt per TTL, not one
+      // per read — the retry storm the old once-per-instance latch was really guarding against.
+      hydrated = true;
+      hydratedAt = Date.now();
       hydrating = null;
     }
   })();
@@ -433,18 +457,19 @@ export function hydrateEconomyState(fetchImpl?: typeof fetch): Promise<void> {
 }
 
 /**
- * Force a FRESH hydrate, discarding the once-per-instance guard. For writers whose output
- * clobbers the whole envelope — today that is the tick, the economy's biggest writer.
+ * Force a FRESH hydrate NOW, ignoring the TTL. For callers that must decide against the current
+ * economy rather than a view up to `HYDRATE_TTL_MS` old — today that is the tick, the economy's
+ * biggest writer, which reads the round counter and open markets before betting and resolving.
  *
- * Why: `hydrateEconomyState` runs once per instance, and `persistEconomyState` writes the whole
- * envelope last-writer-wins. A warm instance that hydrated long ago therefore persists its STALE
- * view over every write other instances made since — observed live 2026-07-20, when a tick reset
- * the round counter from 42 to 5 and truncated the activity history. Re-hydrating at tick start
- * shrinks that clobber window from "instance age" to "one tick". Safe because every mutating
- * route now awaits its own flush, so instance memory holds nothing unpersisted worth keeping.
- * (The race that remained — two writers interleaving inside one tick — is closed by
- * merge-on-persist + compare-and-set in `persistEconomyState`; this fresh read is now about
- * serving a current view during the tick, not about write safety.)
+ * Historically this also guarded write safety: `persistEconomyState` wrote the whole envelope
+ * last-writer-wins, so a warm instance that hydrated long ago persisted its STALE view over every
+ * write other instances had made since — observed live 2026-07-20, when a tick reset the round
+ * counter from 42 to 5 and truncated the activity history. That race is now closed at the write
+ * end by merge-on-persist + compare-and-set, so this is purely about decision freshness.
+ *
+ * Callers must not hold an unflushed mutation across this call: unlike the TTL path (which defers
+ * to a pending write), a forced re-read replaces memory unconditionally. The tick satisfies that
+ * by rehydrating before it mutates anything.
  */
 export function rehydrateEconomyState(fetchImpl?: typeof fetch): Promise<void> {
   if (hydrating) return hydrating; // a fetch is in flight — its result is already fresh
@@ -689,9 +714,10 @@ export function persistEconomyState(fetchImpl?: typeof fetch): Promise<void> {
   return writer;
 }
 
-/** Test-only: reset the once-per-instance hydration + write-coalescing guards. */
+/** Test-only: reset the TTL-bounded hydration + write-coalescing guards. */
 export function __resetPersistenceForTests(): void {
   hydrated = false;
+  hydratedAt = 0;
   hydrating = null;
   dirty = false;
   writer = null;

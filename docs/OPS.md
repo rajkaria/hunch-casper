@@ -424,9 +424,18 @@ are module singletons. Without KV they reset on every serverless cold start and 
 instances — a visitor's bet can vanish when the next request lands elsewhere.
 
 With KV configured, all four fold into one versioned envelope under `hunch:economy:v1`:
-hydrated once per instance before the first read, snapshotted after every mutation (debounced,
-coalesced). The chain remains the source of truth for money; this is durability for the
-*presentation* layer.
+hydrated before the first read and re-read at most every 30s (`HYDRATE_TTL_MS`), snapshotted after
+every mutation (debounced, coalesced). The chain remains the source of truth for money; this is
+durability for the *presentation* layer.
+
+Hydration is **TTL-bounded, not once-per-instance**. The old latch pinned a warm reader to whatever
+it saw on first load forever — on 2026-07-20, 3 of 25 concurrent `/api/agent/activity` responses
+served 9 stale actions while KV and every cold instance held 12. Reads inside the 30s window stay
+pure in-memory (no per-request round trip); the first read after it re-reads KV. The TTL **yields to
+an in-flight write**: a re-read replaces memory wholesale, so letting one land on top of an unflushed
+mutation would publish a merge that never saw it. Staleness self-heals on the next read; a dropped
+write does not. `rehydrateEconomyState()` forces a read now, ignoring the TTL — the tick uses it so
+it bets and resolves against the current economy.
 
 Writes are **merge-on-persist** under optimistic concurrency, not last-writer-wins (which
 truncated the production history on 2026-07-20 when a warm instance flushed its stale view —

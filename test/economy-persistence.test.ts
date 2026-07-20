@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   ECONOMY_KV_KEY,
+  HYDRATE_TTL_MS,
   applyEconomyState,
   hydrateEconomyState,
   persistEconomyState,
@@ -435,6 +436,92 @@ describe("rehydrateEconomyState — the tick's fresh-view guard", () => {
     await rehydrateEconomyState(fresh as unknown as typeof fetch);
     expect(fresh).toHaveBeenCalledTimes(1);
     expect(listActions()).toEqual(actionsBefore);
+  });
+});
+
+describe("hydrateEconomyState — TTL-bounded freshness on the read path", () => {
+  // Once-per-instance hydration pinned a warm reader to whatever it saw on first load, forever:
+  // observed live 2026-07-20 when 3 of 25 concurrent /api/agent/activity responses served 9 stale
+  // actions while KV (and every cold instance) held 12. Merge-on-persist means such a reader can no
+  // longer CLOBBER anyone — but it still shows a truncated board. A TTL bounds that staleness.
+  const URL_BASE = "https://kv.example.test";
+  function stubKvEnv(): void {
+    vi.stubEnv("KV_REST_API_URL", URL_BASE);
+    vi.stubEnv("KV_REST_API_TOKEN", "kv-token");
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("serves memory inside the TTL — reads do not each pay a KV round trip", async () => {
+    stubKvEnv();
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ result: null }), { status: 200 }));
+    await hydrateEconomyState(fetchImpl as unknown as typeof fetch);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(HYDRATE_TTL_MS - 1);
+    for (let i = 0; i < 10; i++) await hydrateEconomyState(fetchImpl as unknown as typeof fetch);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-reads once the TTL lapses, so a warm reader converges on what other instances wrote", async () => {
+    seedEconomy();
+    const full = serializeEconomyState();
+    const actionsBefore = listActions();
+    resetAllState();
+    stubKvEnv();
+
+    const empty = vi.fn(async () => new Response(JSON.stringify({ result: null }), { status: 200 }));
+    await hydrateEconomyState(empty as unknown as typeof fetch);
+    expect(listActions()).toEqual([]);
+
+    vi.advanceTimersByTime(HYDRATE_TTL_MS + 1);
+    const fresh = vi.fn(async () => new Response(JSON.stringify({ result: full }), { status: 200 }));
+    await hydrateEconomyState(fresh as unknown as typeof fetch);
+    expect(fresh).toHaveBeenCalledTimes(1);
+    expect(listActions()).toEqual(actionsBefore);
+  });
+
+  it("does NOT re-read while a write is still in flight — freshness never eats an unflushed mutation", async () => {
+    // A TTL re-read REPLACES memory wholesale. If it landed between a mutation and its flush, the
+    // mutation would vanish from memory and the pending merge would publish an envelope without it.
+    stubKvEnv();
+    const hydrateFetch = vi.fn(async () => new Response(JSON.stringify({ result: null }), { status: 200 }));
+    await hydrateEconomyState(hydrateFetch as unknown as typeof fetch);
+    expect(hydrateFetch).toHaveBeenCalledTimes(1);
+
+    appendAction({ agent: "Momentum", kind: "bet_placed", marketId: "testnet:x", marketTitle: "X" });
+
+    // Hold a write open: `dirty`/`writer` are set synchronously, so the instance is now mid-flush.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const writeFetch = vi.fn(async () => {
+      await gate;
+      return new Response(JSON.stringify({ result: null }), { status: 200 });
+    });
+    const writing = persistEconomyState(writeFetch as unknown as typeof fetch);
+
+    vi.advanceTimersByTime(HYDRATE_TTL_MS * 5);
+    await hydrateEconomyState(hydrateFetch as unknown as typeof fetch);
+    expect(hydrateFetch).toHaveBeenCalledTimes(1); // still 1: the in-flight write is protected
+    expect(listActions()).toHaveLength(1);
+
+    release();
+    await writing;
+  });
+
+  it("stays a terminal no-op when KV is unconfigured — no per-read env re-check", async () => {
+    const fetchImpl = vi.fn();
+    await hydrateEconomyState(fetchImpl as unknown as typeof fetch);
+    vi.advanceTimersByTime(HYDRATE_TTL_MS * 10);
+    await hydrateEconomyState(fetchImpl as unknown as typeof fetch);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 
