@@ -38,7 +38,8 @@ export interface AgentAction {
   ts: number;
 }
 
-const CAP = 60;
+/** Ring-buffer capacity — also the cap a cross-instance merge trims the union back down to. */
+export const ACTIVITY_CAP = 60;
 const log: AgentAction[] = [];
 let counter = 0;
 
@@ -46,7 +47,7 @@ let counter = 0;
 export function appendAction(action: Omit<AgentAction, "seq" | "ts"> & { ts?: number }): AgentAction {
   const withSeq: AgentAction = { ...action, seq: counter++, ts: action.ts ?? Date.now() };
   log.unshift(withSeq);
-  if (log.length > CAP) log.length = CAP;
+  if (log.length > ACTIVITY_CAP) log.length = ACTIVITY_CAP;
   fireEconomyPersistHook(); // snapshot to KV when configured (no-op otherwise) — see adapters/persist
   return withSeq;
 }
@@ -79,6 +80,6 @@ export function exportActivityState(): ActivitySnapshot {
 export function importActivityState(snapshot: ActivitySnapshot): void {
   log.length = 0;
   for (const a of snapshot.actions) log.push({ ...a });
-  if (log.length > CAP) log.length = CAP;
+  if (log.length > ACTIVITY_CAP) log.length = ACTIVITY_CAP;
   counter = snapshot.counter;
 }

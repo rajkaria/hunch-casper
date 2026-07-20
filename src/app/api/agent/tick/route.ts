@@ -83,8 +83,9 @@ export async function GET(req: Request): Promise<Response> {
   if (!authorized(req)) {
     return NextResponse.json({ error: "unauthorized: the tick is gated by the cron secret" }, { status: 401 });
   }
-  // FRESH hydrate, not the once-per-instance one: the tick persists the WHOLE envelope, so a
-  // warm instance acting on a stale view would clobber every write made since it last looked.
+  // FRESH hydrate, not the once-per-instance one: persistence merges-on-write, so a stale view
+  // can no longer clobber anyone — but the tick should still DECIDE (bets, resolutions) from the
+  // current economy, not from whenever this warm instance last looked.
   await rehydrateEconomyState();
   const param = new URL(req.url).searchParams.get("network");
   const network = isCasperNetwork(param) ? param : DEFAULT_NETWORK;
@@ -95,8 +96,9 @@ export async function POST(req: Request): Promise<Response> {
   if (!authorized(req)) {
     return NextResponse.json({ error: "unauthorized: the tick is gated by the cron secret" }, { status: 401 });
   }
-  // FRESH hydrate, not the once-per-instance one: the tick persists the WHOLE envelope, so a
-  // warm instance acting on a stale view would clobber every write made since it last looked.
+  // FRESH hydrate, not the once-per-instance one: persistence merges-on-write, so a stale view
+  // can no longer clobber anyone — but the tick should still DECIDE (bets, resolutions) from the
+  // current economy, not from whenever this warm instance last looked.
   await rehydrateEconomyState();
   let body: Record<string, unknown> = {};
   try {

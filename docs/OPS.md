@@ -425,11 +425,23 @@ instances — a visitor's bet can vanish when the next request lands elsewhere.
 
 With KV configured, all four fold into one versioned envelope under `hunch:economy:v1`:
 hydrated once per instance before the first read, snapshotted after every mutation (debounced,
-coalesced), last-write-wins across instances. The chain remains the source of truth for money;
-this is durability for the *presentation* layer.
+coalesced). The chain remains the source of truth for money; this is durability for the
+*presentation* layer.
+
+Writes are **merge-on-persist** under optimistic concurrency, not last-writer-wins (which
+truncated the production history on 2026-07-20 when a warm instance flushed its stale view —
+round counter 42 → 5). Each flush GETs the stored envelope, merges it into memory, and
+compare-and-sets the union against the revision it read (Lua `EVAL`, bounded retries on
+conflict). Merge identities: activity by `ts+agent+market+kind` with the round counter taken as
+`max` of both sides; created markets by slug; settlement by market id with settled beating
+unsettled; oracle resolutions by `(oracle, market)` id; breaker and quarantine by newest
+timestamp — a breaker clear stamps `clearedAt`, and a quarantine release leaves a
+`[slug, releasedAt]` tombstone so a stale writer cannot resurrect what an operator released.
 
 Failure behaviour is deliberate: a 3-second timeout, one warning, then the app continues on
-in-memory state. **KV downtime degrades durability, never availability.**
+in-memory state. Every concurrency guard **fails open to a plain SET** — a KV without `EVAL`, a
+read outage, or exhausted CAS retries degrade to the old last-writer-wins write, never to a lost
+flush. **KV downtime degrades durability, never availability.**
 
 - Verify: `curl -s .../api/health | jq '.checks[] | select(.name=="persistence")'`
 - Hydration marks the demo seed as done, so a hydrated instance never fabricates demo history on

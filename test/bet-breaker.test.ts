@@ -100,3 +100,25 @@ describe("bet breaker", () => {
     expect(bettingHalted()).toBe(false);
   });
 });
+
+describe("clearedAt — the evidence timestamp the cross-instance merge compares", () => {
+  it("a placement stamps when the money path was last proven good", () => {
+    recordPaidNotPlaced(failure(1));
+    recordPlacement();
+    const snap = exportBreakerState();
+    expect(snap.consecutiveFailures).toBe(0);
+    expect(typeof snap.clearedAt).toBe("number");
+    expect(snap.clearedAt as number).toBeGreaterThan(failure(1).ts);
+  });
+
+  it("an operator reset stamps it too — a reset must outrank the stale trip it clears", () => {
+    for (let i = 1; i <= BREAKER_TRIP_THRESHOLD; i++) recordPaidNotPlaced(failure(i));
+    resetBreaker();
+    expect(exportBreakerState().clearedAt ?? 0).toBeGreaterThan(failure(BREAKER_TRIP_THRESHOLD).ts);
+  });
+
+  it("tolerates pre-clearedAt snapshots (older envelopes) without inventing a timestamp", () => {
+    importBreakerState({ consecutiveFailures: 1, lastFailure: failure(1), trippedAt: null });
+    expect(exportBreakerState().clearedAt).toBeNull();
+  });
+});

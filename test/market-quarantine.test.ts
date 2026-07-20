@@ -14,17 +14,20 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   exportQuarantine,
+  exportReleasedMarkets,
   importQuarantine,
+  importReleasedMarkets,
   isQuarantined,
   permanentMarketFault,
   quarantineMarket,
   quarantinedMarkets,
   releaseAllMarkets,
   releaseMarket,
+  __resetQuarantine,
 } from "@/agent/market-quarantine";
 
 beforeEach(() => {
-  releaseAllMarkets();
+  __resetQuarantine();
 });
 
 describe("classifying a revert as a permanent market fault", () => {
@@ -97,5 +100,55 @@ describe("quarantine", () => {
   it("ignores malformed persisted entries rather than crashing the tick", () => {
     importQuarantine([{ slug: "", reason: "x", deployHash: "", ts: 0 }, null as never]);
     expect(quarantinedMarkets()).toEqual([]);
+  });
+});
+
+describe("release tombstones — how a merge tells 'released' from 'never quarantined'", () => {
+  const entry = (slug: string) => ({
+    slug,
+    reason: "UnknownOutcome: reverted on chain: User error: 3",
+    deployHash: "ab".repeat(32),
+    ts: 1_700_000_000_000,
+  });
+
+  it("a release leaves a tombstone so a stale writer cannot resurrect the market", () => {
+    quarantineMarket(entry("coin-flip-5m"));
+    releaseMarket("coin-flip-5m");
+    const tombstones = exportReleasedMarkets();
+    expect(tombstones).toHaveLength(1);
+    expect(tombstones[0][0]).toBe("coin-flip-5m");
+    expect(tombstones[0][1]).toBeGreaterThan(entry("coin-flip-5m").ts);
+  });
+
+  it("releasing a market that was never quarantined leaves no tombstone", () => {
+    expect(releaseMarket("not-a-market")).toBe(false);
+    expect(exportReleasedMarkets()).toEqual([]);
+  });
+
+  it("re-quarantining after a release clears the tombstone — the local timeline is authoritative", () => {
+    quarantineMarket(entry("coin-flip-5m"));
+    releaseMarket("coin-flip-5m");
+    quarantineMarket({ ...entry("coin-flip-5m"), ts: Date.now() });
+    expect(isQuarantined("coin-flip-5m")).toBe(true);
+    expect(exportReleasedMarkets()).toEqual([]);
+  });
+
+  it("releaseAllMarkets tombstones every active slug", () => {
+    quarantineMarket(entry("coin-flip-5m"));
+    quarantineMarket(entry("btc-150k-aug"));
+    releaseAllMarkets();
+    expect(exportReleasedMarkets().map(([slug]) => slug).sort()).toEqual(["btc-150k-aug", "coin-flip-5m"]);
+  });
+
+  it("round-trips through export/import, and import ignores malformed entries", () => {
+    quarantineMarket(entry("coin-flip-5m"));
+    releaseMarket("coin-flip-5m");
+    const persisted = JSON.parse(JSON.stringify(exportReleasedMarkets())) as [string, number][];
+    __resetQuarantine();
+    importReleasedMarkets(persisted);
+    expect(exportReleasedMarkets()).toEqual(persisted);
+
+    importReleasedMarkets([["ok", 5], ["bad", "x"], "junk", [3, 5], ["", 7]] as never);
+    expect(exportReleasedMarkets()).toEqual([["ok", 5]]);
   });
 });

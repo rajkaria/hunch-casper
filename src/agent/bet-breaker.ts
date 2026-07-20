@@ -37,9 +37,16 @@ export interface BreakerSnapshot {
   lastFailure: BetFailure | null;
   /** When the breaker tripped, or `null` while it is closed. */
   trippedAt: number | null;
+  /**
+   * When the money path was last PROVEN good (a landed placement or an operator reset). The
+   * cross-instance merge keeps whichever side holds the newest evidence — without this stamp a
+   * cleared breaker carries no timestamp, and a stale trip from another writer would be immortal.
+   * Optional: absent in envelopes written before merge-on-persist.
+   */
+  clearedAt?: number | null;
 }
 
-const state: BreakerSnapshot = { consecutiveFailures: 0, lastFailure: null, trippedAt: null };
+const state: BreakerSnapshot = { consecutiveFailures: 0, lastFailure: null, trippedAt: null, clearedAt: null };
 
 /**
  * Record that an agent paid and the bet did not land. Trips the breaker on the threshold-th
@@ -62,6 +69,7 @@ export function recordPlacement(): void {
   state.consecutiveFailures = 0;
   state.lastFailure = null;
   state.trippedAt = null;
+  state.clearedAt = Date.now();
 }
 
 /** True while betting is halted. Never gates resolution. */
@@ -94,4 +102,5 @@ export function importBreakerState(snapshot: BreakerSnapshot): void {
     : 0;
   state.lastFailure = snapshot.lastFailure ?? null;
   state.trippedAt = typeof snapshot.trippedAt === "number" ? snapshot.trippedAt : null;
+  state.clearedAt = typeof snapshot.clearedAt === "number" ? snapshot.clearedAt : null;
 }
