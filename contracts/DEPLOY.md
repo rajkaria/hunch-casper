@@ -152,6 +152,13 @@ reverted `UnknownOutcome`; see docs/OPS.md "Quarantined markets"):
 cargo run --bin contracts_catalogue -- market-info hash-<package>
 HUNCH_FACTORY=hash-<factory> HUNCH_VAULT_V2=hash-<vault-v2> \
   cargo run --bin contracts_catalogue -- create-v2 /tmp/deploy-plan.json coin-flip-5m 100
+
+# Free reads of the vault's creation policy (+ whether an account is an approved oracle),
+# and the operator's manual-resolution backstop (signer must be the market's config.oracle —
+# the deployer for every catalogue market). The app's Arbiter reconciles its mirror to a
+# manually-resolved market on its next sweep (AlreadySettled → settle off-chain, no retry).
+HUNCH_VAULT_V2=hash-<vault-v2> cargo run --bin contracts_catalogue -- vault-info [account-hash-…]
+HUNCH_VAULT_V2=hash-<vault-v2> cargo run --bin contracts_catalogue -- resolve-v2 <slug> <outcome>
 ```
 
 Wire the vault into the app with `NEXT_PUBLIC_TESTNET_VAULT_V2=hash-<vault-v2>` (§5):
