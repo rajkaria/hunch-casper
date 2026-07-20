@@ -36,7 +36,7 @@ export interface HealthInputs {
   };
   /** Count of per-market package hashes in `NEXT_PUBLIC_*_MARKET_ADDRS`. */
   marketAddressCount: number;
-  persistence: { configured: boolean; reachable: boolean; status?: number; latencyMs?: number };
+  persistence: { configured: boolean; reachable: boolean; status?: number; latencyMs?: number; rev?: number };
   x402: {
     /** `CASPER_X402_PAYTO` set — the transfer-verifying PaymentPort. */
     payToConfigured: boolean;
@@ -156,7 +156,7 @@ function contractChecks(i: HealthInputs): HealthCheck[] {
 
 /** Persistence. Unconfigured is fine locally and fatal to board durability in production. */
 function persistenceCheck(i: HealthInputs): HealthCheck {
-  const { configured, reachable, status, latencyMs } = i.persistence;
+  const { configured, reachable, status, latencyMs, rev } = i.persistence;
   if (!configured) {
     return i.chainMode === "real"
       ? check(
@@ -166,7 +166,12 @@ function persistenceCheck(i: HealthInputs): HealthCheck {
         )
       : check("persistence", "skip", "no KV configured (expected for local/CI/mock runs)");
   }
-  if (reachable) return check("persistence", "ok", `KV reachable in ${latencyMs ?? "?"}ms`);
+  // `rev` climbs once per flush. Reporting it makes a silent fall-open to last-writer-wins visible
+  // (the rev stops moving while ticks keep landing) instead of indistinguishable from a healthy KV.
+  if (reachable) {
+    const revNote = typeof rev === "number" ? `rev ${rev}` : "no rev yet";
+    return check("persistence", "ok", `KV reachable in ${latencyMs ?? "?"}ms — envelope ${revNote}`);
+  }
   return check(
     "persistence",
     "fail",

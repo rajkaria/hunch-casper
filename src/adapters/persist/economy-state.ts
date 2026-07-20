@@ -464,7 +464,16 @@ export function rehydrateEconomyState(fetchImpl?: typeof fetch): Promise<void> {
  */
 export async function probePersistence(
   fetchImpl?: typeof fetch,
-): Promise<{ configured: boolean; reachable: boolean; status?: number; latencyMs?: number; error?: string }> {
+): Promise<{
+  configured: boolean;
+  reachable: boolean;
+  status?: number;
+  latencyMs?: number;
+  error?: string;
+  /** The stored envelope's revision, when there is one. Undefined for an empty key, an envelope
+   * written before merge-on-persist, or an unreadable payload — never a reason to report a fault. */
+  rev?: number;
+}> {
   const cfg = kvConfig();
   if (!cfg) return { configured: false, reachable: false };
   const started = Date.now();
@@ -476,7 +485,21 @@ export async function probePersistence(
         signal,
       }),
     );
-    return { configured: true, reachable: res.ok, status: res.status, latencyMs: Date.now() - started };
+    // The probe already pays for the GET, so read the rev out of the same body: it is the only
+    // outside-observable proof that compare-and-set is landing rather than silently failing open.
+    let rev: number | undefined;
+    if (res.ok) {
+      try {
+        const body = (await res.json()) as { result?: unknown };
+        if (typeof body?.result === "string") {
+          const parsed: unknown = JSON.parse(body.result);
+          if (isRecord(parsed) && typeof parsed.rev === "number") rev = parsed.rev;
+        }
+      } catch {
+        // A corrupt or foreign payload is not a persistence fault — reachability is what we probed.
+      }
+    }
+    return { configured: true, reachable: res.ok, status: res.status, latencyMs: Date.now() - started, rev };
   } catch (err) {
     return {
       configured: true,

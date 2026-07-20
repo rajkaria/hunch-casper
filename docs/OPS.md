@@ -443,7 +443,12 @@ in-memory state. Every concurrency guard **fails open to a plain SET** — a KV 
 read outage, or exhausted CAS retries degrade to the old last-writer-wins write, never to a lost
 flush. **KV downtime degrades durability, never availability.**
 
-- Verify: `curl -s .../api/health | jq '.checks[] | select(.name=="persistence")'`
+- Verify: `curl -s .../api/health | jq '.checks[] | select(.name=="persistence")'` — the detail
+  carries the stored envelope's revision (`KV reachable in 41ms — envelope rev 128`). That number
+  is the only outside proof CAS is landing: it must climb by at least one per flush. **If ticks keep
+  landing while `rev` sits still, persistence has fallen open to last-writer-wins** — check whether
+  the KV provider still supports `EVAL`. `no rev yet` means an empty key or an envelope written
+  before merge-on-persist; it heals on the next flush.
 - Hydration marks the demo seed as done, so a hydrated instance never fabricates demo history on
   top of real history.
 - To wipe demo state, delete the `hunch:economy:v1` key; the next cold instance re-seeds.

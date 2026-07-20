@@ -127,6 +127,29 @@ describe("buildHealthReport — the failures that actually stop the economy", ()
   });
 });
 
+describe("buildHealthReport — persistence revision is observable", () => {
+  // The envelope's `rev` is the only outside proof that compare-and-set is live: it must climb on
+  // every flush. Without it in health, a silent fall-open to last-writer-wins looks identical to a
+  // healthy KV — which is exactly how the 42 → 5 truncation went unnoticed.
+  it("reports the stored envelope revision when KV returns one", () => {
+    const r = buildHealthReport({
+      ...healthyReal(),
+      persistence: { configured: true, reachable: true, status: 200, latencyMs: 12, rev: 43 },
+    });
+    expect(statusOf(r, "persistence")).toBe("ok");
+    expect(r.checks.find((c) => c.name === "persistence")?.detail).toContain("rev 43");
+  });
+
+  it("stays ok and says so when the envelope predates rev (or the key is empty)", () => {
+    const r = buildHealthReport({
+      ...healthyReal(),
+      persistence: { configured: true, reachable: true, status: 200, latencyMs: 12 },
+    });
+    expect(statusOf(r, "persistence")).toBe("ok");
+    expect(r.checks.find((c) => c.name === "persistence")?.detail).toContain("no rev yet");
+  });
+});
+
 describe("buildHealthReport — degraded-but-running warnings", () => {
   it("warns, not fails, when real-mode x402 has no treasury: bets fail closed, which is safe", () => {
     const r = buildHealthReport({ ...healthyReal(), x402: { payToConfigured: false, legacyOptIn: false } });
@@ -276,6 +299,26 @@ describe("probePersistence", () => {
     expect(res.configured).toBe(true);
     expect(res.reachable).toBe(false);
     expect(res.error).toContain("ECONNREFUSED");
+  });
+
+  it("surfaces the stored envelope's rev so CAS progress is observable from outside", async () => {
+    vi.stubEnv("KV_REST_API_URL", "https://kv.example.com");
+    vi.stubEnv("KV_REST_API_TOKEN", "t");
+    const stored = JSON.stringify({ v: 1, rev: 7, savedAt: "2026-07-20T00:00:00.000Z" });
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ result: stored }), { status: 200 }));
+    const res = await probePersistence(fetchImpl as unknown as typeof fetch);
+    expect(res).toMatchObject({ configured: true, reachable: true, rev: 7 });
+  });
+
+  it("leaves rev undefined for an empty, pre-rev, or unparseable envelope — never throws", async () => {
+    vi.stubEnv("KV_REST_API_URL", "https://kv.example.com");
+    vi.stubEnv("KV_REST_API_TOKEN", "t");
+    for (const result of [null, "{not json", JSON.stringify({ v: 1, savedAt: "x" }), "[]"]) {
+      const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ result }), { status: 200 }));
+      const res = await probePersistence(fetchImpl as unknown as typeof fetch);
+      expect(res.reachable).toBe(true);
+      expect(res.rev).toBeUndefined();
+    }
   });
 });
 

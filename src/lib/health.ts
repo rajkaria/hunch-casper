@@ -107,6 +107,7 @@ export async function gatherHealth(
       reachable: persistence.reachable,
       status: persistence.status,
       latencyMs: persistence.latencyMs,
+      rev: persistence.rev,
     },
     x402: {
       payToConfigured: isSet("CASPER_X402_PAYTO"),
