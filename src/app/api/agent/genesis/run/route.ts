@@ -10,6 +10,7 @@
 
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
+import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
 import { runGenesis } from "@/agent/genesis";
 import type { GenesisTrigger } from "@/agent/genesis";
 import { listCreatedMarkets } from "@/adapters/mock/market-source";
@@ -111,7 +112,12 @@ export async function POST(req: Request): Promise<Response> {
   };
 
   try {
+    // Create on top of the persisted economy and await the flush before responding — a genesis
+    // market can be a REAL on-chain create, and a serverless freeze after a fire-and-forget
+    // persist is how a market the chain has vanishes from the app (no-ops when KV is off).
+    await hydrateEconomyState();
     const market = await runGenesis(createContainer(network), trigger);
+    await persistEconomyState();
     return NextResponse.json({ created: market });
   } catch (err) {
     return NextResponse.json(

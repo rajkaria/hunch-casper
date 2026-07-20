@@ -161,6 +161,9 @@ fn main() {
             let package = args.get(2).expect("usage: market-info <parimutuel-market-package-hash>");
             market_info(&env, package);
         }
+        "vault-info" => {
+            vault_info(&env, args.get(2).map(String::as_str));
+        }
         "approve-oracle" => {
             let oracle = args
                 .get(2)
@@ -704,6 +707,23 @@ fn create_register_seed_v2(
     }
 
     println!("HUNCH_BALANCE after-{} {}", slug, env.balance_of(&caller));
+}
+
+/// Read-only probe of the singleton vault's creation policy — bond, open-creation flag, and
+/// (when an address is given) whether that account is an approved oracle. The free way to
+/// answer "will this `create_market` revert?" before paying for it.
+fn vault_info(env: &HostEnv, oracle: Option<&str>) {
+    let vault = load_vault(env);
+    println!("HUNCH_VAULT_INFO creation_bond={}", vault.creation_bond());
+    println!("HUNCH_VAULT_INFO open_creation={}", vault.open_creation());
+    if let Some(oracle) = oracle {
+        let addr = Address::from_str(oracle).expect("bad oracle address");
+        println!(
+            "HUNCH_VAULT_INFO oracle={} approved={}",
+            oracle,
+            vault.is_oracle_approved(addr)
+        );
+    }
 }
 
 /// Read-only probe of a deployed v1 `ParimutuelMarket` — the on-chain truth about what a

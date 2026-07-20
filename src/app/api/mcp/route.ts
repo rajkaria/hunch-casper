@@ -7,6 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { MCP_TOOLS, callTool } from "@/lib/mcp";
+import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
 
 const SERVER_INFO = { name: "hunch-casper", version: "0.1.0" };
 const PROTOCOL_VERSION = "2025-06-18";
@@ -55,10 +56,14 @@ export async function POST(req: Request): Promise<Response> {
     case "tools/call": {
       const name = typeof params?.name === "string" ? params.name : "";
       try {
+        // A bet mutates the economy: act on the persisted state, and await the flush before
+        // responding (serverless may freeze right after) — same discipline as the tick route.
+        if (name === "place_bet") await hydrateEconomyState();
         const res = await callTool(name, params?.arguments);
         if (!res.ok) {
           return result(id, { content: [{ type: "text", text: res.error }], isError: true });
         }
+        if (name === "place_bet") await persistEconomyState();
         return result(id, { content: [{ type: "text", text: JSON.stringify(res.data) }] });
       } catch (err) {
         // Never let an adapter throw escape as a raw 500 — keep the JSON-RPC envelope intact.

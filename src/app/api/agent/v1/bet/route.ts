@@ -10,6 +10,7 @@
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { agentBet } from "@/lib/agent-bet";
+import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
 import { isCasperNetwork } from "@/config/network";
 import type { X402PaymentProof } from "@/ports/payment";
 
@@ -36,6 +37,8 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ error: "network must be 'testnet' or 'mainnet'" }, { status: 400 });
   }
 
+  // Bet on top of the persisted economy, not a cold instance's seed (no-op when KV is off).
+  await hydrateEconomyState();
   const container = createContainer(network);
   const res = await agentBet(container, {
     marketId: String(marketId ?? ""),
@@ -72,7 +75,9 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  // Placed.
+  // Placed. Await the KV flush before responding — the escrow is already on chain, and a
+  // serverless freeze after a fire-and-forget persist would drop the bet from the app's mirror.
+  await persistEconomyState();
   const paymentResponse = Buffer.from(
     JSON.stringify({ success: true, deployHash: res.deployHash }),
   ).toString("base64");

@@ -14,6 +14,7 @@
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { createMarket } from "@/lib/market-create";
+import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
 import { isCasperNetwork } from "@/config/network";
 import type { X402PaymentProof } from "@/ports/payment";
 import type { ResolverComparator, ResolverKind, ResolverSource, MarketOutcome } from "@/core/types";
@@ -41,6 +42,9 @@ export async function POST(req: Request): Promise<Response> {
   if (!isCasperNetwork(network)) {
     return NextResponse.json({ error: "network must be 'testnet' or 'mainnet'" }, { status: 400 });
   }
+  // Compose on top of the persisted economy, not a cold instance's empty seed — the slug seq and
+  // the duplicate check both read the created-markets list (no-op when KV is unconfigured).
+  await hydrateEconomyState();
   const container = createContainer(network);
 
   const res = await createMarket(container, {
@@ -86,6 +90,11 @@ export async function POST(req: Request): Promise<Response> {
       { status: 402 },
     );
   }
+
+  // Await the KV flush before responding: a 201 names a REAL on-chain market (vault entry, bond
+  // spent), and a serverless instance may freeze the moment the response returns — a
+  // fire-and-forget persist here is how the app forgot a market the chain still has.
+  await persistEconomyState();
 
   const paymentResponse = Buffer.from(JSON.stringify({ success: true, slug: res.slug })).toString("base64");
   return NextResponse.json(

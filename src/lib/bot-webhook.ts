@@ -14,6 +14,7 @@
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { handleInbound } from "@/lib/bot-handler";
+import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
 import { createWebhookTransport } from "@/adapters/bots/webhook-transport";
 import type { BotPlatform } from "@/ports/bot-transport";
 import { DEFAULT_NETWORK, isCasperNetwork } from "@/config/network";
@@ -58,9 +59,14 @@ export async function handleBotWebhook(platform: BotPlatform, req: Request): Pro
 
   const netParam = new URL(req.url).searchParams.get("network");
   const network = isCasperNetwork(netParam) ? netParam : DEFAULT_NETWORK;
+  // Bet on top of the persisted economy, and await the flush before responding — a bot bet is
+  // the same money path as the REST rail, and a serverless freeze after a fire-and-forget
+  // persist would drop it from the app's mirror (no-ops when KV is unconfigured).
+  await hydrateEconomyState();
   const container = createContainer(network);
 
   const result = await handleInbound(inbound, { container, transport });
+  if (result.placed) await persistEconomyState();
   return NextResponse.json(
     { ok: true, placed: result.placed, replayed: result.replayed, deployHash: result.deployHash },
     { status: 200 },

@@ -15,6 +15,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
+import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
 import { isCasperNetwork } from "@/config/network";
 import { chainMode } from "@/config/chain-mode";
 
@@ -67,6 +68,9 @@ export async function POST(req: Request): Promise<Response> {
   // `accurate: false` lets a demo record a wrong call and watch the oracle's reputation drop.
   const accurate = (body?.accurate ?? true) !== false;
 
+  // Settle on top of the persisted economy (no-op when KV is unconfigured); the flush is
+  // awaited after the mutation below for the same serverless-freeze reason as the tick route.
+  await hydrateEconomyState();
   const container = createContainer(network);
   const slug = marketId.startsWith(`${network}:`) ? marketId.slice(network.length + 1) : marketId;
   const market = await container.store.get(slug, network);
@@ -99,6 +103,7 @@ export async function POST(req: Request): Promise<Response> {
     // Record the resolution against the oracle's reputation (the OracleRegistry mirror). Defaults to
     // accurate (the operator asserts truth); an explicit `accurate: false` demos a reputation hit.
     const reputation = await container.oracle.recordResolution(oracle, market.id, accurate);
+    await persistEconomyState();
     return NextResponse.json({
       deployHash: res.deployHash,
       explorerUrl: res.explorerUrl,
