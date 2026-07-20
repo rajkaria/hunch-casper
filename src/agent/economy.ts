@@ -148,8 +148,18 @@ export async function runEconomyTick(
   //    bonds. Withholding it to save gas would strand user money to protect the operator's.
   const arbiterActions = await runArbiterSweep(container);
   for (const slug of input.resolveSlugs ?? []) {
-    const action = await resolveMarket(container, slug);
-    if (action) arbiterActions.push(action);
+    // Same per-market isolation as the sweep: an explicit close that reverts must not abort the
+    // tick that carries every other market's bets and settlements. Nothing is stored for the
+    // failed slug, so the operator's next request (or the next sweep) retries it.
+    try {
+      const action = await resolveMarket(container, slug);
+      if (action) arbiterActions.push(action);
+    } catch (err) {
+      console.error(
+        `[economy] explicit resolve of '${slug}' failed — skipped this tick:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 
   // 3. Snapshot the boards those actions just changed.

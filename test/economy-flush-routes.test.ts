@@ -120,3 +120,25 @@ describe("economy flush discipline on mutating routes", () => {
     expect(hydrate.mock.invocationCallOrder[0]).toBeLessThan(persist.mock.invocationCallOrder[0]);
   });
 });
+
+describe("tick resilience around explicit resolves", () => {
+  it("an explicit resolve that reverts is logged and skipped, not fatal to the tick", async () => {
+    const { runEconomyTick } = await import("@/agent/economy");
+    const { createContainer } = await import("@/lib/container");
+    const base = createContainer("testnet");
+    const container = {
+      ...base,
+      chain: {
+        ...base.chain,
+        resolveMarket: vi.fn().mockRejectedValue(new Error("transaction reverted: User error: 1")),
+      },
+    };
+    const report = await runEconomyTick(container, {
+      seq: 0,
+      resolveSlugs: ["cspr-price-05-aug"],
+    });
+    // The tick completed: bets and the leaderboard snapshot survived the failed close.
+    expect(report.seq).toBe(0);
+    expect(report.arbiterActions.every((a) => a.marketId !== "testnet:cspr-price-05-aug")).toBe(true);
+  });
+});

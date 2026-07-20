@@ -38,7 +38,15 @@ function authorized(req: Request): boolean {
 }
 
 async function tick(network: CasperNetwork, seq: number, resolveSlugs?: string[]): Promise<Response> {
-  const report = await runEconomyTick(createContainer(network), { seq, resolveSlugs });
+  let report;
+  try {
+    report = await runEconomyTick(createContainer(network), { seq, resolveSlugs });
+  } catch (err) {
+    // A tick that dies mid-flight has usually already MOVED MONEY (bets escrowed, resolutions
+    // posted). Flush whatever mutated before rethrowing, or the mirror loses real transactions.
+    await persistEconomyState();
+    throw err;
+  }
   // Await the KV flush: a serverless instance may freeze the moment the response returns, and the
   // cron tick is the economy's heartbeat — its bets + resolutions must land before the freeze.
   await persistEconomyState();
