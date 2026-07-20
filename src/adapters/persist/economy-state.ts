@@ -252,6 +252,25 @@ export function hydrateEconomyState(fetchImpl?: typeof fetch): Promise<void> {
 }
 
 /**
+ * Force a FRESH hydrate, discarding the once-per-instance guard. For writers whose output
+ * clobbers the whole envelope — today that is the tick, the economy's biggest writer.
+ *
+ * Why: `hydrateEconomyState` runs once per instance, and `persistEconomyState` writes the whole
+ * envelope last-writer-wins. A warm instance that hydrated long ago therefore persists its STALE
+ * view over every write other instances made since — observed live 2026-07-20, when a tick reset
+ * the round counter from 42 to 5 and truncated the activity history. Re-hydrating at tick start
+ * shrinks that clobber window from "instance age" to "one tick". Safe because every mutating
+ * route now awaits its own flush, so instance memory holds nothing unpersisted worth keeping.
+ * (The remaining race — two concurrent writers interleaving inside one tick's duration — needs
+ * merge-on-persist, not a bigger hammer here.)
+ */
+export function rehydrateEconomyState(fetchImpl?: typeof fetch): Promise<void> {
+  if (hydrating) return hydrating; // a fetch is in flight — its result is already fresh
+  hydrated = false;
+  return hydrateEconomyState(fetchImpl);
+}
+
+/**
  * Liveness probe for the operator health surface: is the configured KV endpoint actually
  * reachable and authorized *right now*? Distinct from `persistenceConfigured()` (which only
  * reads env) because the classic ops failure is a token that was rotated in the KV dashboard

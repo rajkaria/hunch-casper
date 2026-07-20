@@ -14,6 +14,7 @@ import {
   hydrateEconomyState,
   persistEconomyState,
   persistenceConfigured,
+  rehydrateEconomyState,
   serializeEconomyState,
   __resetPersistenceForTests,
 } from "@/adapters/persist/economy-state";
@@ -300,5 +301,28 @@ describe("configured KV (injected fetch)", () => {
 
     await expect(persistEconomyState(fetchImpl as unknown as typeof fetch)).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalled();
+  });
+});
+
+describe("rehydrateEconomyState — the tick's fresh-view guard", () => {
+  it("re-reads KV even after a prior hydrate marked the instance done", async () => {
+    seedEconomy();
+    const full = serializeEconomyState();
+    const actionsBefore = listActions();
+    resetAllState();
+    vi.stubEnv("KV_REST_API_URL", "https://kv.example.test");
+    vi.stubEnv("KV_REST_API_TOKEN", "kv-token");
+
+    // First hydrate sees an EMPTY key and marks the instance hydrated.
+    const empty = vi.fn(async () => new Response(JSON.stringify({ result: null }), { status: 200 }));
+    await hydrateEconomyState(empty as unknown as typeof fetch);
+    expect(listActions()).toEqual([]);
+
+    // Another instance persisted the real history since; the once-per-instance hydrate would
+    // never see it — the tick's forced re-hydrate must.
+    const fresh = vi.fn(async () => new Response(JSON.stringify({ result: full }), { status: 200 }));
+    await rehydrateEconomyState(fresh as unknown as typeof fetch);
+    expect(fresh).toHaveBeenCalledTimes(1);
+    expect(listActions()).toEqual(actionsBefore);
   });
 });
