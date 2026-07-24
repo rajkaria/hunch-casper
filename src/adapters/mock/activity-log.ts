@@ -34,6 +34,11 @@ export interface AgentAction {
   recipeHash?: string;
   /** S24: the content hash of the published evidence bundle for this resolution. */
   evidenceBundleHash?: string;
+  /**
+   * S24: the on-chain transaction that anchored those hashes. Its presence is what separates
+   * "we published a recipe" from "the recipe is on chain and anyone can check it".
+   */
+  anchorDeployHash?: string;
   /** Epoch ms the action was recorded — the feed renders it as relative time ("2m ago"). */
   ts: number;
 }

@@ -1,4 +1,6 @@
 export type {
+  AnchorResolutionInput,
+  AnchorResult,
   CasperChainPort,
   CreateMarketInput,
   DeployResult,

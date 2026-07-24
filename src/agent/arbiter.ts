@@ -150,6 +150,12 @@ export async function resolveMarket(container: Container, slug: string): Promise
     })
   ).trim();
 
+  // Anchor the recipe + evidence hashes on chain (S24), so this resolution is replayable from the
+  // chain alone rather than from this server's word for it. Deliberately last, and deliberately
+  // unable to fail the resolution: winners have already been paid, and withholding a settled
+  // payout because a metadata write reverted would strand user money to protect a hash.
+  const anchor = evidence ? await anchorResolution(container, market.id, evidence) : null;
+
   return appendAction({
     agent: "Arbiter",
     kind: "market_resolved",
@@ -162,7 +168,34 @@ export async function resolveMarket(container: Container, slug: string): Promise
     simulated: chainMode() !== "real",
     recipeHash: evidence?.recipeHash,
     evidenceBundleHash: evidence?.bundleHash,
+    anchorDeployHash: anchor?.recipeDeployHash ?? anchor?.bundleDeployHash,
   });
+}
+
+/**
+ * Anchor a resolution's hashes on chain. Total by construction — every failure returns `null`
+ * rather than throwing, because this runs after the money has already moved.
+ */
+async function anchorResolution(
+  container: Container,
+  marketId: string,
+  evidence: { recipeHash: string; bundleHash: string },
+): Promise<{ recipeDeployHash?: string; bundleDeployHash?: string } | null> {
+  if (chainMode() !== "real") return null;
+  try {
+    const result = await container.chain.anchorResolution({
+      marketId,
+      recipeHash: evidence.recipeHash,
+      bundleHash: evidence.bundleHash,
+    });
+    if (result.skipped) {
+      console.warn("[arbiter] resolution not anchored:", JSON.stringify({ marketId, why: result.skipped }));
+    }
+    return result;
+  } catch (err) {
+    console.warn("[arbiter] anchoring threw — the resolution still paid out:", JSON.stringify({ marketId }), err);
+    return null;
+  }
 }
 
 /**

@@ -9,6 +9,8 @@ import type { CasperNetwork } from "@/config/network";
 import { DEFAULT_NETWORK, explorerTransactionUrl, getNetworkConfig } from "@/config/network";
 import { chainMode } from "@/config/chain-mode";
 import type {
+  AnchorResolutionInput,
+  AnchorResult,
   CasperChainPort,
   CreateMarketInput,
   DeployResult,
@@ -91,6 +93,9 @@ function createLazyRealChain(
     },
     async resolveMarket(input: ResolveMarketInput): Promise<DeployResult> {
       return (await load()).resolveMarket(input);
+    },
+    async anchorResolution(input: AnchorResolutionInput): Promise<AnchorResult> {
+      return (await load()).anchorResolution(input);
     },
     explorerUrlForDeploy(deployHash: string): string {
       return explorerTransactionUrl(network, deployHash);

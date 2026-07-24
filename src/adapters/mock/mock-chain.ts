@@ -7,6 +7,8 @@
 import type { CasperNetwork } from "@/config/network";
 import { explorerTransactionUrl } from "@/config/network";
 import type {
+  AnchorResolutionInput,
+  AnchorResult,
   CasperChainPort,
   CreateMarketInput,
   DeployResult,
@@ -55,6 +57,12 @@ export function createMockChain(network: CasperNetwork): CasperChainPort {
         `resolve:${network}:${input.marketId}:${input.winningOutcomeKey}:${input.oracleId}`,
       );
       return { deployHash: hash, explorerUrl: explorerTransactionUrl(network, hash) };
+    },
+    async anchorResolution(input: AnchorResolutionInput): Promise<AnchorResult> {
+      return {
+        recipeDeployHash: pseudoDeployHash(`anchor-recipe:${network}:${input.marketId}:${input.recipeHash}`),
+        bundleDeployHash: pseudoDeployHash(`anchor-bundle:${network}:${input.marketId}:${input.bundleHash}`),
+      };
     },
     explorerUrlForDeploy(deployHash: string) {
       return explorerTransactionUrl(network, deployHash);
