@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { OnchainProofSection } from "@/components/onchain-proof-section";
+import { LiveNumbers } from "@/components/live-numbers";
 
 const AGENTS = [
   {
@@ -60,7 +61,7 @@ const CATEGORIES = [
     key: "casper-native",
     label: "Casper-native",
     count: 10,
-    body: "CSPR price and market cap, hourly up/down, daily deploys, active validators, staking APY, total staked — plus public-good feeds on the Condor upgrade, validator-set health, and grant milestones.",
+    body: "CSPR price and market cap, a recurring daily up/down round, daily deploys, active validators, staking APY, total staked — plus public-good feeds on the Condor upgrade, validator-set health, and grant milestones.",
     example: "CSPR above $0.05 by Aug 1?",
     accent: "text-accent",
   },
@@ -398,6 +399,8 @@ export default function Home() {
       </section>
 
       {/* On-chain proof — real contract packages + tx receipts (hidden until env wires them) */}
+      <LiveNumbers />
+
       <OnchainProofSection />
 
       {/* CTA */}

@@ -9,6 +9,8 @@ import type { CasperNetwork } from "@/config/network";
 import { DEFAULT_NETWORK, explorerTransactionUrl, getNetworkConfig } from "@/config/network";
 import { chainMode } from "@/config/chain-mode";
 import type {
+  AnchorResolutionInput,
+  AnchorResult,
   CasperChainPort,
   CreateMarketInput,
   DeployResult,
@@ -20,12 +22,14 @@ import type {
   ResolveMarketInput,
 } from "@/ports";
 import type { AgentAccount, TransferInput, TransferResult, WalletPort } from "@/ports/wallet";
+import type { ClockPort } from "@/ports/clock";
 import type { EventsPort } from "@/ports/events";
+import { createSystemClock } from "@/adapters/system-clock";
 import type { EvidenceStorePort } from "@/ports/evidence-store";
 import { createMockEvidenceStore } from "@/adapters/mock/mock-evidence-store";
 import { createMockChain } from "@/adapters/mock/mock-chain";
 import { createMockEvents } from "@/adapters/mock/mock-events";
-import { createStreamEvents } from "@/adapters/casper/stream-events";
+import { createDeployEvents } from "@/adapters/casper/deploy-events";
 import { createMockWallet } from "@/adapters/mock/mock-wallet";
 import { createMockPayment } from "@/adapters/mock/mock-payment";
 import { fleetConfigured } from "@/adapters/casper/fleet-keys";
@@ -49,6 +53,8 @@ export interface Container {
   oracle: OraclePort;
   llm: LlmClient;
   store: MarketStorePort;
+  /** The only source of "now" for schedule-dependent logic (recurring rounds, maturity). */
+  clock: ClockPort;
 }
 
 /**
@@ -87,6 +93,9 @@ function createLazyRealChain(
     },
     async resolveMarket(input: ResolveMarketInput): Promise<DeployResult> {
       return (await load()).resolveMarket(input);
+    },
+    async anchorResolution(input: AnchorResolutionInput): Promise<AnchorResult> {
+      return (await load()).anchorResolution(input);
     },
     explorerUrlForDeploy(deployHash: string): string {
       return explorerTransactionUrl(network, deployHash);
@@ -139,13 +148,23 @@ export function createContainer(network: CasperNetwork = DEFAULT_NETWORK): Conta
     chainMode() === "real" && x402PayTo
       ? createRealPayment(network, x402PayTo)
       : createMockPayment(network, vaultAddress);
-  // Events go real only when real mode also knows which contract to follow. Without a v2 vault
-  // there is no single contract whose events describe the economy, so the deterministic fixture
-  // stream stays — an empty real stream would look identical to a working one.
+  // Events go real when real mode knows ANY contract to follow — and it follows ALL of them.
+  //
+  // This was scoped to `contracts.vaultV2` alone, but bets route to the per-market v1 packages
+  // FIRST (`deploy-plan.ts` prefers the address map), so every v1 bet was structurally invisible
+  // and the boards returned `eventCount: 0` in production. The source changed too: CSPR.cloud
+  // serves no contract-events endpoint at all (probed live — `/contracts/<h>/events`,
+  // `/contract-events` and `/events` all 404), so the fold reads the packages' deploy history,
+  // which does exist and carries every argument the boards need.
+  const routableContracts = [
+    ...Object.values(cfg.marketAddresses ?? {}),
+    cfg.contracts.vaultV2,
+    cfg.contracts.vault,
+  ].filter((h): h is string => typeof h === "string" && h.length > 0);
   const events =
-    chainMode() === "real" && cfg.contracts.vaultV2
-      ? createStreamEvents(network, {
-          contractHash: cfg.contracts.vaultV2,
+    chainMode() === "real" && routableContracts.length > 0
+      ? createDeployEvents(network, {
+          contractHashes: routableContracts,
           apiKey: process.env.CSPR_CLOUD_API_KEY,
         })
       : createMockEvents(network);
@@ -166,5 +185,6 @@ export function createContainer(network: CasperNetwork = DEFAULT_NETWORK): Conta
     oracle: createMockOracle(),
     llm: createMockLlm(),
     store: createMockMarketStore(),
+    clock: createSystemClock(),
   };
 }

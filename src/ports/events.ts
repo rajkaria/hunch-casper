@@ -8,7 +8,8 @@
  * meta-markets settle against those boards, so "take our word for it" is not good enough.
  *
  * Implementations: `adapters/mock/mock-events.ts` (a deterministic fixture stream) and
- * `adapters/casper/stream-events.ts` (CSPR.cloud SSE with a polling fallback). Same interface.
+ * `adapters/casper/deploy-events.ts` (CSPR.cloud deploy history, multiplexed across every
+ * routable contract package). Same interface.
  */
 
 import type { CasperNetwork } from "../config/network";

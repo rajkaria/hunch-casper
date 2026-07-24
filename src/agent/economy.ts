@@ -16,6 +16,7 @@ import { runProphetFleet, prophetsPerTick, prophetTurnCostMotes } from "@/agent/
 import { bettingHalted, breakerSnapshot, type BreakerSnapshot } from "@/agent/bet-breaker";
 import { isQuarantined, quarantinedMarkets, type QuarantinedMarket } from "@/agent/market-quarantine";
 import { runArbiterSweep, resolveMarket } from "@/agent/arbiter";
+import { rollMaturedRounds } from "@/agent/round-rollover";
 import { planCadence, type CadencePlan } from "@/core/cadence";
 import { OPERATOR_AGENT_ID } from "@/adapters/casper/fleet-keys";
 import { PROPHETS } from "@/core/prophet-strategies";
@@ -28,6 +29,11 @@ export interface EconomyTickReport {
   prophetActions: AgentAction[];
   /** Markets the Arbiter resolved this tick (matured sweep + any explicit closes). */
   arbiterActions: AgentAction[];
+  /**
+   * Rounds opened this tick — the step that makes a recurring market recur. Empty simply means
+   * every recurring market already has its current round; it is not a fault.
+   */
+  rolloverActions: AgentAction[];
   /** The agent PnL leaderboard after this tick. */
   leaderboard: AgentPnl[];
   /** The oracle-accuracy leaderboard after this tick. */
@@ -162,7 +168,13 @@ export async function runEconomyTick(
     }
   }
 
-  // 3. Snapshot the boards those actions just changed.
+  // 3. Roll every recurring market whose round just settled into a fresh one. Like resolution,
+  //    rollover is deliberately NOT throttled: a settled market with no successor is a dead
+  //    surface, and a catalogue that only shrinks is how the loop stopped closing in the first
+  //    place. It is idempotent, so a tick that changes nothing costs nothing.
+  const rolloverActions = await rollMaturedRounds(container);
+
+  // 4. Snapshot the boards those actions just changed.
   const leaderboard = computeAgentLeaderboard(await container.store.settledEntries(container.network));
   const oracleBoard = await container.oracle.leaderboard();
 
@@ -170,6 +182,7 @@ export async function runEconomyTick(
     seq: input.seq,
     prophetActions,
     arbiterActions,
+    rolloverActions,
     leaderboard,
     oracleBoard,
     cadence,

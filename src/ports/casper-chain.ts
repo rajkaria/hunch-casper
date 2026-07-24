@@ -63,5 +63,32 @@ export interface CasperChainPort {
   resolveMarket(input: ResolveMarketInput): Promise<DeployResult>;
   /** Open a market inside the v2 vault. Rejects when no v2 vault is configured. */
   createMarket(input: CreateMarketInput): Promise<DeployResult>;
+  /**
+   * Anchor a settled resolution's recipe + evidence hashes on chain (S24), so the call is
+   * replayable from the chain alone rather than from this server's word.
+   *
+   * Returns the anchors it managed to write. It NEVER throws: anchoring is an audit improvement,
+   * and a market whose payout was withheld because a metadata write failed would strand user
+   * money to protect a hash. Requires a v2 vault target — a per-market v1 package has no such
+   * entrypoint — so it reports `skipped` there instead of pretending.
+   */
+  anchorResolution(input: AnchorResolutionInput): Promise<AnchorResult>;
   explorerUrlForDeploy(deployHash: string): string;
+}
+
+export interface AnchorResolutionInput {
+  marketId: string;
+  /** Hash of the deterministic resolution recipe the Arbiter ran under. */
+  recipeHash: string;
+  /** Content hash of the published evidence bundle. */
+  bundleHash: string;
+}
+
+export interface AnchorResult {
+  /** Deploy hash of the `commit_recipe` call, when it landed. */
+  recipeDeployHash?: string;
+  /** Deploy hash of the `commit_bundle` call, when it landed. */
+  bundleDeployHash?: string;
+  /** Why nothing was anchored — absent when at least one anchor landed. */
+  skipped?: string;
 }

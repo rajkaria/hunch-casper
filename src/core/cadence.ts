@@ -22,6 +22,9 @@
  * needs a chain to be verified.
  */
 
+import type { MarketCadence } from "@/core/types";
+import { cadenceIntervalMs } from "@/core/round-schedule";
+
 export type EconomyCadence = "full" | "reduced" | "minimal" | "paused";
 
 export interface CadenceInput {
@@ -104,4 +107,45 @@ export function planCadence(input: CadenceInput): CadencePlan {
     allowHouseSeeding,
     reason,
   };
+}
+
+// ── Recurring-round economics ────────────────────────────────────────────────────────────────
+//
+// Recurring rounds spend real CSPR on a schedule, so the cadence a market advertises is not a
+// taste decision — it is whatever the treasury can sustain. These are the numbers that decide it.
+
+const DAY_MS = 86_400_000;
+/**
+ * Measured on testnet, not estimated: a typical `create_market` costs 3.74 CSPR net (the first
+ * call on a fresh vault costs 4.958 — a dictionary-init spike, not the steady state). The earlier
+ * "< 1 CSPR" claim was falsified on chain; do not re-estimate this from the gas limit.
+ */
+const CREATE_COST_MOTES = 3_740_000_000n;
+
+/** How many rounds of a cadence open in a day. Weekly and one-shot do not roll daily. */
+export function roundsPerDay(cadence: MarketCadence): number {
+  const interval = cadenceIntervalMs(cadence);
+  // `> DAY_MS`, not `>=`: a daily cadence is exactly one round a day, not zero.
+  if (interval === null || interval > DAY_MS) return 0;
+  return Math.floor(DAY_MS / interval);
+}
+
+/** What a day of rollover costs the treasury across the given markets' cadences. */
+export function dailyRolloverCostMotes(cadences: MarketCadence[]): string {
+  let total = 0n;
+  for (const c of cadences) total += BigInt(roundsPerDay(c)) * CREATE_COST_MOTES;
+  return total.toString();
+}
+
+/**
+ * Whole days of rollover the treasury can fund.
+ *
+ * Floored on purpose: a runway figure that rounds up tells an operator they have another day when
+ * they do not, and an economy that runs out mid-round burns gas on reverts — it drains FASTER when
+ * it is nearly broke than when it is healthy.
+ */
+export function runwayDays(treasuryMotes: string, dailyCostMotes: string): number {
+  const daily = BigInt(dailyCostMotes);
+  if (daily === 0n) return Number.POSITIVE_INFINITY;
+  return Number(BigInt(treasuryMotes) / daily);
 }

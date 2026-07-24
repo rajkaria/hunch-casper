@@ -15,6 +15,8 @@ import { findDefinition } from "@/adapters/mock/market-source";
 import { computeMarketPayouts } from "@/core/market-payout";
 import type { Market, MarketStatus } from "@/core/types";
 import type { RecordBetInput, SettledEntry, SettlementRecord } from "@/ports/market-store";
+import type { ClockPort } from "@/ports/clock";
+import { createSystemClock } from "@/adapters/system-clock";
 import { isCasperNetwork } from "@/config/network";
 
 export interface LedgerEntry {
@@ -51,10 +53,22 @@ function parseMarketId(marketId: string): { network: "testnet" | "mainnet"; slug
   return { network, slug };
 }
 
-/** Effective status: an open market past its deadline is `locked` (bets closed), matching the
- * on-chain vault which reverts a `bet` once `block_time >= deadline`. Derived, not stored. */
+/**
+ * The ledger's clock. Overridable so maturity is testable without sleeping or mocking globals —
+ * a recurring round matures on a schedule, and a test that had to wait for the wall clock would
+ * either be slow or flaky.
+ */
+let ledgerClock: ClockPort = createSystemClock();
+
+/** Swap the ledger's clock (tests, and the composition root in future phases). */
+export function setLedgerClock(clock: ClockPort): void {
+  ledgerClock = clock;
+}
+
+/** Effective status: an open market at or past its deadline is `locked` (bets closed), matching
+ * the on-chain vault which reverts a `bet` once `block_time >= deadline`. Derived, not stored. */
 function effectiveStatus(m: Market): MarketStatus {
-  if (m.status === "open" && Date.now() >= Date.parse(m.deadlineIso)) return "locked";
+  if (m.status === "open" && ledgerClock.now() >= Date.parse(m.deadlineIso)) return "locked";
   return m.status;
 }
 

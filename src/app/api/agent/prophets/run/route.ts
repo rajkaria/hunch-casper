@@ -9,7 +9,7 @@
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { runProphetFleet } from "@/agent/prophet";
-import { listActions } from "@/adapters/mock/activity-log";
+import { nextRoundSeq } from "@/adapters/mock/activity-log";
 import { isCasperNetwork } from "@/config/network";
 import { chainMode } from "@/config/chain-mode";
 
@@ -33,7 +33,7 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const network = isCasperNetwork(body.network) ? body.network : "testnet";
-  const seq = typeof body.seq === "number" ? body.seq : listActions().length;
+  const seq = typeof body.seq === "number" ? body.seq : nextRoundSeq();
 
   const actions = await runProphetFleet(createContainer(network), seq);
   return NextResponse.json({ round: seq, placed: actions.length, actions });

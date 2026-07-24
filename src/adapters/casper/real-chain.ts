@@ -41,6 +41,8 @@ import {
   type Transaction,
 } from "casper-js-sdk";
 import type {
+  AnchorResolutionInput,
+  AnchorResult,
   CasperChainPort,
   CreateMarketInput,
   DeployResult,
@@ -51,6 +53,8 @@ import type { CasperNetwork } from "@/config/network";
 import { explorerTransactionUrl, getNetworkConfig } from "@/config/network";
 import {
   buildBetPlan,
+  buildCommitBundlePlan,
+  buildCommitRecipePlan,
   buildCreateMarketPlan,
   buildResolvePlan,
   resolveMarketTarget,
@@ -347,6 +351,57 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
         .payment(Number(plan.gasMotes))
         .build();
       return submit(tx, key);
+    },
+
+    /**
+     * Anchor the resolution's recipe + evidence hashes (S24).
+     *
+     * Deliberately total: every failure path returns rather than throws. The caller has already
+     * paid winners at this point, and letting a metadata write abort that would be exactly
+     * backwards — the same reasoning that keeps resolution itself outside the cadence throttle.
+     */
+    async anchorResolution(input: AnchorResolutionInput): Promise<AnchorResult> {
+      const target = targetFor(input.marketId);
+      // `commit_recipe`/`commit_bundle` exist only on the v2 vault; a per-market v1 package has no
+      // such entrypoint, so calling it there would burn gas on a guaranteed revert.
+      if (!target.vaultMarketId) {
+        return { skipped: "market routes to a v1 package, which has no commit entrypoints" };
+      }
+      const key = loadKey(opts.oracleKey ?? opts.bettorKey);
+      const planOpts = { marketContract: target.contract, vaultMarketId: target.vaultMarketId };
+
+      const send = async (plan: CasperCallPlan): Promise<string | undefined> => {
+        try {
+          const tx = new ContractCallBuilder()
+            .from(key.publicKey)
+            .byPackageHash(toHexHash(plan.targetContract))
+            .entryPoint(plan.entryPoint)
+            .runtimeArgs(entryPointArgs(plan))
+            .chainName(cfg.chainName)
+            .payment(Number(plan.gasMotes))
+            .build();
+          return (await submit(tx, key)).deployHash;
+        } catch (err) {
+          console.warn(
+            "[anchor] %s did not land — the resolution still paid out:",
+            plan.entryPoint,
+            JSON.stringify({ marketId: input.marketId }),
+            err,
+          );
+          return undefined;
+        }
+      };
+
+      const recipeDeployHash = input.recipeHash
+        ? await send(buildCommitRecipePlan(input.marketId, input.recipeHash, planOpts))
+        : undefined;
+      const bundleDeployHash = input.bundleHash
+        ? await send(buildCommitBundlePlan(input.marketId, input.bundleHash, planOpts))
+        : undefined;
+
+      return recipeDeployHash || bundleDeployHash
+        ? { recipeDeployHash, bundleDeployHash }
+        : { recipeDeployHash, bundleDeployHash, skipped: "no anchor landed" };
     },
 
     explorerUrlForDeploy(deployHash: string): string {

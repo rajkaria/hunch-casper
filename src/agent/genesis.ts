@@ -107,7 +107,7 @@ export function definitionFromTrigger(trigger: GenesisTrigger, framing: string):
 /** The creation bond Genesis attaches, in motes. Held by the vault, refunded at settlement. */
 export const DEFAULT_CREATION_BOND_MOTES = "1000000000";
 
-function creationBondMotes(): string {
+export function creationBondMotes(): string {
   const raw = process.env.CASPER_CREATION_BOND_MOTES;
   return raw && /^\d+$/.test(raw) && BigInt(raw) > 0n ? raw : DEFAULT_CREATION_BOND_MOTES;
 }
@@ -118,7 +118,7 @@ function creationBondMotes(): string {
  * the vault's central guardrail is that a creator may never name themselves: an unconstrained
  * creator would take the other side's stake and self-resolve.
  */
-function oracleAccount(): string | null {
+export function oracleAccount(): string | null {
   const raw = process.env.CASPER_ORACLE_ACCOUNT;
   return raw && raw.trim().length > 0 ? raw.trim() : null;
 }
