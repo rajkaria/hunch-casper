@@ -25,6 +25,7 @@
 import type { MarketCadence, MarketCategory, ResolverBinding } from "@/core/types";
 import type { MarketDefinition } from "@/core/catalogue";
 import { MARKET_DEFINITIONS } from "@/core/catalogue";
+import { currentRound } from "@/core/round-schedule";
 
 const BPS_DENOMINATOR = 10_000;
 
@@ -72,6 +73,19 @@ function deadlineToMs(slug: string, iso: string): number {
     throw new Error(`market "${slug}": deadlineIso is not a valid ISO date: ${JSON.stringify(iso)}`);
   }
   return ms;
+}
+
+/**
+ * The deadline a definition is actually trading against right now.
+ *
+ * A recurring market's `deadlineIso` is only its FIRST round's boundary — every later round is
+ * derived from the cadence. Reading the literal for a recurring market is what left
+ * `cspr-hourly-updown` ("recurring hourly round") pinned to a single deadline eight days out, so
+ * it never matured, never resolved, and never paid anyone.
+ */
+export function effectiveDeadlineMs(def: MarketDefinition, nowMs: number): number {
+  const round = currentRound(def.cadence, nowMs);
+  return round ? round.deadlineMs : deadlineToMs(def.slug, def.deadlineIso);
 }
 
 function assertValid(def: MarketDefinition, deadlineMs: number): void {

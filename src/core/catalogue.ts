@@ -10,7 +10,11 @@
  * Adding a market is one const, and that scalability is itself a judge-facing story.
  *
  * Deadlines and pools are fixed literals on purpose — deterministic data keeps tests stable
- * (no wall-clock drift) and the demo reproducible.
+ * (no wall-clock drift) and the demo reproducible. For a RECURRING market (`cadence !== "one-shot"`)
+ * the literal is only the FIRST round's boundary: every later round is derived from the cadence by
+ * `effectiveDeadlineMs`, against an injected clock. Reading `deadlineIso` directly for a recurring
+ * market is the bug that kept "CSPR up or down this hour?" open for eight days — it never matured,
+ * so the Arbiter never resolved it, so the boards, the league and every meta-market stayed empty.
  */
 
 import type { CasperNetwork } from "@/config/network";
