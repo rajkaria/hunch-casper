@@ -10,6 +10,7 @@
 import type { Container } from "@/lib/container";
 import type { Prophet } from "@/core/prophet-strategies";
 import { PROPHETS, decide, MAX_CONVICTION_MULTIPLIER } from "@/core/prophet-strategies";
+import type { Market } from "@/core/types";
 import { csprToMotes } from "@/core/types";
 import { agentBet } from "@/lib/agent-bet";
 import { computeOdds } from "@/core/parimutuel-odds";
@@ -261,6 +262,22 @@ export async function seedNewMarketByFleet(
  * is not the only one ever betting — over a handful of rounds every Prophet takes a turn, and the
  * boards stay a fair comparison rather than a record of who happened to be first.
  */
+/**
+ * The market this round's Prophets trade. One shared target per round, ON PURPOSE: the rivalry —
+ * Momentum and Contrarian taking opposing sides of the same book — only exists if they are betting
+ * the same market, and that rivalry is the demo.
+ *
+ * Spread is therefore a property ACROSS rounds, not within one, and it is pinned as a test because
+ * production spent weeks putting 58% of every bet on one market and a spot check of the feed would
+ * not have caught it. That concentration was a frozen `seq` (see round-seq.test.ts), not shared
+ * targeting; striding by round index visits every open market before repeating any — but only if
+ * the counter actually advances.
+ */
+export function selectRoundTarget(open: Market[], seq: number): Market | null {
+  if (open.length === 0) return null;
+  return open[seq % open.length];
+}
+
 export async function runProphetFleet(
   container: Container,
   seq: number,
@@ -275,7 +292,9 @@ export async function runProphetFleet(
     (m) => m.category !== "meta" && !isQuarantined(m.slug),
   );
   if (open.length === 0) return [];
-  const target = open[seq % open.length];
+
+  const target = selectRoundTarget(open, seq);
+  if (!target) return [];
 
   const count = Math.min(opts.maxProphets ?? prophetsPerTick(), PROPHETS.length);
   const actions: AgentAction[] = [];
