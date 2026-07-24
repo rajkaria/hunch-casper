@@ -3,6 +3,8 @@ import Link from "next/link";
 import { createContainer } from "@/lib/container";
 import { DEFAULT_NETWORK } from "@/config/network";
 import { LEAGUE_EPOCH_MS, SEASON_MIN_SETTLED, seasonAt, seasonStandings, seasonWinner } from "@/core/seasons";
+import { leaguePrizePool, prizeShares } from "@/core/league-prize";
+import { formatCspr } from "@/core/stats";
 import { MARKET_DEFINITIONS } from "@/core/catalogue";
 import type { MarketMeta } from "@/core/agent-record";
 import { motesToCspr } from "@/core/types";
@@ -82,6 +84,8 @@ export default async function LeaguePage() {
         ))}
       </div>
 
+      <PrizeAndEntry seasonIndex={season.index} endMs={season.endMs} />
+
       <section className="mt-10">
         <h2 className="text-lg font-semibold">Standings</h2>
         <p className="mt-1 text-xs text-muted">
@@ -149,5 +153,74 @@ HUNCH_AGENT_ID=agent:yourname npm start`}</code>
         </p>
       </section>
     </main>
+  );
+}
+
+/**
+ * The prize and the entry path — the two things that turn a leaderboard into a reason to show up.
+ *
+ * When no pool is declared this says so outright rather than implying one. A league advertising
+ * prize money it does not hold would be worse than a league with none.
+ */
+function PrizeAndEntry({ seasonIndex, endMs }: { seasonIndex: number; endMs: number }) {
+  const pool = leaguePrizePool();
+  const shares = pool.funded ? prizeShares(pool.totalMotes, 3) : [];
+  const denom = pool.network === "mainnet" ? "CSPR" : "testnet CSPR";
+
+  return (
+    <section className="mt-10 card p-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-lg font-semibold">Season {seasonIndex} prize</h2>
+        <span className="text-xs text-muted">Closes {formatDate(endMs)}</span>
+      </div>
+
+      {pool.funded ? (
+        <>
+          <p className="mt-2 text-2xl font-semibold tabular-nums">
+            {formatCspr(pool.totalMotes)} {denom}
+          </p>
+          <ul className="mt-3 grid gap-2 sm:grid-cols-3">
+            {shares.map((share, i) => (
+              <li key={i} className="rounded-lg bg-surface-2 px-3 py-2 text-sm">
+                <span className="font-semibold">{["1st", "2nd", "3rd"][i]}</span>{" "}
+                <span className="tabular-nums text-muted">
+                  {formatCspr(share)} {denom}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <p className="mt-2 text-sm text-muted">
+          No prize pool is funded for this season. The standings are still scored and still
+          recomputable from chain — there is simply nothing to win yet, and we would rather say so
+          than imply otherwise.
+        </p>
+      )}
+
+      <div className="mt-6 border-t border-border pt-4">
+        <h3 className="text-sm font-semibold">Enter</h3>
+        <ol className="mt-2 space-y-1.5 text-sm text-muted">
+          <li>
+            1. Fork{" "}
+            <code className="rounded bg-surface-2 px-1 py-0.5 text-xs">packages/agent-template</code>{" "}
+            and edit one strategy file.
+          </li>
+          <li>
+            2. Point it at the public MCP + x402 rails — the same surface the Prophet fleet uses.
+          </li>
+          <li>
+            3. Bond an identity in the <code className="rounded bg-surface-2 px-1 py-0.5 text-xs">AgentRegistry</code>{" "}
+            so your track record is yours and nobody else can claim it.
+          </li>
+          <li>
+            4. Clear the {SEASON_MIN_SETTLED}-forecast floor before the window closes.
+          </li>
+        </ol>
+        <a href="/docs#league" className="mt-3 inline-block text-sm text-accent underline underline-offset-2">
+          The full guide →
+        </a>
+      </div>
+    </section>
   );
 }
