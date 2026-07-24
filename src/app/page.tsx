@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { OnchainProofSection } from "@/components/onchain-proof-section";
+import { LiveNumbers } from "@/components/live-numbers";
 
 const AGENTS = [
   {
@@ -398,6 +399,8 @@ export default function Home() {
       </section>
 
       {/* On-chain proof — real contract packages + tx receipts (hidden until env wires them) */}
+      <LiveNumbers />
+
       <OnchainProofSection />
 
       {/* CTA */}
