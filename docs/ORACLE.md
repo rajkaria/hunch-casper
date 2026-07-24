@@ -72,3 +72,16 @@ Every answer is auditable end to end: the recipe hash pins the rule (immutable o
 lands), the evidence-bundle hash pins the snapshot + reasoning, and the replay harness
 (`src/core/resolution-replay.ts`) reproduces the winner from them. Buy the answer, verify the math.
 The oracle's reputation is the price signal; the evidence is the proof.
+
+## Runnable example
+
+A zero-dependency consumer that lists what is resolvable, queries a resolution, and fetches the
+evidence to verify it:
+
+```bash
+node examples/oracle-consumer/consume.mjs
+```
+
+See [`examples/oracle-consumer/`](../examples/oracle-consumer/README.md). Note that
+`/api/oracle/query` is **POST** and metered per caller — a `402` is a normal answer carrying the
+x402 challenge, not a failure.
