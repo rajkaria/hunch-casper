@@ -151,6 +151,10 @@ describe("the paid-but-not-placed breaker inside the tick", () => {
 describe("quarantined markets inside the tick", () => {
   it("the fleet stops choosing a market the chain permanently rejects", async () => {
     const container = createContainer("testnet");
+    // Warm-up: the first tick also opens the current round of every recurring market. Take the
+    // baseline after that has settled (rollover is idempotent within a round), so the delta below
+    // measures the quarantine and not the rollover.
+    await runEconomyTick(container, { seq: 1 });
     const before = await runEconomyTick(container, { seq: 1 });
     const considered = before.marketsConsidered;
     expect(considered).toBeGreaterThan(1);
