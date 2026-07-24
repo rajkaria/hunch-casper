@@ -20,7 +20,7 @@
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { runEconomyTick } from "@/agent/economy";
-import { listActions } from "@/adapters/mock/activity-log";
+import { nextRoundSeq } from "@/adapters/mock/activity-log";
 import { isCasperNetwork, DEFAULT_NETWORK } from "@/config/network";
 import { chainMode } from "@/config/chain-mode";
 import type { CasperNetwork } from "@/config/network";
@@ -89,7 +89,10 @@ export async function GET(req: Request): Promise<Response> {
   await rehydrateEconomyState();
   const param = new URL(req.url).searchParams.get("network");
   const network = isCasperNetwork(param) ? param : DEFAULT_NETWORK;
-  return tick(network, listActions().length);
+  // Monotonic, cap-proof round counter. NEVER `listActions().length` — that saturates at the
+  // list limit and freezes agent + market rotation on a single pair (see round-seq.test.ts).
+  // This is the cron path, so this line is the one that froze production.
+  return tick(network, nextRoundSeq());
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -107,7 +110,7 @@ export async function POST(req: Request): Promise<Response> {
     /* body optional */
   }
   const network = isCasperNetwork(body.network) ? body.network : DEFAULT_NETWORK;
-  const seq = typeof body.seq === "number" ? body.seq : listActions().length;
+  const seq = typeof body.seq === "number" ? body.seq : nextRoundSeq();
   const resolveSlugs = Array.isArray(body.resolveSlugs)
     ? body.resolveSlugs.filter((s): s is string => typeof s === "string")
     : undefined;

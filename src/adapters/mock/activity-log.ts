@@ -58,6 +58,19 @@ export function listActions(limit = 50): AgentAction[] {
   return log.slice(0, limit);
 }
 
+/**
+ * The round counter — strictly monotonic, and the ONLY correct seq for the economy tick.
+ *
+ * `listActions().length` looks like a round number and is not: the feed is a ring buffer capped at
+ * ACTIVITY_CAP and `listActions` defaults to a limit of 50, so its length saturates permanently.
+ * A frozen seq pins `seq % fleetSize` and `seq % openMarkets` to one agent and one market forever
+ * — which is exactly what production did for weeks. `counter` already survives the cap and is
+ * restored by `importActivityState`, so it is the value that must drive rotation.
+ */
+export function nextRoundSeq(): number {
+  return counter;
+}
+
 /** Test-only: clear the activity feed. */
 export function __resetActivity(): void {
   log.length = 0;
