@@ -65,7 +65,7 @@ the browser. Everything in §2.3 is a secret.
 | `NEXT_PUBLIC_TESTNET_MARKET_ADDRS` | — | JSON `{slug: "hash-…"}`; per-market packages, **outrank** the vault |
 | `NEXT_PUBLIC_ONCHAIN_RECEIPTS` | — | JSON `[{label, hash, network}]` rendered as explorer links |
 | `NEXT_PUBLIC_SHOW_DEMO_RESOLVE` | off | Shows the manual operator resolve control |
-| `NEXT_PUBLIC_CSPR_CLICK_APP_ID` | — | CSPR.click app id; with the SDK loaded, real wallets sign |
+| `NEXT_PUBLIC_CSPR_CLICK_APP_ID` | to let humans bet | CSPR.click app id. Setting it is the ENTIRE activation — the app loads the bundle itself (§3b) |
 
 `NEXT_PUBLIC_MAINNET_*` mirrors every testnet key.
 
@@ -144,6 +144,29 @@ than Vercel cron, because the Hobby plan fires cron at most once a day.
 
 A tick is idempotent in the sense that matters: it places the round's bets and resolves matured
 markets. Re-running one produces another round, not a duplicate of the last.
+
+### 3b. Letting humans bet (CSPR.click)
+
+Until `NEXT_PUBLIC_CSPR_CLICK_APP_ID` is set, every visitor gets the labelled demo wallet and
+**no human can place a real bet**. That is the single hard blocker on human traction.
+
+The connector seam (`src/lib/wallet-connector.ts`) reads `window.csprclick` and falls back to the
+demo account; `src/components/csprclick-script.tsx` loads the bundle. Both halves matter — for a
+long time the seam was complete and nothing loaded the bundle, so `available()` was always false
+and the app was configured-but-inert. `test/csprclick-activation.test.ts` pins that both are
+required.
+
+**To activate:**
+
+1. Register the app at <https://console.cspr.click> and copy the app id.
+2. `vercel env add NEXT_PUBLIC_CSPR_CLICK_APP_ID production` — paste the id.
+3. Redeploy. `NEXT_PUBLIC_*` vars bake at build time, so the currently-running build will not pick
+   it up.
+4. Verify: the header chip should lose its `demo` badge after connecting a real wallet.
+
+With no app id set, no third-party script is served to anyone.
+
+---
 
 ### 3a. Recurring rounds
 
