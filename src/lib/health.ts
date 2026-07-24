@@ -11,7 +11,14 @@
 
 import { chainMode } from "@/config/chain-mode";
 import { DEFAULT_NETWORK, getNetworkConfig, type CasperNetwork } from "@/config/network";
-import { buildHealthReport, type FleetBalance, type HealthInputs, type HealthReport } from "@/core/health";
+import {
+  buildHealthReport,
+  type FleetBalance,
+  type HealthInputs,
+  type HealthReport,
+  type LoopLivenessInput,
+} from "@/core/health";
+import { baseSlug } from "@/core/round-id";
 import { hydrateEconomyState, probePersistence } from "@/adapters/persist/economy-state";
 import { exportActivityState } from "@/adapters/mock/activity-log";
 import { createContainer } from "@/lib/container";
@@ -37,6 +44,42 @@ function economySnapshot(): { actionCount: number; newestActionTs: number | null
     if (typeof a.ts === "number" && (newest === null || a.ts > newest)) newest = a.ts;
   }
   return { actionCount: actions.length, newestActionTs: newest };
+}
+
+/**
+ * The loop-liveness facts, read from the same seed-free export as `economySnapshot`.
+ *
+ * Markets are counted by BASE slug, so a recurring market's rounds do not inflate the distinct
+ * count and hide a frozen rotation behind the very machinery meant to fix it.
+ */
+function loopLiveness(nowMs: number): LoopLivenessInput {
+  const { actions } = exportActivityState();
+  const agents = new Set<string>();
+  const markets = new Set<string>();
+  let betCount = 0;
+  let resolutionCount = 0;
+  let oldestBetMs: number | null = null;
+
+  for (const a of actions) {
+    if (a.kind === "bet_placed") {
+      betCount++;
+      agents.add(a.agent);
+      markets.add(baseSlug(a.marketId.split(":").pop() ?? a.marketId));
+      if (typeof a.ts === "number" && (oldestBetMs === null || a.ts < oldestBetMs)) oldestBetMs = a.ts;
+    } else if (a.kind === "market_resolved") {
+      resolutionCount++;
+    }
+  }
+
+  return {
+    nowMs,
+    betCount,
+    resolutionCount,
+    oldestBetMs,
+    distinctAgents: agents.size,
+    distinctMarkets: markets.size,
+    recentActionCount: betCount,
+  };
 }
 
 /**
@@ -120,6 +163,7 @@ export async function gatherHealth(
     cronSecretConfigured: isSet("CRON_SECRET") || isSet("TICK_CRON_SECRET"),
     csprCloudKeyConfigured: isSet("CSPR_CLOUD_API_KEY"),
     economy: economySnapshot(),
+    loop: loopLiveness(opts.now ?? Date.now()),
     fleet,
     breaker: (() => {
       const b = breakerSnapshot();

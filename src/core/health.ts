@@ -63,6 +63,12 @@ export interface HealthInputs {
    */
   fleetMinBalanceMotes: string;
   /**
+   * Loop-liveness facts. Optional: a caller that omits it gets today's subsystem-only report.
+   * Supplied, it answers the question none of the other checks do — is the economy actually
+   * running, or merely wired up correctly?
+   */
+  loop?: LoopLivenessInput;
+  /**
    * The paid-but-not-placed breaker. Optional so a caller that does not track it (older tests,
    * a mock-mode probe) is unchanged.
    */
@@ -326,6 +332,74 @@ function quarantineCheck(i: HealthInputs): HealthCheck {
 }
 
 /** Evaluate every subsystem. Overall status is `degraded` iff any check failed. */
+export interface LoopLivenessInput {
+  nowMs: number;
+  betCount: number;
+  resolutionCount: number;
+  /** Timestamp of the oldest recorded bet, or null when the economy has never bet. */
+  oldestBetMs: number | null;
+  distinctAgents: number;
+  distinctMarkets: number;
+  recentActionCount: number;
+}
+
+/** A day of betting with nothing settled means the loop is not closing. */
+const RESOLUTION_GRACE_MS = 86_400_000;
+/** Below this many distinct markets/agents across a full window, rotation has frozen. */
+const MIN_DISTINCT = 2;
+/** Too few actions to judge rotation from — silence is not the same as a frozen counter. */
+const ROTATION_SAMPLE_FLOOR = 10;
+
+/**
+ * Does the loop actually close, and is the fleet actually rotating?
+ *
+ * Both of the defects these guard against were invisible. Every other check stayed green while
+ * production placed forty bets over 2.7 days, settled none of them, and sent every one from the
+ * same agent to the same market. A health report that only watches subsystems will confidently
+ * describe a healthy economy that is not running.
+ */
+export function loopChecks(input: LoopLivenessInput): HealthCheck[] {
+  const checks: HealthCheck[] = [];
+
+  const bettingLongEnough =
+    input.oldestBetMs !== null && input.nowMs - input.oldestBetMs >= RESOLUTION_GRACE_MS;
+  checks.push(
+    bettingLongEnough && input.resolutionCount === 0
+      ? {
+          name: "loop.resolution",
+          status: "fail",
+          detail: `${input.betCount} bet(s) recorded over more than a day with no resolution — the loop is not closing`,
+        }
+      : {
+          name: "loop.resolution",
+          status: "ok",
+          detail:
+            input.resolutionCount > 0
+              ? `${input.resolutionCount} resolution(s) recorded — the loop closes`
+              : "not enough betting history yet to judge resolution",
+        },
+  );
+
+  const frozen =
+    input.recentActionCount >= ROTATION_SAMPLE_FLOOR &&
+    (input.distinctAgents < MIN_DISTINCT || input.distinctMarkets < MIN_DISTINCT);
+  checks.push(
+    frozen
+      ? {
+          name: "loop.rotation",
+          status: "fail",
+          detail: `${input.recentActionCount} recent action(s) span only ${input.distinctAgents} agent(s) and ${input.distinctMarkets} market(s) — rotation has frozen`,
+        }
+      : {
+          name: "loop.rotation",
+          status: "ok",
+          detail: `recent activity spans ${input.distinctAgents} agent(s) and ${input.distinctMarkets} market(s)`,
+        },
+  );
+
+  return checks;
+}
+
 export function buildHealthReport(i: HealthInputs): HealthReport {
   const floor = BigInt(i.fleetMinBalanceMotes);
   const fleet = i.fleet.map((f) => ({ ...f, funded: BigInt(f.balanceMotes) >= floor }));
@@ -341,6 +415,9 @@ export function buildHealthReport(i: HealthInputs): HealthReport {
     breakerCheck(i),
     quarantineCheck(i),
     economyCheck(i),
+    // Optional so every existing caller/test keeps working; when supplied, a loop that has stopped
+    // closing degrades the report instead of hiding behind ten green subsystem checks.
+    ...(i.loop ? loopChecks(i.loop) : []),
   ];
   const problems = checks.filter((c) => c.status === "fail" || c.status === "warn").map((c) => c.name);
   return {
