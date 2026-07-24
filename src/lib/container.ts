@@ -20,7 +20,9 @@ import type {
   ResolveMarketInput,
 } from "@/ports";
 import type { AgentAccount, TransferInput, TransferResult, WalletPort } from "@/ports/wallet";
+import type { ClockPort } from "@/ports/clock";
 import type { EventsPort } from "@/ports/events";
+import { createSystemClock } from "@/adapters/system-clock";
 import type { EvidenceStorePort } from "@/ports/evidence-store";
 import { createMockEvidenceStore } from "@/adapters/mock/mock-evidence-store";
 import { createMockChain } from "@/adapters/mock/mock-chain";
@@ -49,6 +51,8 @@ export interface Container {
   oracle: OraclePort;
   llm: LlmClient;
   store: MarketStorePort;
+  /** The only source of "now" for schedule-dependent logic (recurring rounds, maturity). */
+  clock: ClockPort;
 }
 
 /**
@@ -166,5 +170,6 @@ export function createContainer(network: CasperNetwork = DEFAULT_NETWORK): Conta
     oracle: createMockOracle(),
     llm: createMockLlm(),
     store: createMockMarketStore(),
+    clock: createSystemClock(),
   };
 }
