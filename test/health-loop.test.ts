@@ -71,6 +71,34 @@ describe("loop liveness checks", () => {
     expect(checks.find((c) => c.name === "loop.resolution")!.status).toBe("ok");
   });
 
+  it("fails when the chain fold is blind despite recorded bets", () => {
+    // The exact production signature: /api/boards returning eventCount 0 while bets were landing.
+    const checks = loopChecks({
+      nowMs: 10 * DAY,
+      betCount: 40,
+      resolutionCount: 6,
+      oldestBetMs: 9.5 * DAY,
+      distinctAgents: 4,
+      distinctMarkets: 9,
+      recentActionCount: 40,
+      chainEventCount: 0,
+    });
+    expect(checks.find((c) => c.name === "loop.boards")!.status).toBe("fail");
+  });
+
+  it("omits the boards check entirely when the fold was not consulted", () => {
+    const checks = loopChecks({
+      nowMs: 10 * DAY,
+      betCount: 40,
+      resolutionCount: 6,
+      oldestBetMs: 9.5 * DAY,
+      distinctAgents: 4,
+      distinctMarkets: 9,
+      recentActionCount: 40,
+    });
+    expect(checks.find((c) => c.name === "loop.boards")).toBeUndefined();
+  });
+
   it("reproduces the production report exactly", () => {
     // 40 bets, 0 resolutions, one agent, one market, over 2.7 days — every other check was green.
     const checks = loopChecks({

@@ -52,6 +52,23 @@ function economySnapshot(): { actionCount: number; newestActionTs: number | null
  * Markets are counted by BASE slug, so a recurring market's rounds do not inflate the distinct
  * count and hide a frozen rotation behind the very machinery meant to fix it.
  */
+/**
+ * How many events the chain fold can actually see, or `undefined` when it was not consulted.
+ *
+ * Bounded to one page per contract and failure-tolerant: this check exists to catch a blind fold,
+ * and a health endpoint that hangs or 500s because the indexer is slow would be a worse failure
+ * than the one it is reporting.
+ */
+async function chainEventCount(network: CasperNetwork): Promise<number | undefined> {
+  if (chainMode() !== "real") return undefined;
+  try {
+    const events = await createContainer(network).events.fetch({ limit: 1 });
+    return events.length;
+  } catch {
+    return undefined;
+  }
+}
+
 function loopLiveness(nowMs: number): LoopLivenessInput {
   const { actions } = exportActivityState();
   const agents = new Set<string>();
@@ -163,7 +180,7 @@ export async function gatherHealth(
     cronSecretConfigured: isSet("CRON_SECRET") || isSet("TICK_CRON_SECRET"),
     csprCloudKeyConfigured: isSet("CSPR_CLOUD_API_KEY"),
     economy: economySnapshot(),
-    loop: loopLiveness(opts.now ?? Date.now()),
+    loop: { ...loopLiveness(opts.now ?? Date.now()), chainEventCount: await chainEventCount(network) },
     fleet,
     breaker: (() => {
       const b = breakerSnapshot();

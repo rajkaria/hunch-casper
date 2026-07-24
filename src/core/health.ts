@@ -341,6 +341,12 @@ export interface LoopLivenessInput {
   distinctAgents: number;
   distinctMarkets: number;
   recentActionCount: number;
+  /**
+   * Events the chain-derived fold actually saw. `0` alongside recorded bets means the boards are
+   * blind — which is exactly what production served for weeks while every other check was green.
+   * `undefined` when the fold was not consulted (mock mode, or the check is not wanted).
+   */
+  chainEventCount?: number;
 }
 
 /** A day of betting with nothing settled means the loop is not closing. */
@@ -396,6 +402,23 @@ export function loopChecks(input: LoopLivenessInput): HealthCheck[] {
           detail: `recent activity spans ${input.distinctAgents} agent(s) and ${input.distinctMarkets} market(s)`,
         },
   );
+
+  if (input.chainEventCount !== undefined) {
+    const blind = input.betCount > 0 && input.chainEventCount === 0;
+    checks.push(
+      blind
+        ? {
+            name: "loop.boards",
+            status: "fail",
+            detail: `${input.betCount} bet(s) recorded but the chain fold saw 0 events — the boards are blind`,
+          }
+        : {
+            name: "loop.boards",
+            status: "ok",
+            detail: `chain fold sees ${input.chainEventCount} event(s)`,
+          },
+    );
+  }
 
   return checks;
 }
