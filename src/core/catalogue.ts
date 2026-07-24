@@ -99,18 +99,23 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
     seedPoolMotes: { yes: "640000000000", no: "1360000000000" },
   },
   {
+    // Slug kept for routing stability (it is the on-chain market id and the env address map key),
+    // but the cadence is DAILY: at 3.74 CSPR a create plus 6.317 a resolve, an hourly round costs
+    // ~276 CSPR/day and gives the treasury five days. Daily holds the operator's 8-week floor.
+    // The title says what the market actually does — a market whose name outruns its cadence is
+    // precisely the defect this catalogue just had.
     slug: "cspr-hourly-updown",
-    title: "CSPR up or down this hour?",
-    subtitle: "Casper-native · recurring hourly round",
+    title: "CSPR up or down today?",
+    subtitle: "Casper-native · recurring daily round",
     category: "casper-native",
     outcomes: UP_DOWN,
     feeBps: FEE_BPS,
-    cadence: "hourly",
+    cadence: "daily",
     resolver: {
       kind: "direction",
       source: "coingecko",
       metric: "cspr_usd",
-      description: "CSPR close versus the hour's open — flat rounds void and refund.",
+      description: "CSPR close versus the day's open — flat rounds void and refund.",
     },
     deadlineIso: "2026-08-01T01:00:00.000Z",
     seedPoolMotes: { up: "540000000000", down: "460000000000" },
@@ -194,9 +199,12 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
 
   // ── Provably-fair recurring ────────────────────────────────────────────────────────────
   {
+    // Slug kept for routing stability. A 5-minute round is 288 creates + 288 resolves a day —
+    // ~3,310 CSPR, more than twice the whole treasury, so it could never have run at its
+    // advertised cadence. Daily is what is affordable; drand still decides it.
     slug: "coin-flip-5m",
     title: "The Flip — Heads, Tails, or Tie?",
-    subtitle: "Provably fair · 5-minute drand round",
+    subtitle: "Provably fair · daily drand round",
     category: "provably-fair",
     outcomes: [
       { key: "heads", label: "Heads" },
@@ -204,7 +212,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       { key: "tie", label: "Tie" },
     ],
     feeBps: FEE_BPS,
-    cadence: "5-minute",
+    cadence: "daily",
     resolver: {
       kind: "coin_flip",
       source: "drand",

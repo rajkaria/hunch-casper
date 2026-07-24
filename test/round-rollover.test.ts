@@ -40,7 +40,7 @@ describe("round rollover", () => {
   it("registers the current round of a recurring market", async () => {
     const { container } = fakeContainer();
     await rollMaturedRounds(container);
-    const idx = currentRound("hourly", NOW)!.index;
+    const idx = currentRound("daily", NOW)!.index;
     expect(findDefinition(roundMarketId("cspr-hourly-updown", idx))).toBeDefined();
   });
 
@@ -110,7 +110,7 @@ describe("round rollover", () => {
     });
     const { container } = fakeContainer(alwaysFails);
     await rollMaturedRounds(container);
-    const idx = currentRound("hourly", NOW)!.index;
+    const idx = currentRound("daily", NOW)!.index;
     // Registering before the chain confirmed would leave a market that looks bettable with no
     // escrow behind it — every stake placed on it would be unrecoverable.
     expect(findDefinition(roundMarketId("cspr-hourly-updown", idx))).toBeUndefined();
@@ -121,7 +121,7 @@ describe("round rollover", () => {
     // The trap this pins: if a round instance inherited the parent's cadence, its own deadline
     // would keep re-deriving forward and it would never lock — the original bug, one level down.
     const parent = MARKET_DEFINITIONS.find((d) => d.slug === "cspr-hourly-updown")!;
-    const round = currentRound("hourly", NOW)!;
+    const round = currentRound("daily", NOW)!;
     const def = roundDefinitionFor(parent, round);
     expect(def.cadence).toBe("one-shot");
     expect(Date.parse(def.deadlineIso)).toBe(round.deadlineMs);
@@ -130,7 +130,7 @@ describe("round rollover", () => {
 
   it("a spawned round carries the parent's outcomes and fee verbatim", () => {
     const parent = MARKET_DEFINITIONS.find((d) => d.slug === "cspr-hourly-updown")!;
-    const def = roundDefinitionFor(parent, currentRound("hourly", NOW)!);
+    const def = roundDefinitionFor(parent, currentRound("daily", NOW)!);
     expect(def.outcomes).toEqual(parent.outcomes);
     expect(def.feeBps).toBe(parent.feeBps);
     expect(def.resolver).toEqual(parent.resolver);

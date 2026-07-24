@@ -69,7 +69,7 @@ describe("catalogue", () => {
     const flip = findDefinition("coin-flip-5m");
     expect(flip?.resolver.kind).toBe("coin_flip");
     expect(flip?.resolver.source).toBe("drand");
-    expect(flip?.cadence).toBe("5-minute");
+    expect(flip?.cadence).toBe("daily");
   });
 
   it("carries the three meta / agent-performance markets", () => {
@@ -83,7 +83,7 @@ describe("catalogue", () => {
       expect(Number.isInteger(d.feeBps)).toBe(true);
       expect(d.feeBps).toBeGreaterThanOrEqual(0);
       expect(d.feeBps).toBeLessThan(10_000);
-      expect(["one-shot", "5-minute", "hourly", "weekly"]).toContain(d.cadence);
+      expect(["one-shot", "5-minute", "hourly", "daily", "weekly"]).toContain(d.cadence);
       expect(Number.isFinite(Date.parse(d.deadlineIso))).toBe(true);
     }
   });

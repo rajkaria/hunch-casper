@@ -16,7 +16,7 @@ export type MarketStatus = "open" | "locked" | "resolved" | "void";
  * the recurring cadences are the 24/7 fuel the Prophet swarm trades. The engine only records
  * the cadence here (declarative) — the recurring round scheduler lands with the agent economy.
  */
-export type MarketCadence = "one-shot" | "5-minute" | "hourly" | "weekly";
+export type MarketCadence = "one-shot" | "5-minute" | "hourly" | "daily" | "weekly";
 
 /** The shape of the resolution rule — what kind of question the Arbiter answers. */
 export type ResolverKind =

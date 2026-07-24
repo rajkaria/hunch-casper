@@ -125,7 +125,8 @@ const CREATE_COST_MOTES = 3_740_000_000n;
 /** How many rounds of a cadence open in a day. Weekly and one-shot do not roll daily. */
 export function roundsPerDay(cadence: MarketCadence): number {
   const interval = cadenceIntervalMs(cadence);
-  if (interval === null || interval >= DAY_MS) return 0;
+  // `> DAY_MS`, not `>=`: a daily cadence is exactly one round a day, not zero.
+  if (interval === null || interval > DAY_MS) return 0;
   return Math.floor(DAY_MS / interval);
 }
 

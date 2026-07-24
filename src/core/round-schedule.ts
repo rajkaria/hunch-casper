@@ -21,6 +21,8 @@ export function cadenceIntervalMs(cadence: MarketCadence): number | null {
       return 5 * MINUTE;
     case "hourly":
       return 60 * MINUTE;
+    case "daily":
+      return 24 * 60 * MINUTE;
     case "weekly":
       return 7 * 24 * 60 * MINUTE;
     case "one-shot":

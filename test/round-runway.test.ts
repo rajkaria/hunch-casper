@@ -7,8 +7,19 @@ describe("round runway", () => {
   it("counts rounds per day per cadence", () => {
     expect(roundsPerDay("hourly")).toBe(24);
     expect(roundsPerDay("5-minute")).toBe(288);
+    // Exactly one, not zero — the boundary a `>=` comparison gets wrong.
+    expect(roundsPerDay("daily")).toBe(1);
     expect(roundsPerDay("weekly")).toBe(0);
     expect(roundsPerDay("one-shot")).toBe(0);
+  });
+
+  it("a daily cadence is what the current treasury actually sustains", () => {
+    // 1550 CSPR treasury against an 8-week floor. Hourly costs 24x this and lasts 5 days.
+    const TREASURY = 1550n * CSPR;
+    const daily = BigInt(dailyRolloverCostMotes(["daily", "daily"]));
+    expect(runwayDays(TREASURY.toString(), daily.toString())).toBeGreaterThanOrEqual(56);
+    const hourly = BigInt(dailyRolloverCostMotes(["hourly"]));
+    expect(runwayDays(TREASURY.toString(), hourly.toString())).toBeLessThan(56);
   });
 
   it("prices a day of rollover at the measured create cost", () => {
