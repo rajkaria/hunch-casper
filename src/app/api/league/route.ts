@@ -46,7 +46,12 @@ export async function GET(req: Request): Promise<Response> {
   const param = url.searchParams.get("network");
   const network = isCasperNetwork(param) ? param : DEFAULT_NETWORK;
   const cadence: SeasonCadence = url.searchParams.get("cadence") === "monthly" ? "monthly" : "weekly";
-  const seasonParam = Number(url.searchParams.get("season"));
+  // Read presence BEFORE coercing. `Number(null)` is 0, and 0 passes an `isInteger && >= 0`
+  // guard — so an absent `?season=` silently became "season 0" and the route pinned itself to the
+  // first week of the league forever. Production served `weekly-0`, closed six days earlier, with
+  // empty standings and no winner, while every season after it was unreachable.
+  const seasonRaw = url.searchParams.get("season");
+  const seasonParam = seasonRaw === null ? Number.NaN : Number(seasonRaw);
   const wantArchive = url.searchParams.get("archive") === "true";
   const now = Date.now();
 
