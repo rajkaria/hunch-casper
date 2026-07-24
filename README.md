@@ -220,7 +220,7 @@ distribution (chat bots, embeds, narrated alerts); human NL market creation with
 recipes; **verifiable resolution** (recipe + evidence hashes, replay harness); **optimistic
 resolution** with staked disputes; **oracle-as-a-service** (metered query API + settlement hooks);
 **probability feeds** with calibration exports; **LMSR** continuous liquidity + LP vaults;
-**copy-betting**; and the **Testnet ⇄ Mainnet** toggle end-to-end. 1113 TS tests + 95 OdraVM
+**copy-betting**; and the **Testnet ⇄ Mainnet** toggle end-to-end. 1352 TS tests + 95 OdraVM
 contract tests, green gate each sprint (`typecheck / lint / test / build`), GitHub CI green.
 Remaining to fully launch is credential-gated ops (mint the real testnet tx, wire addresses,
 register the bots, fund the audit/bounty/mainnet deploy) + the submission pack — see

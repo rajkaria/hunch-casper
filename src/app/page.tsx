@@ -61,7 +61,7 @@ const CATEGORIES = [
     key: "casper-native",
     label: "Casper-native",
     count: 10,
-    body: "CSPR price and market cap, hourly up/down, daily deploys, active validators, staking APY, total staked — plus public-good feeds on the Condor upgrade, validator-set health, and grant milestones.",
+    body: "CSPR price and market cap, a recurring daily up/down round, daily deploys, active validators, staking APY, total staked — plus public-good feeds on the Condor upgrade, validator-set health, and grant milestones.",
     example: "CSPR above $0.05 by Aug 1?",
     accent: "text-accent",
   },
