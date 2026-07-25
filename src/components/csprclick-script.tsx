@@ -13,6 +13,12 @@
  */
 
 import Script from "next/script";
+import { DEFAULT_NETWORK } from "@/config/network";
+import {
+  csprClickAppIdsFromEnv,
+  csprClickContentMode,
+  resolveCsprClickAppId,
+} from "@/config/csprclick";
 
 /** The CDN bundle CSPR.click documents for drop-in integration. */
 const CSPR_CLICK_BUNDLE = "https://cdn.jsdelivr.net/npm/@make-software/csprclick-ui@1/dist/csprclick-ui.min.js";
@@ -21,12 +27,15 @@ const CSPR_CLICK_BUNDLE = "https://cdn.jsdelivr.net/npm/@make-software/csprclick
 const PROVIDERS = ["casper-wallet", "ledger", "casperdash", "metamask-snap", "torus"];
 
 export function CsprClickScript() {
-  const appId = process.env.NEXT_PUBLIC_CSPR_CLICK_APP_ID;
+  // CSPR.click issues a different app id per network, and both it and the content mode are
+  // resolved from the network config — never from an env var read in this file. See
+  // config/csprclick.ts for why (the old `NEXT_PUBLIC_CASPER_NETWORK` read was a phantom).
+  const appId = resolveCsprClickAppId(DEFAULT_NETWORK, csprClickAppIdsFromEnv());
   // No app id → no script tag at all. An unconfigured deployment must not pull a third-party
   // bundle into every visitor's page just to fall back to the demo wallet anyway.
   if (!appId) return null;
 
-  const contentMode = process.env.NEXT_PUBLIC_CASPER_NETWORK === "mainnet" ? "mainnet" : "testnet";
+  const contentMode = csprClickContentMode(DEFAULT_NETWORK);
 
   return (
     <>
