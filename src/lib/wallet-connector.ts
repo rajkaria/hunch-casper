@@ -40,12 +40,30 @@ export type ConnectOutcome =
   | { ok: false; reason: "no-wallet"; message: string }
   | { ok: false; reason: "failed"; message: string };
 
+/**
+ * The out-of-band parts of a connection, which only exist because one transport is not on this
+ * device: WalletConnect hands back a pairing URI and waits for a phone to answer it.
+ */
+export interface ConnectOptions {
+  /** Show this WalletConnect URI as a QR. May fire more than once if a session is re-proposed. */
+  onPairing?: (uri: string) => void;
+  /**
+   * The paired wallet offered more than one account. Call `choose` with the index to finish; until
+   * then the connect promise stays pending. Without this callback the first account is taken.
+   */
+  onAccounts?: (accounts: WalletAccountLike[], choose: (index: number) => void) => void;
+  /** Abort the attempt — the visitor closed the pairing dialog. Resolves `cancelled`. */
+  signal?: AbortSignal;
+  /** Where CSPR.click's DOM events arrive. Defaults to `window`; injected by tests. */
+  events?: CsprClickEventTarget;
+}
+
 export interface WalletConnector {
   /** Stable id for diagnostics and the honesty pill. */
   readonly id: "demo" | "csprclick";
   /** Whether this connector can actually run right now (SDK present, app id configured). */
   available(): boolean;
-  connect(): Promise<ConnectOutcome>;
+  connect(options?: ConnectOptions): Promise<ConnectOutcome>;
   disconnect(): Promise<void>;
   /**
    * Sign and submit a prepared transaction with the connected wallet. Absent on the demo
@@ -97,7 +115,15 @@ export interface CsprClickLike {
   /** Whether that provider's extension/transport is actually available in this browser. */
   isProviderPresent?: (provider: string) => boolean;
   signIn?: () => Promise<unknown>;
-  disconnect?: () => Promise<unknown>;
+  /**
+   * Finish a sign-in with an account the SDK reported over an event. WalletConnect's `connect()`
+   * resolves nothing on success — it announces the paired accounts and expects the app's own picker
+   * to hand one back here, which is what turns a pairing into a session.
+   */
+  signInWithAccount?: (account: unknown) => Promise<unknown>;
+  /** Abandons an in-flight sign-in. Closes the popup in popup mode; a no-op otherwise. */
+  cancelSignIn?: () => void;
+  disconnect?: (provider?: string, options?: unknown) => Promise<unknown>;
   getActiveAccount?: () => { public_key?: string; publicKey?: string; name?: string } | null;
   /**
    * The SDK's mobile handoff, and the reason Connect used to open a download page in a new tab.
@@ -161,28 +187,61 @@ export function casperWalletInjected(): boolean {
 }
 
 /**
- * Whether this browser can complete the WalletConnect flow *as this app has built it*.
+ * Providers that report themselves present on every browser, because there is nothing local to
+ * detect — and what this app must therefore do about it.
  *
  * WalletConnect's `IsPresent()` in the SDK is `return !0` — always true, for everyone — so it
- * silently won its way to the front of the queue for every desktop visitor without an extension.
- * Its connect path then splits:
+ * silently wins the provider race for every desktop visitor without an extension. Its connect path
+ * then splits:
  *
  *     const {isIOS,isAndroid}=E();
  *     if((isIOS||isAndroid) && _()!==CASPER_WALLET)
  *       setTimeout(()=>{ window.location.href = "casperwallet://wc?uri=" + encodeURIComponent(uri) },300)
  *     else triggerCustomEvent(PROVIDER_STATUS_UPDATE, {status: ShowPairingQR, pairingUri: uri})
  *
- * On mobile it deep-links into the Casper Wallet app and works. On desktop it emits an event
- * asking the *host app* to render a pairing QR — CSPR.click's React component library draws that
- * one, and this app does not ship it. So the desktop branch was a button that fired an event into
- * the void: no popup, no error, no QR, nothing. Treating "always present" as present is what made
- * a missing wallet look like a broken app.
+ * On mobile it deep-links into the Casper Wallet app. On desktop it asks the *host app* to render
+ * a pairing QR — CSPR.click's React component library draws that one, and this app does not ship
+ * it. For a while the desktop branch was therefore a button that fired an event into the void, and
+ * this app answered by refusing to select WalletConnect there at all: an honest dead end, but a
+ * dead end, and the only route a visitor without an extension had.
+ *
+ * It is no longer a dead end. `connectViaPairing` below subscribes to that event and
+ * `components/wallet-pairing.tsx` draws the QR, so WalletConnect is a real transport on every
+ * device — a phone scans it, or a visitor on a phone follows the deep link. What remains true is
+ * that its presence answer carries no information about whether the visitor has a wallet at all,
+ * which is why the pairing dialog also offers the extension, and why `casperWalletInjected()`
+ * rather than `isProviderPresent` is the ground truth everywhere it matters.
  */
-export function walletConnectUsable(
-  userAgent: string = typeof navigator === "undefined" ? "" : navigator.userAgent,
-): boolean {
-  return /iPad|iPhone|iPod|android/i.test(userAgent);
+export const REMOTE_ONLY_PROVIDERS: readonly string[] = ["walletconnect"];
+
+/** Whether this provider can only reach a wallet on another device, i.e. needs a pairing UI. */
+export function providerNeedsPairing(provider: string): boolean {
+  return REMOTE_ONLY_PROVIDERS.includes(provider);
 }
+
+/**
+ * Where a visitor with no wallet at all is sent. Plain download page on purpose: the SDK's own
+ * `?browse=` variant re-opens the site inside the wallet's in-app browser, which is the right
+ * journey from a phone and a useless one from a desktop.
+ */
+export const CASPER_WALLET_DOWNLOAD_URL = "https://www.casperwallet.io/download";
+
+/**
+ * The deep link Casper Wallet's mobile app answers for a pairing URI — the same one SDK 2.1
+ * navigates to on a mobile user agent. Offered beside the QR so a visitor already on their phone
+ * has a route that does not involve photographing their own screen.
+ */
+export function casperWalletPairingDeepLink(uri: string): string {
+  return `casperwallet://wc?uri=${encodeURIComponent(uri)}`;
+}
+
+/** Human names for the SDK's provider keys, used to label an account the events report. */
+export const PROVIDER_LABELS: Readonly<Record<string, string>> = {
+  "casper-wallet": "Casper Wallet",
+  "metamask-snap": "MetaMask",
+  walletconnect: "WalletConnect",
+  ledger: "Ledger",
+};
 
 /**
  * What `connect()` will actually do, decided before anything is opened.
@@ -227,13 +286,267 @@ export function csprClickAppId(): string | null {
  * across versions, so both are read — a wallet that silently fails to connect because a field was
  * renamed is a bad afternoon.
  */
-export function accountFromCsprClick(raw: unknown): WalletAccountLike | null {
+export function accountFromCsprClick(
+  raw: unknown,
+  fallbackLabel = "CSPR.click",
+): WalletAccountLike | null {
   if (typeof raw !== "object" || raw === null) return null;
-  const record = raw as { public_key?: unknown; publicKey?: unknown; name?: unknown };
+  const record = raw as {
+    public_key?: unknown;
+    publicKey?: unknown;
+    name?: unknown;
+    cspr_name?: unknown;
+  };
   const publicKey = typeof record.public_key === "string" ? record.public_key : record.publicKey;
   if (typeof publicKey !== "string" || publicKey.length === 0) return null;
-  const name = typeof record.name === "string" && record.name.length > 0 ? record.name : null;
-  return { publicKey, label: name ?? "CSPR.click" };
+  // Accounts the SDK builds from a WalletConnect session always have `name: null`; their CSPR.name,
+  // if they have one, arrives as `cspr_name`.
+  const named = [record.name, record.cspr_name].find(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+  return { publicKey, label: named ?? fallbackLabel };
+}
+
+// ---------------------------------------------------------------------------------------------
+// CSPR.click's event channel
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * How the SDK talks back, and why this app has to listen.
+ *
+ * SDK 2.1 exposes no subscribe method. Every provider does, verbatim:
+ *
+ *     window.dispatchEvent(new CustomEvent("csprclick", {cancelable:!1, detail:n}))
+ *
+ * with `detail = {provider, providerEvent, activeKey, connected, unlocked, custom}`. Two of those
+ * shapes matter here:
+ *
+ *  - `providerEvent === "csprclick:provider-status-update"`, where `custom` carries the
+ *    WalletConnect state machine: the pairing URI, the accounts a paired wallet shared, a rejection.
+ *  - any event carrying a non-empty `activeKey` — how an *extension* announces the account it just
+ *    approved, since `connect()` on that path resolves before the account exists.
+ *
+ * Both are dispatched on `window`, so subscribing is the only way to observe either.
+ */
+export const CSPR_CLICK_DOM_EVENT = "csprclick";
+export const PROVIDER_STATUS_UPDATE = "csprclick:provider-status-update";
+
+/** The `custom.status` values SDK 2.1's WalletConnect provider emits, verbatim. */
+export const CSPR_CLICK_STATUS = {
+  showPairingQr: "show-pairing-qr-code",
+  walletsPaired: "wallets-paired",
+  accountListUpdated: "account-list-updated",
+  userRejectedPairing: "user-rejected-pairing",
+  errorConnectingWallet: "error-connecting-wallet",
+  invalidSessionTopic: "invalid-session-topic",
+} as const;
+
+/** Just enough of `window` to subscribe, so tests can pass a plain `EventTarget`. */
+export interface CsprClickEventTarget {
+  addEventListener(type: string, listener: (event: Event) => void): void;
+  removeEventListener(type: string, listener: (event: Event) => void): void;
+}
+
+/**
+ * `window` when it can actually dispatch events. Node has no `window`, and this repo's tests stub
+ * one that is a plain object — neither can carry a listener, and neither should throw for trying.
+ */
+function defaultEventTarget(): CsprClickEventTarget | null {
+  if (typeof window === "undefined") return null;
+  const candidate = window as unknown as Partial<CsprClickEventTarget>;
+  return typeof candidate.addEventListener === "function"
+    ? (candidate as CsprClickEventTarget)
+    : null;
+}
+
+/** What an SDK event means to this app, once the provider-specific shapes are folded together. */
+export type CsprClickSignal =
+  | { kind: "pairing"; uri: string }
+  | { kind: "accounts"; accounts: WalletAccountLike[]; raw: unknown[] }
+  | { kind: "connected"; account: WalletAccountLike }
+  | { kind: "rejected" }
+  | { kind: "failed"; message: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Read one `csprclick` DOM event, or `null` if it says nothing this app acts on. Total by design:
+ * the SDK emits a dozen event kinds and adds more between versions, and an unknown one is not an
+ * error — it is simply not ours.
+ */
+export function parseCsprClickEvent(event: unknown): CsprClickSignal | null {
+  if (!isRecord(event)) return null;
+  const detail = (event as { detail?: unknown }).detail;
+  if (!isRecord(detail)) return null;
+
+  const provider = typeof detail.provider === "string" ? detail.provider : "";
+  const label = PROVIDER_LABELS[provider] ?? "CSPR.click";
+  const providerEvent = typeof detail.providerEvent === "string" ? detail.providerEvent : "";
+
+  if (providerEvent === PROVIDER_STATUS_UPDATE && isRecord(detail.custom)) {
+    const custom = detail.custom;
+    const status = typeof custom.status === "string" ? custom.status : "";
+    switch (status) {
+      case CSPR_CLICK_STATUS.showPairingQr: {
+        const uri = typeof custom.pairingUri === "string" ? custom.pairingUri : "";
+        return uri.length > 0 ? { kind: "pairing", uri } : null;
+      }
+      case CSPR_CLICK_STATUS.accountListUpdated: {
+        // `raw` is kept alongside, in lockstep, because finishing the sign-in means handing the
+        // SDK back *its* account object — the normalised one has none of the session fields.
+        const accounts: WalletAccountLike[] = [];
+        const raw: unknown[] = [];
+        for (const entry of Array.isArray(custom.accounts) ? custom.accounts : []) {
+          const account = accountFromCsprClick(entry, label);
+          if (!account) continue;
+          accounts.push(account);
+          raw.push(entry);
+        }
+        return accounts.length > 0
+          ? { kind: "accounts", accounts, raw }
+          : { kind: "failed", message: "The wallet paired but shared no account" };
+      }
+      case CSPR_CLICK_STATUS.userRejectedPairing:
+        return { kind: "rejected" };
+      case CSPR_CLICK_STATUS.errorConnectingWallet:
+      case CSPR_CLICK_STATUS.invalidSessionTopic:
+        return {
+          kind: "failed",
+          message: typeof custom.error === "string" ? custom.error : "The wallet could not connect",
+        };
+      default:
+        return null;
+    }
+  }
+
+  // The extension path: `<provider>:connected` / `:unlocked` / `:activeKeyChanged` carry the key.
+  const activeKey = typeof detail.activeKey === "string" ? detail.activeKey : "";
+  const announcesAccount =
+    providerEvent.includes("connected") ||
+    providerEvent.includes("unlocked") ||
+    providerEvent.includes("activeKeyChanged");
+  if (activeKey.length > 0 && announcesAccount && !providerEvent.includes("disconnected")) {
+    return { kind: "connected", account: { publicKey: activeKey, label } };
+  }
+  return null;
+}
+
+/** Subscribe to the SDK's DOM events. Returns the unsubscribe. */
+export function subscribeToCsprClick(
+  handler: (signal: CsprClickSignal) => void,
+  target: CsprClickEventTarget | null = defaultEventTarget(),
+): () => void {
+  if (!target) return () => {};
+  const listener = (event: Event): void => {
+    const signal = parseCsprClickEvent(event);
+    if (signal) handler(signal);
+  };
+  target.addEventListener(CSPR_CLICK_DOM_EVENT, listener);
+  return () => target.removeEventListener(CSPR_CLICK_DOM_EVENT, listener);
+}
+
+/**
+ * The WalletConnect route: hand the pairing URI to the UI, then resolve on whichever comes first —
+ * an SDK event, or the visitor giving up.
+ *
+ * Nothing here can be awaited from `connect()` alone. WalletConnect's `connect()` resolves
+ * `undefined` on success and reports *everything* over the event channel above, and its pairing
+ * promise never settles once it is waiting on a phone — there is no API to cancel it. So listening
+ * starts before `connect()` is called (the URI is emitted from inside it), and the visitor's own
+ * cancel is what ends an attempt nobody answered.
+ */
+async function connectViaPairing(
+  sdk: CsprClickLike,
+  provider: string,
+  options: ConnectOptions,
+): Promise<ConnectOutcome> {
+  const connectProvider = sdk.connect;
+  if (!connectProvider) {
+    return { ok: false, reason: "failed", message: "This CSPR.click build cannot connect a provider" };
+  }
+
+  return new Promise<ConnectOutcome>((resolve) => {
+    let settled = false;
+    const finish = (outcome: ConnectOutcome): void => {
+      if (settled) return;
+      settled = true;
+      unsubscribe();
+      options.signal?.removeEventListener("abort", onAbort);
+      resolve(outcome);
+    };
+
+    const signIn = (raw: unknown, account: WalletAccountLike): void => {
+      // Pairing alone leaves a session with no account: `signInWithAccount` is what completes it,
+      // and it must receive the SDK's own object, not our normalised one.
+      Promise.resolve(sdk.signInWithAccount?.(raw))
+        .then(() => finish({ ok: true, account }))
+        .catch((error: unknown) =>
+          finish({
+            ok: false,
+            reason: "failed",
+            message: error instanceof Error ? error.message : "Wallet sign-in failed",
+          }),
+        );
+    };
+
+    const unsubscribe = subscribeToCsprClick((signal) => {
+      switch (signal.kind) {
+        case "pairing":
+          options.onPairing?.(signal.uri);
+          return;
+        case "accounts": {
+          if (signal.accounts.length > 1 && options.onAccounts) {
+            options.onAccounts(signal.accounts, (index) => {
+              const account = signal.accounts[index];
+              if (account) signIn(signal.raw[index], account);
+            });
+            return;
+          }
+          signIn(signal.raw[0], signal.accounts[0]);
+          return;
+        }
+        case "connected":
+          finish({ ok: true, account: signal.account });
+          return;
+        case "rejected":
+          finish({ ok: false, reason: "cancelled", message: "The pairing was rejected in the wallet" });
+          return;
+        case "failed":
+          finish({ ok: false, reason: "failed", message: signal.message });
+      }
+    }, options.events);
+
+    const onAbort = (): void => {
+      // Best effort: drop the half-open session so the next attempt starts clean.
+      try {
+        sdk.cancelSignIn?.();
+        Promise.resolve(sdk.disconnect?.(provider)).catch(() => {});
+      } catch {
+        /* nothing to clean up */
+      }
+      finish({ ok: false, reason: "cancelled", message: "Pairing was cancelled" });
+    };
+    if (options.signal?.aborted) return onAbort();
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+
+    Promise.resolve(connectProvider.call(sdk, provider))
+      .then((result) => {
+        const account = accountFromCsprClick(result, PROVIDER_LABELS[provider] ?? "CSPR.click");
+        if (account) finish({ ok: true, account });
+        // Resolving without an account is the normal case here — the events above carry the rest.
+      })
+      .catch((error: unknown) =>
+        finish({
+          ok: false,
+          reason: /cancel|reject|denied/i.test(error instanceof Error ? error.message : "")
+            ? "cancelled"
+            : "failed",
+          message: error instanceof Error ? error.message : "Wallet connection failed",
+        }),
+      );
+  });
 }
 
 /**
@@ -247,10 +560,9 @@ export function firstAvailableProvider(
 ): string | null {
   if (!sdk.isProviderPresent) return null;
   for (const provider of order) {
-    // `walletconnect` reports itself present unconditionally, so its own answer carries no
-    // information; what decides it is whether this browser can finish the flow. See
-    // `walletConnectUsable`.
-    if (provider === "walletconnect" && !walletConnectUsable()) continue;
+    // `walletconnect` reports itself present unconditionally (see REMOTE_ONLY_PROVIDERS), so it
+    // is last in the order and reached only when nothing local answered — at which point the
+    // pairing dialog is the route, and a genuine one.
     try {
       if (sdk.isProviderPresent(provider)) return provider;
     } catch {
@@ -445,7 +757,7 @@ export const csprClickConnector: WalletConnector = {
    * straight to the extension. Our UI is the picker. `signIn()` stays as a last resort so a future
    * SDK that fixes the hosted page still works without a change here.
    */
-  async connect(): Promise<ConnectOutcome> {
+  async connect(options: ConnectOptions = {}): Promise<ConnectOutcome> {
     const sdk = csprClick();
     if (!sdk) return { ok: false, reason: "failed", message: "CSPR.click is not loaded" };
     try {
@@ -454,6 +766,12 @@ export const csprClickConnector: WalletConnector = {
         return { ok: false, reason: "no-wallet", message: transport.message };
       }
       const provider = transport.provider;
+      // WalletConnect reaches a wallet on another device, so it cannot be awaited like an
+      // extension: it needs the pairing UI and the event channel. Everything else goes the direct
+      // route below, redirect fix and settle-poll included.
+      if (provider !== null && providerNeedsPairing(provider)) {
+        return await connectViaPairing(sdk, provider, options);
+      }
       if (provider !== null && sdk.connect) {
         // Only when the extension is demonstrably in `window` — a real phone with no wallet keeps
         // the SDK's handoff, which is the correct route there. See `disarmInAppBrowserRedirect`.

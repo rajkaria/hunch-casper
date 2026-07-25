@@ -2,18 +2,22 @@
 
 import { isDemoAccount, shortKey, useWallet } from "@/components/wallet-context";
 
-/** Header wallet control: connect (mock CSPR.click) or show the connected account + disconnect. */
+/** Header wallet control: connect (CSPR.click, or the demo account) or show the account + sign out. */
 export function WalletButton() {
-  const { account, connect, disconnect } = useWallet();
+  const { account, connect, disconnect, connectState } = useWallet();
 
   if (!account) {
+    // An attempt in flight is shown on the button too, not only in the dialog: whichever copy of
+    // this button the visitor clicked has to stop looking like it did nothing.
+    const busy = connectState.phase !== "idle" && connectState.phase !== "error";
     return (
       <button
         type="button"
         onClick={connect}
+        aria-busy={busy}
         className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
       >
-        Connect wallet
+        {busy ? "Connecting…" : "Connect wallet"}
       </button>
     );
   }

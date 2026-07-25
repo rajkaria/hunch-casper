@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import {
   DEMO_ACCOUNT,
   activeConnector,
+  casperWalletInjected,
   type SendTransactionOutcome,
+  type WalletAccountLike,
   type WalletConnector,
 } from "@/lib/wallet-connector";
 
@@ -79,6 +81,43 @@ function serverSnapshot(): WalletAccount | null {
   return null;
 }
 
+/**
+ * What a connection attempt is doing right now.
+ *
+ * A connect is neither instantaneous nor, on the WalletConnect route, even on this device: the SDK
+ * hands back a pairing URI and waits for a phone. Without a state to render, the button looks
+ * inert for as long as that takes — which is the failure this store exists to make impossible.
+ * Every ending has a phase, and the error phase is never silent.
+ *
+ * It lives outside the hook, next to the account store, because the header renders the button
+ * twice and a market page renders a third entry point: they are all one attempt.
+ */
+export type WalletConnectState =
+  | { phase: "idle" }
+  | { phase: "connecting" }
+  /** Waiting on another device: show `uri` as a QR, with a way out. */
+  | { phase: "pairing"; uri: string }
+  /** The paired wallet shared more than one account and someone has to pick. */
+  | { phase: "choosing"; accounts: WalletAccountLike[]; choose: (index: number) => void }
+  | { phase: "error"; message: string; canInstall: boolean };
+
+const IDLE: WalletConnectState = { phase: "idle" };
+let connectState: WalletConnectState = IDLE;
+let inFlight: AbortController | null = null;
+
+function setConnectState(next: WalletConnectState): void {
+  connectState = next;
+  emit();
+}
+
+function readConnectState(): WalletConnectState {
+  return connectState;
+}
+
+function idleConnectState(): WalletConnectState {
+  return IDLE;
+}
+
 export interface WalletContextValue {
   account: WalletAccount | null;
   connected: boolean;
@@ -86,10 +125,15 @@ export interface WalletContextValue {
   disconnect: () => void;
   /** Which connector is live — `"csprclick"` when a real wallet can sign, `"demo"` otherwise. */
   connectorId: WalletConnector["id"];
+  /** Where an attempt has got to, so the UI can show a QR, an account picker, or an error. */
+  connectState: WalletConnectState;
+  /** Abandon an in-flight attempt (the visitor closed the dialog), or clear an error. */
+  cancelConnect: () => void;
   /**
    * Why the last connect attempt did not produce an account — `null` after a success, and `null`
    * for a plain cancellation, which needs no explanation. Set for the case that does: a browser
-   * with no wallet in it at all, where the button otherwise looked broken.
+   * with no wallet in it at all, where the button otherwise looked broken. The same fact as the
+   * `error` phase above, kept as a string for callers that only want the inline line.
    */
   connectError: string | null;
   /**
@@ -104,25 +148,59 @@ export interface WalletContextValue {
 
 export function useWallet(): WalletContextValue {
   const account = useSyncExternalStore(subscribe, readWallet, serverSnapshot);
-  const [connectError, setConnectError] = useState<string | null>(null);
+  const connectState = useSyncExternalStore(subscribe, readConnectState, idleConnectState);
+
   const connect = useCallback(() => {
-    const connector = activeConnector();
-    void connector.connect().then((outcome) => {
-      if (outcome.ok) {
-        setConnectError(null);
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(outcome.account));
-        emit();
-        return;
-      }
-      // A cancelled connect is the visitor's own decision, freshly made. Telling them about it
-      // reads as an error message for having changed their mind.
-      setConnectError(outcome.reason === "cancelled" ? null : outcome.message);
-    });
+    inFlight?.abort();
+    const controller = new AbortController();
+    inFlight = controller;
+    setConnectState({ phase: "connecting" });
+
+    void activeConnector()
+      .connect({
+        signal: controller.signal,
+        onPairing: (uri) => {
+          if (!controller.signal.aborted) setConnectState({ phase: "pairing", uri });
+        },
+        onAccounts: (accounts, choose) => {
+          if (!controller.signal.aborted) setConnectState({ phase: "choosing", accounts, choose });
+        },
+      })
+      .then((outcome) => {
+        if (inFlight !== controller) return; // superseded by a newer attempt
+        inFlight = null;
+        if (outcome.ok) {
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(outcome.account));
+          setConnectState(IDLE);
+          return;
+        }
+        // A cancelled connect is the visitor's own decision, freshly made. Telling them about it
+        // reads as an error message for having changed their mind.
+        if (outcome.reason === "cancelled") {
+          setConnectState(IDLE);
+          return;
+        }
+        setConnectState({
+          phase: "error",
+          message: outcome.message,
+          // The one failure with something to do about it.
+          canInstall: outcome.reason === "no-wallet",
+        });
+      });
   }, []);
+
+  const cancelConnect = useCallback(() => {
+    inFlight?.abort();
+    inFlight = null;
+    setConnectState(IDLE);
+  }, []);
+
   const disconnect = useCallback(() => {
     // Clear locally first: the session must end even if the SDK's own disconnect fails.
     window.localStorage.removeItem(STORAGE_KEY);
-    setConnectError(null);
+    inFlight?.abort();
+    inFlight = null;
+    setConnectState(IDLE);
     emit();
     void activeConnector().disconnect();
   }, []);
@@ -134,9 +212,20 @@ export function useWallet(): WalletContextValue {
     connect,
     disconnect,
     connectorId: connector?.id ?? "demo",
-    connectError,
+    connectState,
+    cancelConnect,
+    connectError: connectState.phase === "error" ? connectState.message : null,
     signAndSend: send ? (json, publicKey) => send.call(connector, json, publicKey) : null,
   };
+}
+
+/**
+ * Whether a wallet the visitor has *locally* could sign — the extension in `window`, not
+ * `isProviderPresent`. False means the only route left is pairing a phone over WalletConnect,
+ * which the pairing dialog says out loud rather than leaving someone to work out from a QR.
+ */
+export function localWalletAvailable(): boolean {
+  return casperWalletInjected();
 }
 
 /** Truncate a public key for display: `01demo…0000`. */

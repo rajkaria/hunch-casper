@@ -196,13 +196,34 @@ already-connected extension gets redirected past all the same — the symptom be
 and a page that still says "Connect wallet". The same `||` is in the provider's own `IsPresent()`,
 which answers true on a mobile-looking UA whether or not a wallet exists anywhere.
 
-**And a fourth, for the visitor who has no wallet at all:** WalletConnect's `IsPresent()` is
-`return !0` — always true — so it silently won the provider race for every desktop visitor without
-an extension, and its desktop branch only emits a `ShowPairingQR` event for CSPR.click's React
-component library, which this app does not ship. Result: a Connect button that opened nothing,
-errored nothing, and rendered nothing. It is now counted as a transport only on mobile (where it
-deep-links `casperwallet://wc?uri=…` into the app and works); on desktop the connect reports
-`no-wallet` and the UI offers an install link.
+**And a fourth, for the visitor who has no extension at all:** WalletConnect's `IsPresent()` is
+`return !0` — always true — so it wins the provider race for every desktop visitor without an
+extension, and its connect path does not open anything. It emits
+
+```
+triggerCustomEvent(PROVIDER_STATUS_UPDATE, { status: ShowPairingQR, pairingUri: uri })
+```
+
+and waits. The SDK has **no subscribe method** — every provider dispatches
+`new CustomEvent("csprclick", {detail})` on `window` — so an app that adds no listener sees
+nothing, shows nothing, and ships a Connect button that silently does nothing.
+
+That route is now built rather than avoided:
+
+- `subscribeToCsprClick()` / `parseCsprClickEvent()` read the channel: the pairing URI, the
+  accounts a paired wallet shares (`account-list-updated`), `user-rejected-pairing`,
+  `error-connecting-wallet` — plus the extension's own `…:connected` events, which carry the
+  account in `detail.activeKey`.
+- `src/components/wallet-pairing.tsx` renders the URI as a QR (encoder: `src/lib/qr-code.ts`, no
+  dependency), with a `casperwallet://wc?uri=…` deep link, a copy button, an account picker when a
+  wallet shares several, and a cancel that aborts the attempt.
+- Pairing alone connects nothing: WalletConnect's `connect()` resolves `undefined`, and the app
+  must hand one of the shared accounts back through `signInWithAccount()`.
+- `no-wallet` now means what it says — the SDK reports no provider present at all — and is shown as
+  a message with an install link, never as silence.
+
+Mobile needs no QR: on an iOS/Android UA the SDK deep-links `casperwallet://wc?uri=…` itself, so
+the dialog stays on "Waiting for your wallet" (with a cancel) until the app returns.
 
 `wallet-connector.ts` therefore treats `typeof window.CasperWalletProvider === "function"` as the
 only evidence a wallet is installed, and disarms `shouldRedirectToInAppBrowser` for exactly one
@@ -228,7 +249,12 @@ up the `?click=connect` marker on the way back so the round trip finishes on its
    `typeof window.csprclick` must be `"object"` and `window.csprclick.chainName` must match the
    network; if it is `undefined`, check the devtools console for "CSPRClickSDK not requested."
    Then connect a real wallet and confirm the header chip loses its `demo` badge.
-7. If Connect opens a `casperwallet.io/download` tab, the SDK read the device as mobile. Check
+7. Verify the no-extension route too, since it is the one most visitors hit: in a clean browser
+   profile with no wallet extension, click **Connect wallet**. You must get the pairing dialog with
+   a QR (scannable by Casper Wallet on a phone → "WalletConnect"), not a button that does nothing.
+   With the SDK reporting nothing present at all you must get "Could not connect a wallet" and an
+   install link — never silence.
+8. If Connect opens a `casperwallet.io/download` tab, the SDK read the device as mobile. Check
    `typeof window.CasperWalletProvider` — `"function"` means the extension is there and the
    disarm above should have run; `"undefined"` means it genuinely is not injected in that browser
    (no extension, or a mobile browser that cannot host one), and the handoff is correct.
