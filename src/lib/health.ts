@@ -10,6 +10,12 @@
  */
 
 import { chainMode } from "@/config/chain-mode";
+import {
+  csprClickAppIdsFromEnv,
+  csprClickBundleUrl,
+  resolveCsprClickAppId,
+  walletPosture,
+} from "@/config/csprclick";
 import { DEFAULT_NETWORK, getNetworkConfig, type CasperNetwork } from "@/config/network";
 import {
   buildHealthReport,
@@ -179,6 +185,12 @@ export async function gatherHealth(
     },
     cronSecretConfigured: isSet("CRON_SECRET") || isSet("TICK_CRON_SECRET"),
     csprCloudKeyConfigured: isSet("CSPR_CLOUD_API_KEY"),
+    wallet: {
+      posture: walletPosture(
+        resolveCsprClickAppId(network, csprClickAppIdsFromEnv()),
+        csprClickBundleUrl(),
+      ),
+    },
     economy: economySnapshot(),
     loop: { ...loopLiveness(opts.now ?? Date.now()), chainEventCount: await chainEventCount(network) },
     fleet,

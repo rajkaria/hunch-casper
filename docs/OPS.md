@@ -156,6 +156,21 @@ long time the seam was complete and nothing loaded the bundle, so `available()` 
 and the app was configured-but-inert. `test/csprclick-activation.test.ts` pins that both are
 required.
 
+**⚠️ An app id alone is not enough, and the bundle URL this repo used to hardcode does not exist.**
+
+Probed 2026-07-25:
+
+| Thing | Reality |
+|---|---|
+| `cdn.jsdelivr.net/npm/@make-software/csprclick-ui@1/dist/csprclick-ui.min.js` (was hardcoded) | **HTTP 404.** No `1.x` line of that package was ever published — npm's oldest is `2.0.0-beta.7`, latest `2.1.0`. |
+| `@make-software/csprclick-ui@2.1.0` | A **React component library**. No UMD/IIFE build; peer-depends on **React 18.3.1** (this app runs 19.2.4), styled-components 5, and a GitHub-pinned `cspr-design`. |
+| `@make-software/csprclick-core-client@1.11.0` | Publishes **only `.d.ts` declarations** — zero runtime JavaScript, despite declaring `main: "./index.js"`. |
+| `cdn.cspr.click` | Exists (S3), but every path probed returns `AccessDenied`. |
+
+So there is no verified drop-in `<script>` that installs `window.csprclick`. The bundle URL is
+therefore **operator-supplied with no default**: guessing a CDN path would be the third time this
+codebase shipped a URL or parser asserted rather than verified.
+
 **To activate:**
 
 1. Register the app at <https://console.cspr.click> and copy the app id. CSPR.click issues a
@@ -163,9 +178,16 @@ required.
 2. `vercel env add NEXT_PUBLIC_TESTNET_CSPR_CLICK_APP_ID production` (and
    `NEXT_PUBLIC_MAINNET_CSPR_CLICK_APP_ID` if you have it). `NEXT_PUBLIC_CSPR_CLICK_APP_ID` still
    works as a single shared fallback.
-3. Redeploy. `NEXT_PUBLIC_*` vars bake at build time, so the currently-running build will not pick
+3. **Get the loader.** In the CSPR.click console, take the exact `<script src=…>` their integration
+   snippet gives you and set it as `NEXT_PUBLIC_CSPR_CLICK_BUNDLE_URL`. Verify it first —
+   `curl -sIL "<url>" | head -1` must be a 200. If the console only offers the React SDK, this is
+   not an env-var job: it means adding `@make-software/csprclick-ui` as a dependency and resolving
+   its React 18 peer requirement against this app's React 19.
+4. Redeploy. `NEXT_PUBLIC_*` vars bake at build time, so the currently-running build will not pick
    it up.
-4. Verify: the header chip should lose its `demo` badge after connecting a real wallet.
+5. Verify: `/api/health` → the `wallet` check reads **`armed`**. `no-bundle` means step 3 is
+   missing and every visitor still gets the demo wallet. Then connect a real wallet and confirm the
+   header chip loses its `demo` badge.
 
 The id in force is the one for `NEXT_PUBLIC_DEFAULT_NETWORK`, and it also decides the SDK's
 `contentMode` (`src/config/csprclick.ts`). One network's id is never used for the other: an id

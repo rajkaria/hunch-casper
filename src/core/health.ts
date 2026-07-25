@@ -48,6 +48,12 @@ export interface HealthInputs {
   cronSecretConfigured: boolean;
   /** `CSPR_CLOUD_API_KEY` set — live validator signal for Genesis. */
   csprCloudKeyConfigured: boolean;
+  /**
+   * What the human wallet can actually do. Optional so every existing caller/test is unchanged.
+   * Reported because "configured and inert" — an app id with no working loader — looked exactly
+   * like a healthy deploy for weeks, twice.
+   */
+  wallet?: { posture: "unconfigured" | "no-bundle" | "armed" };
   economy: {
     /** Actions recorded on this instance (not seeded — a true zero means a cold instance). */
     actionCount: number;
@@ -249,6 +255,25 @@ function signalsCheck(i: HealthInputs): HealthCheck {
     : check("signals", "warn", "no CSPR_CLOUD_API_KEY — Genesis falls back to block height, then to the fixed rotation");
 }
 
+/**
+ * The wallet's real posture. `no-bundle` is a WARN, not an ok: an app id with no loader means the
+ * Connect button still hands out the demo account, which is precisely the state that shipped
+ * undetected before — first with no script tag at all, then with one pointing at a URL that 404s.
+ */
+function walletCheck(posture: "unconfigured" | "no-bundle" | "armed"): HealthCheck {
+  if (posture === "armed") {
+    return check("wallet", "ok", "CSPR.click app id and bundle URL both configured — humans can sign for real");
+  }
+  if (posture === "no-bundle") {
+    return check(
+      "wallet",
+      "warn",
+      "CSPR.click app id set but no NEXT_PUBLIC_CSPR_CLICK_BUNDLE_URL — configured and inert, every visitor still gets the demo wallet",
+    );
+  }
+  return check("wallet", "warn", "no CSPR.click app id — the header wallet is the labelled demo account and no human can bet");
+}
+
 function economyCheck(i: HealthInputs): HealthCheck {
   const { actionCount, newestActionTs } = i.economy;
   if (actionCount === 0 || newestActionTs === null) {
@@ -434,6 +459,7 @@ export function buildHealthReport(i: HealthInputs): HealthReport {
     ...signerChecks(i),
     cronCheck(i),
     signalsCheck(i),
+    ...(i.wallet ? [walletCheck(i.wallet.posture)] : []),
     fleetCheck(i, unfunded),
     breakerCheck(i),
     quarantineCheck(i),

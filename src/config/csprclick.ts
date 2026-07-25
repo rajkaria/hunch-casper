@@ -54,3 +54,38 @@ export function csprClickAppIdsFromEnv(): CsprClickAppIds {
     shared: process.env.NEXT_PUBLIC_CSPR_CLICK_APP_ID,
   };
 }
+
+/**
+ * The URL of the browser bundle that installs `window.csprclick`. **There is no default**, and
+ * that is the point.
+ *
+ * This file used to hardcode `cdn.jsdelivr.net/npm/@make-software/csprclick-ui@1/dist/
+ * csprclick-ui.min.js`. Probed 2026-07-25: it **404s**, and always did — no `1.x` line of that
+ * package was ever published (npm's oldest is `2.0.0-beta.7`, latest `2.1.0`), and no version of
+ * it ships a UMD/IIFE build at all. `@make-software/csprclick-ui` is a **React component library**
+ * with a hard peer dependency on React 18.3.1 (this app is on 19.2.4), and its sibling
+ * `@make-software/csprclick-core-client@1.11.0` publishes *only* `.d.ts` declarations — no runtime
+ * JavaScript whatsoever, despite naming `./index.js` as its `main`.
+ *
+ * So the "drop-in browser bundle" this integration was built around does not exist on npm. A
+ * guessed CDN path would be the third time this codebase shipped a parser or URL asserted rather
+ * than verified. Instead the operator supplies the exact URL their CSPR.click console gives them,
+ * and until they do, **no script tag is emitted and no visitor's page 404s**.
+ */
+export function csprClickBundleUrl(): string | null {
+  return present(process.env.NEXT_PUBLIC_CSPR_CLICK_BUNDLE_URL);
+}
+
+/** What the wallet can actually do right now, given what is configured. */
+export type WalletPosture =
+  /** No app id: the demo wallet, deliberately and visibly. */
+  | "unconfigured"
+  /** App id set but no loader URL — configured and inert. The failure this repo already shipped. */
+  | "no-bundle"
+  /** Both halves present: real signing is possible. */
+  | "armed";
+
+export function walletPosture(appId: string | null, bundleUrl: string | null): WalletPosture {
+  if (appId === null) return "unconfigured";
+  return bundleUrl === null ? "no-bundle" : "armed";
+}

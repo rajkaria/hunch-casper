@@ -7,21 +7,24 @@
  * always false, and every visitor got the demo pill no matter what was configured. A seam with
  * nothing plugged into it is indistinguishable from no integration at all.
  *
- * Env-gated by design: with no `NEXT_PUBLIC_CSPR_CLICK_APP_ID` this renders nothing and ships no
- * third-party script to anyone. Setting the app id is the entire activation step — no rebuild of
- * any caller, because the store's shape does not change between the two.
+ * Env-gated by design: with no app id this renders nothing and ships no third-party script to
+ * anyone.
+ *
+ * The bundle URL is **operator-supplied and has no default**. The URL hardcoded here previously
+ * 404'd — see `config/csprclick.ts` for the evidence — so an app id alone left the app configured
+ * and inert *and* made every visitor's page fetch a dead URL. Emitting the config script without a
+ * loader is the honest state: the app id is published, `/api/health` reports `no-bundle`, and
+ * nothing 404s.
  */
 
 import Script from "next/script";
 import { DEFAULT_NETWORK } from "@/config/network";
 import {
   csprClickAppIdsFromEnv,
+  csprClickBundleUrl,
   csprClickContentMode,
   resolveCsprClickAppId,
 } from "@/config/csprclick";
-
-/** The CDN bundle CSPR.click documents for drop-in integration. */
-const CSPR_CLICK_BUNDLE = "https://cdn.jsdelivr.net/npm/@make-software/csprclick-ui@1/dist/csprclick-ui.min.js";
 
 /** Wallet providers offered in the picker. */
 const PROVIDERS = ["casper-wallet", "ledger", "casperdash", "metamask-snap", "torus"];
@@ -36,6 +39,7 @@ export function CsprClickScript() {
   if (!appId) return null;
 
   const contentMode = csprClickContentMode(DEFAULT_NETWORK);
+  const bundleUrl = csprClickBundleUrl();
 
   return (
     <>
@@ -48,7 +52,9 @@ export function CsprClickScript() {
           __html: `window.__CSPR_CLICK_APP_ID__=${JSON.stringify(appId)};window.__CSPR_CLICK_OPTIONS__={appName:"Hunch on Casper",contentMode:${JSON.stringify(contentMode)},providers:${JSON.stringify(PROVIDERS)}};`,
         }}
       />
-      <Script id="csprclick-bundle" src={CSPR_CLICK_BUNDLE} strategy="afterInteractive" />
+      {bundleUrl ? (
+        <Script id="csprclick-bundle" src={bundleUrl} strategy="afterInteractive" />
+      ) : null}
     </>
   );
 }
