@@ -5,6 +5,8 @@ import {
   DEMO_ACCOUNT,
   activeConnector,
   casperWalletInjected,
+  csprClickAppIdRejection,
+  probeCsprClickAppId,
   type SendTransactionOutcome,
   type WalletAccountLike,
   type WalletConnector,
@@ -118,6 +120,29 @@ function idleConnectState(): WalletConnectState {
   return IDLE;
 }
 
+/**
+ * Run the app-id probe once and, if it demotes the connector, wake every subscriber.
+ *
+ * The probe itself lives in the connector (`probeCsprClickAppId`); what belongs here is the emit.
+ * `useWallet()` reads through `useSyncExternalStore`, which only re-renders when a snapshot
+ * changes — so when the probe flips `available()` under a component that already rendered
+ * "Casper Wallet", something must announce it. The rejection string is that snapshot: primitive,
+ * referentially stable, `null` until the moment there is something to say.
+ */
+let probeStarted = false;
+
+export function runCsprClickAppIdProbe(): void {
+  if (probeStarted) return;
+  probeStarted = true;
+  void probeCsprClickAppId().then((rejection) => {
+    if (rejection !== null) emit();
+  });
+}
+
+function serverRejectionSnapshot(): string | null {
+  return null;
+}
+
 export interface WalletContextValue {
   account: WalletAccount | null;
   connected: boolean;
@@ -144,11 +169,24 @@ export interface WalletContextValue {
   signAndSend:
     | ((transactionJson: string, publicKey: string) => Promise<SendTransactionOutcome>)
     | null;
+  /**
+   * Why real signing is off when the deployment *looks* configured — CSPR.click rejected the app
+   * id — or `null`. Distinct from `connectError`: nobody clicked anything, the deployment itself
+   * is misconfigured, and the panel should say so rather than quietly hand out the demo account.
+   */
+  signingDisabledReason: string | null;
 }
 
 export function useWallet(): WalletContextValue {
   const account = useSyncExternalStore(subscribe, readWallet, serverSnapshot);
   const connectState = useSyncExternalStore(subscribe, readConnectState, idleConnectState);
+  // Subscribed like the rest so the probe's emit reaches every caller: connectorId and
+  // signAndSend below are derived from activeConnector(), whose answer this value changes.
+  const signingDisabledReason = useSyncExternalStore(
+    subscribe,
+    csprClickAppIdRejection,
+    serverRejectionSnapshot,
+  );
 
   const connect = useCallback(() => {
     inFlight?.abort();
@@ -216,6 +254,7 @@ export function useWallet(): WalletContextValue {
     cancelConnect,
     connectError: connectState.phase === "error" ? connectState.message : null,
     signAndSend: send ? (json, publicKey) => send.call(connector, json, publicKey) : null,
+    signingDisabledReason,
   };
 }
 

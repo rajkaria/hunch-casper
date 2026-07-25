@@ -12,6 +12,7 @@
 import { chainMode } from "@/config/chain-mode";
 import {
   csprClickAppIdsFromEnv,
+  csprClickApplicationUrl,
   csprClickBundleUrl,
   resolveCsprClickAppId,
   walletPosture,
@@ -146,6 +147,45 @@ export interface HealthOptions {
   now?: number;
 }
 
+/**
+ * Ask accounts.cspr.click whether the configured app id actually exists — the reality behind the
+ * "armed" posture. An id CSPR.click never issued gets a 401 whose error body the SDK crashes on,
+ * unhandled, in every visitor's browser; the deploy that surfaced this ran green for a week that
+ * way. Definitive statuses only: 401/403/404 is "rejected", 2xx is "accepted", anything else
+ * (their outage, a timeout, no network from this instance) is "unreachable" and judged as such —
+ * never as a rejection.
+ */
+async function csprClickAppIdCheck(
+  appId: string | null,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ status: "accepted" | "rejected" | "unreachable"; detail?: string } | undefined> {
+  if (appId === null) return undefined;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3_000);
+  try {
+    const res = await fetchImpl(csprClickApplicationUrl(appId), {
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (res.ok) return { status: "accepted" };
+    if (res.status === 401 || res.status === 403 || res.status === 404) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const body = (await res.json()) as { error?: { message?: string } };
+        if (typeof body?.error?.message === "string") detail = `${detail} ${body.error.message}`;
+      } catch {
+        /* a bare status is still definitive */
+      }
+      return { status: "rejected", detail };
+    }
+    return { status: "unreachable", detail: `HTTP ${res.status}` };
+  } catch {
+    return { status: "unreachable" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function gatherHealth(
   network: CasperNetwork = DEFAULT_NETWORK,
   opts: HealthOptions = {},
@@ -157,7 +197,12 @@ export async function gatherHealth(
   // KV held the bets and the feed rendered them. Health must answer for the deployment, not for
   // whichever instance happened to serve the probe.
   await hydrateEconomyState();
-  const [persistence, fleet] = await Promise.all([probePersistence(opts.fetchImpl), fleetBalances(network)]);
+  const configuredAppId = resolveCsprClickAppId(network, csprClickAppIdsFromEnv());
+  const [persistence, fleet, appIdCheck] = await Promise.all([
+    probePersistence(opts.fetchImpl),
+    fleetBalances(network),
+    csprClickAppIdCheck(configuredAppId, opts.fetchImpl),
+  ]);
   const inputs: HealthInputs = {
     network,
     chainMode: chainMode(),
@@ -186,10 +231,8 @@ export async function gatherHealth(
     cronSecretConfigured: isSet("CRON_SECRET") || isSet("TICK_CRON_SECRET"),
     csprCloudKeyConfigured: isSet("CSPR_CLOUD_API_KEY"),
     wallet: {
-      posture: walletPosture(
-        resolveCsprClickAppId(network, csprClickAppIdsFromEnv()),
-        csprClickBundleUrl(),
-      ),
+      posture: walletPosture(configuredAppId, csprClickBundleUrl()),
+      appIdCheck,
     },
     economy: economySnapshot(),
     loop: { ...loopLiveness(opts.now ?? Date.now()), chainEventCount: await chainEventCount(network) },

@@ -53,7 +53,16 @@ export interface HealthInputs {
    * Reported because "configured and inert" — an app id with no working loader — looked exactly
    * like a healthy deploy for weeks, twice.
    */
-  wallet?: { posture: "unconfigured" | "no-bundle" | "armed" };
+  wallet?: {
+    posture: "unconfigured" | "no-bundle" | "armed";
+    /**
+     * A live answer from accounts.cspr.click about whether the configured app id exists —
+     * "armed" only proves the env vars are set, and an id CSPR.click never issued crashes the
+     * SDK silently in every visitor's browser (`lib/health.ts` documents the probe). Absent when
+     * nothing was probed (no id configured, or a caller that cannot reach out).
+     */
+    appIdCheck?: { status: "accepted" | "rejected" | "unreachable"; detail?: string };
+  };
   economy: {
     /** Actions recorded on this instance (not seeded — a true zero means a cold instance). */
     actionCount: number;
@@ -260,8 +269,30 @@ function signalsCheck(i: HealthInputs): HealthCheck {
  * Connect button still hands out the demo account, which is precisely the state that shipped
  * undetected before — first with no script tag at all, then with one pointing at a URL that 404s.
  */
-function walletCheck(posture: "unconfigured" | "no-bundle" | "armed"): HealthCheck {
+function walletCheck(
+  posture: "unconfigured" | "no-bundle" | "armed",
+  appIdCheck?: { status: "accepted" | "rejected" | "unreachable"; detail?: string },
+): HealthCheck {
   if (posture === "armed") {
+    // "Armed" is an env-presence claim; the probe is the reality check. A rejected id is a FAIL,
+    // not a warn: every visitor's SDK is crashing on the same 401 and nobody can sign, while the
+    // report would otherwise be green — which is exactly how it shipped broken.
+    if (appIdCheck?.status === "rejected") {
+      return check(
+        "wallet",
+        "fail",
+        `CSPR.click rejects the configured app id (${appIdCheck.detail ?? "not registered"}) — the SDK crashes ` +
+          `before installing its signing frame and visitors silently get the demo wallet. Mint a real id at ` +
+          `console.cspr.click and redeploy with NEXT_PUBLIC_CSPR_CLICK_APP_ID.`,
+      );
+    }
+    if (appIdCheck?.status === "accepted") {
+      return check(
+        "wallet",
+        "ok",
+        "CSPR.click app id configured AND accepted by accounts.cspr.click — humans can sign for real",
+      );
+    }
     return check("wallet", "ok", "CSPR.click app id and bundle URL both configured — humans can sign for real");
   }
   if (posture === "no-bundle") {
@@ -459,7 +490,7 @@ export function buildHealthReport(i: HealthInputs): HealthReport {
     ...signerChecks(i),
     cronCheck(i),
     signalsCheck(i),
-    ...(i.wallet ? [walletCheck(i.wallet.posture)] : []),
+    ...(i.wallet ? [walletCheck(i.wallet.posture, i.wallet.appIdCheck)] : []),
     fleetCheck(i, unfunded),
     breakerCheck(i),
     quarantineCheck(i),

@@ -234,7 +234,24 @@ up the `?click=connect` marker on the way back so the round trip finishes on its
 **To activate:**
 
 1. Register the app at <https://console.cspr.click> and copy the app id. CSPR.click issues a
-   **different id per network** — take both if you plan to serve both.
+   **different id per network** — take both if you plan to serve both. The id must come from the
+   console; there is no format to guess. Prove it exists before deploying it:
+
+   ```bash
+   curl -si -H "Origin: https://casper.playhunch.xyz" \
+     https://accounts.cspr.click/api/application/<APP_ID>.json | head -1
+   ```
+
+   `HTTP 200` or it is not an app id. An unregistered value answers
+   `401 {"error":{"message":"wrong application id"}}` — and the SDK's `init()` crashes **unhandled**
+   on that body (`e.menu_items.map` on an error object), emits no event, and never installs its
+   signing frame. The only browser symptom is an uncaught
+   `TypeError: Cannot read properties of undefined (reading 'map')` from `csprclick-sdk-2.1.js`
+   next to the 401. This shipped: prod ran for days with a made-up id, posture `armed`, and a
+   Connect that could never sign. The app now probes this same endpoint on page load and on
+   `/api/health` — a rejected id demotes every visitor to the labelled demo wallet (with the
+   reason under the bet panel) and turns the `wallet` health check into a **fail** instead of a
+   green lie.
 2. `vercel env add NEXT_PUBLIC_TESTNET_CSPR_CLICK_APP_ID production` (and
    `NEXT_PUBLIC_MAINNET_CSPR_CLICK_APP_ID` if you have it). `NEXT_PUBLIC_CSPR_CLICK_APP_ID` still
    works as a single shared fallback.
@@ -243,15 +260,25 @@ up the `?click=connect` marker on the way back so the round trip finishes on its
    `query_balance`. Leave the rest off; server-side chain reads use `CSPR_CLOUD_API_KEY`, not this.
 4. **Nothing to do for the loader** — `NEXT_PUBLIC_CSPR_CLICK_BUNDLE_URL` now defaults to the
    verified CDN URL above. Set it only to pin a version or self-host.
+4b. For the QR pairing route (any visitor without an extension), mint a **WalletConnect Cloud
+   project id** at <https://cloud.reown.com> and set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`. The
+   SDK's WalletConnect provider throws `"WalletConnect settings not present"` unless `init()`
+   carries `walletConnect: {projectId}` — found live 2026-07-26: with a valid app id and no
+   project id, a desktop without an extension got "Could not establish a connection with the
+   provider" instead of a QR. Unset, the app now simply does not offer WalletConnect and shows
+   the install prompt instead; the extension route is unaffected either way.
 5. Redeploy. `NEXT_PUBLIC_*` vars bake at build time, so the currently-running build will not pick
    it up.
-6. Verify: `/api/health` → the `wallet` check reads **`armed`**. In the browser console,
+6. Verify: `/api/health` → the `wallet` check reads **ok and "accepted by accounts.cspr.click"**
+   (the report now live-probes the id; `fail` names the 401 and this section). In the browser console,
    `typeof window.csprclick` must be `"object"` and `window.csprclick.chainName` must match the
    network; if it is `undefined`, check the devtools console for "CSPRClickSDK not requested."
    Then connect a real wallet and confirm the header chip loses its `demo` badge.
 7. Verify the no-extension route too, since it is the one most visitors hit: in a clean browser
-   profile with no wallet extension, click **Connect wallet**. You must get the pairing dialog with
-   a QR (scannable by Casper Wallet on a phone → "WalletConnect"), not a button that does nothing.
+   profile with no wallet extension, click **Connect wallet**. With
+   `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` set (§4b) you must get the pairing dialog with
+   a QR (scannable by Casper Wallet on a phone → "WalletConnect"), not a button that does nothing;
+   without it you must get the install prompt — WalletConnect is deliberately not offered.
    With the SDK reporting nothing present at all you must get "Could not connect a wallet" and an
    install link — never silence.
 8. If Connect opens a `casperwallet.io/download` tab, the SDK read the device as mobile. Check

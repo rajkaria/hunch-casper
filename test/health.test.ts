@@ -472,3 +472,28 @@ describe("the quarantined-markets check", () => {
     expect(r.status).toBe("ok"); // a warn must not page anyone at 3am
   });
 });
+
+describe("the wallet check judges the app id's reality, not just its presence", () => {
+  const armed = (appIdCheck?: { status: "accepted" | "rejected" | "unreachable"; detail?: string }) =>
+    buildHealthReport({ ...healthyReal(), wallet: { posture: "armed" as const, appIdCheck } });
+
+  it("FAILS when CSPR.click rejects the configured id — every visitor's SDK is crashing on it", () => {
+    const r = armed({ status: "rejected", detail: "401 wrong application id" });
+    const c = r.checks.find((x) => x.name === "wallet")!;
+    expect(c.status).toBe("fail");
+    expect(c.detail).toContain("wrong application id");
+    expect(c.detail).toContain("console.cspr.click");
+    expect(r.status).toBe("degraded"); // a green report over a dead wallet is how this shipped broken
+  });
+
+  it("is ok — and says verified — when accounts.cspr.click accepted the id", () => {
+    const c = armed({ status: "accepted" }).checks.find((x) => x.name === "wallet")!;
+    expect(c.status).toBe("ok");
+    expect(c.detail).toContain("accepted");
+  });
+
+  it("gives an unreachable probe the benefit of the doubt — their outage is not our misconfig", () => {
+    expect(armed({ status: "unreachable" }).checks.find((x) => x.name === "wallet")!.status).toBe("ok");
+    expect(armed(undefined).checks.find((x) => x.name === "wallet")!.status).toBe("ok");
+  });
+});

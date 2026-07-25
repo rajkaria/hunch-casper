@@ -144,8 +144,9 @@ export default function MarketDetailPage() {
         </div>
       </div>
 
-      {/* Resolution evidence — renders only once a market has settled + published a bundle. */}
-      <EvidenceViewer slug={market.slug} network={network} />
+      {/* Resolution evidence — renders only once a market has settled + published a bundle.
+          Status-gated so open markets never fire the probe (a guaranteed 404 in every console). */}
+      <EvidenceViewer slug={market.slug} network={network} status={market.status} />
 
       {/* Related markets — full-width at the foot, per the Hunch UI rule. */}
       <RelatedMarkets market={market} />

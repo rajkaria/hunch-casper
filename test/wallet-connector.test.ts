@@ -7,7 +7,7 @@
  * demo account, because the second at least says what it is.
  */
 
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import {
   CSPR_CLICK_DOM_EVENT,
   CSPR_CLICK_STATUS,
@@ -77,6 +77,14 @@ const noWait = async (): Promise<void> => {};
 function stubUserAgent(userAgent: string): void {
   vi.stubGlobal("navigator", { userAgent, maxTouchPoints: 0 });
 }
+
+// These flows exercise the wallet as a *fully configured* deployment, WalletConnect included —
+// the pairing route is only offered when a WalletConnect Cloud project id is set (the SDK's
+// provider constructor throws without one; see `walletConnectConfigured`). The unconfigured
+// posture has its own tests in csprclick-appid.test.ts.
+beforeEach(() => {
+  vi.stubEnv("NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID", "wc-project-test");
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
