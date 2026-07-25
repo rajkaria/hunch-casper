@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { validateBetRequest } from "@/lib/bet-request";
 import { isSimulated } from "@/config/chain-mode";
+import { persistEconomyState } from "@/adapters/persist/economy-state";
 
 export async function POST(req: Request): Promise<Response> {
   let body: Record<string, unknown>;
@@ -45,6 +46,10 @@ export async function POST(req: Request): Promise<Response> {
   // orphaned-settlement class the S5 review flagged.
   try {
     const updated = await container.store.recordBet({ marketId: market.id, bettor, outcomeKey, amountMotes });
+    // AWAIT the flush the store fired: a serverless instance can freeze the moment this response
+    // is sent, and the page refetches pools immediately afterwards — a fire-and-forget persist
+    // would let that refetch land on a sibling instance and render the bet as never placed.
+    await persistEconomyState();
     return NextResponse.json({
       deployHash: res.deployHash,
       explorerUrl: res.explorerUrl,

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useCallback } from "react";
 import { useParams } from "next/navigation";
 import { useNetwork } from "@/components/network-context";
 import { useMarket } from "@/components/use-markets";
@@ -42,7 +43,20 @@ export default function MarketDetailPage() {
   const { network } = useNetwork();
   const params = useParams<{ slug: string }>();
   const slug = params.slug;
-  const { market, loading, error } = useMarket(network, slug);
+  const { market, loading, error, refresh, applyPools } = useMarket(network, slug);
+
+  /**
+   * A write from the trade panel landed. The response already carries the post-write pools, so the
+   * stat strip, the total-betted block and the odds bars move at once; the `fresh` refetch behind
+   * it re-reads past the read model's warm-instance TTL and confirms (or corrects) them.
+   */
+  const onChainUpdate = useCallback(
+    (result: { totalStakedMotes?: string; poolByOutcomeMotes?: Record<string, string> }) => {
+      applyPools(result);
+      refresh(true);
+    },
+    [applyPools, refresh],
+  );
 
   if (loading) {
     return (
@@ -145,7 +159,7 @@ export default function MarketDetailPage() {
 
         {/* Human bet panel (CSPR.click-connected) + the reputation-staked oracle that settles it */}
         <div className="flex flex-col gap-4">
-          <BetPanel market={market} />
+          <BetPanel market={market} onChainUpdate={onChainUpdate} />
           <OracleReputation oracleId="arbiter" variant="inline" />
         </div>
       </div>

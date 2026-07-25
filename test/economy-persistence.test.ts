@@ -15,6 +15,7 @@ import {
   hydrateEconomyState,
   persistEconomyState,
   persistenceConfigured,
+  refreshEconomyState,
   rehydrateEconomyState,
   serializeEconomyState,
   __resetPersistenceForTests,
@@ -436,6 +437,70 @@ describe("rehydrateEconomyState — the tick's fresh-view guard", () => {
     await rehydrateEconomyState(fresh as unknown as typeof fetch);
     expect(fresh).toHaveBeenCalledTimes(1);
     expect(listActions()).toEqual(actionsBefore);
+  });
+});
+
+describe("refreshEconomyState — the read path's post-write freshness guard", () => {
+  // A visitor places a bet, the route flushes it, and the page refetches its pools straight away.
+  // If that refetch lands on an instance that hydrated up to HYDRATE_TTL_MS ago, the "refresh"
+  // renders the bet as having vanished. `?fresh=1` routes through here to force the re-read.
+  const URL_BASE = "https://kv.example.test";
+  function stubKvEnv(): void {
+    vi.stubEnv("KV_REST_API_URL", URL_BASE);
+    vi.stubEnv("KV_REST_API_TOKEN", "kv-token");
+  }
+
+  it("re-reads KV inside the TTL, so a just-written bet cannot be served away", async () => {
+    seedEconomy();
+    const full = serializeEconomyState();
+    const actionsBefore = listActions();
+    resetAllState();
+    stubKvEnv();
+
+    const empty = vi.fn(async () => new Response(JSON.stringify({ result: null }), { status: 200 }));
+    await hydrateEconomyState(empty as unknown as typeof fetch);
+    expect(listActions()).toEqual([]);
+
+    // No time passes — the TTL path would serve the empty view it just cached.
+    const fresh = vi.fn(async () => new Response(JSON.stringify({ result: full }), { status: 200 }));
+    await refreshEconomyState(fresh as unknown as typeof fetch);
+    expect(fresh).toHaveBeenCalledTimes(1);
+    expect(listActions()).toEqual(actionsBefore);
+  });
+
+  it("never replaces memory that holds an unflushed mutation", async () => {
+    // The forced re-read is a wholesale replace. Ahead-of-KV memory is the one thing it must not
+    // overwrite — staleness is recoverable on the next read, a dropped bet is not.
+    stubKvEnv();
+    const hydrateFetch = vi.fn(async () => new Response(JSON.stringify({ result: null }), { status: 200 }));
+    await hydrateEconomyState(hydrateFetch as unknown as typeof fetch);
+
+    appendAction({ agent: "Momentum", kind: "bet_placed", marketId: "testnet:x", marketTitle: "X" });
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const writeFetch = vi.fn(async () => {
+      await gate;
+      return new Response(JSON.stringify({ result: null }), { status: 200 });
+    });
+    const writing = persistEconomyState(writeFetch as unknown as typeof fetch);
+
+    const stale = vi.fn(async () => new Response(JSON.stringify({ result: remoteEnvelope() }), { status: 200 }));
+    const refreshing = refreshEconomyState(stale as unknown as typeof fetch);
+    release();
+    await refreshing;
+    await writing;
+
+    expect(stale).not.toHaveBeenCalled(); // deferred to the in-flight write, which is the fresher view
+    expect(listActions()).toHaveLength(1);
+  });
+
+  it("is an instant no-op when KV is unconfigured", async () => {
+    const fetchImpl = vi.fn();
+    await refreshEconomyState(fetchImpl as unknown as typeof fetch);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 

@@ -1,8 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+vi.mock("@/adapters/persist/economy-state", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/adapters/persist/economy-state")>();
+  return { ...original, refreshEconomyState: vi.fn(async () => {}) };
+});
+
 import { GET as listGET } from "@/app/api/markets/route";
 import { GET as detailGET } from "@/app/api/markets/[slug]/route";
+import { refreshEconomyState } from "@/adapters/persist/economy-state";
 import { MARKET_DEFINITIONS } from "@/core/catalogue";
 import { DEFAULT_NETWORK } from "@/config/network";
+
+const refreshed = vi.mocked(refreshEconomyState);
+beforeEach(() => refreshed.mockClear());
 
 const LIST = "http://localhost/api/markets";
 
@@ -39,6 +49,15 @@ describe("GET /api/markets", () => {
   it("rejects an invalid network", async () => {
     expect((await listGET(new Request(`${LIST}?network=devnet`))).status).toBe(400);
   });
+
+  // `?fresh=1` is what a board re-read right after a write sends: without it a warm instance can
+  // answer from a view up to HYDRATE_TTL_MS old and render the write as never having happened.
+  it("forces a KV re-read only when ?fresh=1 is asked for", async () => {
+    await listGET(new Request(`${LIST}?network=testnet`));
+    expect(refreshed).not.toHaveBeenCalled();
+    await listGET(new Request(`${LIST}?network=testnet&fresh=1`));
+    expect(refreshed).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("GET /api/markets/[slug]", () => {
@@ -71,5 +90,14 @@ describe("GET /api/markets/[slug]", () => {
 
   it("rejects an invalid network", async () => {
     expect((await detail("btc-150k-aug", "devnet")).status).toBe(400);
+  });
+
+  it("forces a KV re-read only when ?fresh=1 is asked for — the post-bet refetch", async () => {
+    await detail("btc-150k-aug");
+    expect(refreshed).not.toHaveBeenCalled();
+    await detailGET(new Request("http://localhost/api/markets/btc-150k-aug?network=testnet&fresh=1"), {
+      params: Promise.resolve({ slug: "btc-150k-aug" }),
+    });
+    expect(refreshed).toHaveBeenCalledTimes(1);
   });
 });

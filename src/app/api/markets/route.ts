@@ -12,6 +12,7 @@ import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { DEFAULT_NETWORK, isCasperNetwork } from "@/config/network";
 import { ensureDemoSeed } from "@/adapters/mock/demo-seed";
+import { refreshEconomyState } from "@/adapters/persist/economy-state";
 import type { MarketCategory } from "@/core/types";
 
 const CATEGORIES: readonly MarketCategory[] = ["casper-native", "provably-fair", "rwa", "meta"];
@@ -31,6 +32,9 @@ export async function GET(req: Request): Promise<Response> {
   const categoryParam = url.searchParams.get("category");
   const category = isCategory(categoryParam) ? categoryParam : undefined;
 
+  // `?fresh=1` — same contract as the detail route: skip the warm-instance hydrate TTL so a board
+  // re-read right after a mutation cannot render the pre-mutation pools.
+  if (url.searchParams.get("fresh") === "1") await refreshEconomyState();
   ensureDemoSeed(network); // keep /markets consistent with the seeded /agents boards (no-op in test/real)
   const container = createContainer(network);
   const markets = await container.store.list({ network, category });
