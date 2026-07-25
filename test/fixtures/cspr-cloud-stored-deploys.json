@@ -1,0 +1,130 @@
+[
+ {
+  "args": {
+   "market_id": {
+    "cl_type": "String",
+    "parsed": "cspr-hourly-updown#20658"
+   },
+   "winning_outcome": {
+    "cl_type": "String",
+    "parsed": "down"
+   }
+  },
+  "block_hash": "b2e882d64019256ad35339364d4d895109cf752e75eb62d1aecb7db569ebd95c",
+  "block_height": 8614597,
+  "caller_hash": "532eb4f46277143025f3bbdc196b9af543e0b4a4f1ad7e6b6e519cf7898eb1ce",
+  "caller_public_key": "01cc9c3d562f03f1d6bf3a23f433b228b437f68b0a48d2f6ee85605a432c5e7e59",
+  "consumed_gas": "3359916394",
+  "contract_hash": "5fc5df87dbf5234da88238142b669aea68475eae3c7a48f94802c66a69780874",
+  "contract_package_hash": "ce45136047089a4d0882c7b52f1df6a01ff8e601c1b097440f705fdc9f2876a1",
+  "cost": "12000000000",
+  "deploy_hash": "d0bda0963083c81d32501b3b046b3c66ef1a5fc97add8dd9ba6069cf9bd230f8",
+  "entry_point_id": 2735470,
+  "error_message": null,
+  "execution_type_id": 4,
+  "gas_price_limit": 1,
+  "is_standard_payment": true,
+  "payment_amount": "12000000000",
+  "pricing_mode_id": 0,
+  "refund_amount": "6480062704",
+  "runtime_type_id": 1,
+  "status": "processed",
+  "timestamp": "2026-07-25T00:01:41Z",
+  "version_id": 2
+ },
+ {
+  "args": {
+   "market_id": {
+    "cl_type": "String",
+    "parsed": "receipts-vault-v2"
+   }
+  },
+  "block_hash": "81e5e79635a6d597eabf9b396f82f623d34a44d8ac2b870298ceb6dc5d79850d",
+  "block_height": 8545078,
+  "caller_hash": "532eb4f46277143025f3bbdc196b9af543e0b4a4f1ad7e6b6e519cf7898eb1ce",
+  "caller_public_key": "01cc9c3d562f03f1d6bf3a23f433b228b437f68b0a48d2f6ee85605a432c5e7e59",
+  "consumed_gas": "2921270474",
+  "contract_hash": "5fc5df87dbf5234da88238142b669aea68475eae3c7a48f94802c66a69780874",
+  "contract_package_hash": "ce45136047089a4d0882c7b52f1df6a01ff8e601c1b097440f705fdc9f2876a1",
+  "cost": "8000000000",
+  "deploy_hash": "1364254cad96bb52e5e03b3fc4c209ca321c0df26f261f3711028b0b65a11ad2",
+  "entry_point_id": 2735451,
+  "error_message": null,
+  "execution_type_id": 4,
+  "gas_price_limit": 1,
+  "is_standard_payment": true,
+  "payment_amount": "8000000000",
+  "pricing_mode_id": 0,
+  "refund_amount": "3809047144",
+  "runtime_type_id": 1,
+  "status": "processed",
+  "timestamp": "2026-07-18T13:29:07Z",
+  "version_id": 2
+ },
+ {
+  "args": {
+   "approved": {
+    "cl_type": "Bool",
+    "parsed": true
+   },
+   "oracle": {
+    "cl_type": "Key",
+    "parsed": "account-hash-532eb4f46277143025f3bbdc196b9af543e0b4a4f1ad7e6b6e519cf7898eb1ce"
+   }
+  },
+  "block_hash": "ca960591021facd50bc40e7100207965ef9d68bfc3b27acaefd4911b35d9698e",
+  "block_height": 8545084,
+  "caller_hash": "532eb4f46277143025f3bbdc196b9af543e0b4a4f1ad7e6b6e519cf7898eb1ce",
+  "caller_public_key": "01cc9c3d562f03f1d6bf3a23f433b228b437f68b0a48d2f6ee85605a432c5e7e59",
+  "consumed_gas": "318648939",
+  "contract_hash": "5fc5df87dbf5234da88238142b669aea68475eae3c7a48f94802c66a69780874",
+  "contract_package_hash": "ce45136047089a4d0882c7b52f1df6a01ff8e601c1b097440f705fdc9f2876a1",
+  "cost": "3000000000",
+  "deploy_hash": "be3f2068b1981983eadd7bb09023e8829de08926a8581dc0c24c9648f04f8426",
+  "entry_point_id": 2735447,
+  "error_message": null,
+  "execution_type_id": 4,
+  "gas_price_limit": 1,
+  "is_standard_payment": true,
+  "payment_amount": "3000000000",
+  "pricing_mode_id": 0,
+  "refund_amount": "2011013295",
+  "runtime_type_id": 1,
+  "status": "processed",
+  "timestamp": "2026-07-18T13:29:37Z",
+  "version_id": 2
+ },
+ {
+  "args": {
+   "market_id": {
+    "cl_type": "String",
+    "parsed": "user-cspr-trades-above-0-001-at-the-2026-07-20-ops-sm-0"
+   },
+   "winning_outcome": {
+    "cl_type": "String",
+    "parsed": "yes"
+   }
+  },
+  "block_hash": "21c5567f0e3feb2d55d552ad819b5b2618beb274d783ac3af4076d4e116ea352",
+  "block_height": 8563245,
+  "caller_hash": "532eb4f46277143025f3bbdc196b9af543e0b4a4f1ad7e6b6e519cf7898eb1ce",
+  "caller_public_key": "01cc9c3d562f03f1d6bf3a23f433b228b437f68b0a48d2f6ee85605a432c5e7e59",
+  "consumed_gas": "53534835",
+  "contract_hash": "5fc5df87dbf5234da88238142b669aea68475eae3c7a48f94802c66a69780874",
+  "contract_package_hash": "ce45136047089a4d0882c7b52f1df6a01ff8e601c1b097440f705fdc9f2876a1",
+  "cost": "12000000000",
+  "deploy_hash": "c050552ee18b241c47e467092519fddcd61629d9d4f732d14125f0876933e70c",
+  "entry_point_id": 2735470,
+  "error_message": "User error: 5",
+  "execution_type_id": 4,
+  "gas_price_limit": 1,
+  "is_standard_payment": true,
+  "payment_amount": "12000000000",
+  "pricing_mode_id": 0,
+  "refund_amount": "0",
+  "runtime_type_id": 1,
+  "status": "processed",
+  "timestamp": "2026-07-20T05:52:03Z",
+  "version_id": 2
+ }
+]

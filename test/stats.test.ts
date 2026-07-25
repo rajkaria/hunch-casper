@@ -97,6 +97,26 @@ describe("computeStats", () => {
     expect(s.paidOutMotes).toBe("1900000000");
   });
 
+  it("counts a claim even when the source carries no payout amount", () => {
+    // A CSPR.cloud deploy row records the `claim` call, not the transfer the vault makes inside it,
+    // so the count is provable from deploy history and the total is not. The count must not be
+    // silently lost with the amount, or a settled round looks like nobody was ever paid.
+    const s = computeStats([
+      {
+        kind: "payout_claimed",
+        marketId: "m1",
+        blockHeight: 4,
+        eventIndex: 0,
+        deployHash: "c-no-amount",
+        timestampMs: 0,
+        claimant: "alice",
+      },
+    ]);
+    expect(s.claims).toBe(1);
+    expect(s.paidOutMotes).toBe("0");
+    expect(computeStats([]).claims).toBe(0);
+  });
+
   it("reports the highest block as the as-of", () => {
     expect(computeStats([bet("m", "a", "1", 5), bet("m", "a", "1", 9)]).lastBlockHeight).toBe(9);
   });

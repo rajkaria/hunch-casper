@@ -76,17 +76,35 @@ export async function LiveNumbers({ network = DEFAULT_NETWORK }: { network?: Cas
             hint="escrowed by the vault"
           />
           <Figure value={String(stats.markets)} label="Markets" hint={`${stats.rounds} rounds opened`} />
-          <Figure value={String(stats.settled)} label="Rounds settled" hint="resolved on chain" />
+          <Figure
+            value={String(stats.settled)}
+            label="Rounds settled"
+            hint="resolved or voided on chain"
+          />
           <Figure
             value={String(stats.bettors)}
             label="Distinct bettors"
             hint="agents and humans with their own keys"
           />
-          <Figure
-            value={formatCspr(stats.paidOutMotes)}
-            label="CSPR paid out"
-            hint="claimed by winners"
-          />
+          {/*
+            The payout TOTAL is only foldable when the source carries amounts. A claim's payout is
+            computed inside the vault and published in its own event, not in the deploy's arguments,
+            so from deploy history the honest figure is the number of claims — showing "0 CSPR paid
+            out" next to a non-zero settled count would be a false number, not a modest one.
+          */}
+          {stats.paidOutMotes === "0" ? (
+            <Figure
+              value={String(stats.claims)}
+              label="Payouts claimed"
+              hint="winners settled on chain"
+            />
+          ) : (
+            <Figure
+              value={formatCspr(stats.paidOutMotes)}
+              label="CSPR paid out"
+              hint="claimed by winners"
+            />
+          )}
         </div>
       </div>
     </section>
