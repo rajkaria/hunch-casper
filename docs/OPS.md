@@ -185,6 +185,22 @@ now handled in `src/config/csprclick.ts`:
 Sign-in itself goes through `connect(providerKey)`, not `signIn()` — see `wallet-connector.ts` for
 why (both `signIn()` branches are dead without CSPR.click's React package).
 
+**A third thing, and the one visitors actually reported:** `connect()` opens with
+`if (this.shouldRedirectToInAppBrowser(e)) return`, which for `casper-wallet` opens
+`casperwallet.io/download?browse=<this page>?click=connect` in a new tab and swallows the connect —
+whenever the SDK reads the device as mobile. Its test is
+`/iPad|iPhone|iPod/.test(ua) || (ua.includes("Macintosh") && navigator.maxTouchPoints >= 1) ||
+/(android)/i.test(ua)`, evaluated **before** the provider is consulted, so an installed, unlocked,
+already-connected extension gets redirected past all the same — the symptom being a download tab
+and a page that still says "Connect wallet". The same `||` is in the provider's own `IsPresent()`,
+which answers true on a mobile-looking UA whether or not a wallet exists anywhere.
+
+`wallet-connector.ts` therefore treats `typeof window.CasperWalletProvider === "function"` as the
+only evidence a wallet is installed, and disarms `shouldRedirectToInAppBrowser` for exactly one
+`connect()` call when it is. When no extension is injected the handoff is left alone — on a real
+phone the Casper Wallet in-app browser genuinely is the only route — and `<WalletResume />` picks
+up the `?click=connect` marker on the way back so the round trip finishes on its own.
+
 **To activate:**
 
 1. Register the app at <https://console.cspr.click> and copy the app id. CSPR.click issues a
@@ -203,6 +219,10 @@ why (both `signIn()` branches are dead without CSPR.click's React package).
    `typeof window.csprclick` must be `"object"` and `window.csprclick.chainName` must match the
    network; if it is `undefined`, check the devtools console for "CSPRClickSDK not requested."
    Then connect a real wallet and confirm the header chip loses its `demo` badge.
+7. If Connect opens a `casperwallet.io/download` tab, the SDK read the device as mobile. Check
+   `typeof window.CasperWalletProvider` — `"function"` means the extension is there and the
+   disarm above should have run; `"undefined"` means it genuinely is not injected in that browser
+   (no extension, or a mobile browser that cannot host one), and the handoff is correct.
 
 The id in force is the one for `NEXT_PUBLIC_DEFAULT_NETWORK`, which also decides the SDK's
 `chainName` (`src/config/csprclick.ts`). One network's id is never used for the other: an id

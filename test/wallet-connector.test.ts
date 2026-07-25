@@ -10,24 +10,52 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   DEMO_ACCOUNT,
+  accountAfterConnect,
   accountFromCsprClick,
   activeConnector,
+  casperWalletAccount,
+  casperWalletInjected,
   csprClickAppId,
   csprClickConnector,
   demoConnector,
+  disarmInAppBrowserRedirect,
+  isClickConnectReturn,
+  whenCsprClickReady,
+  withoutClickConnect,
+  type CasperWalletProviderLike,
   type CsprClickLike,
 } from "@/lib/wallet-connector";
 import { GET as boardsGET } from "@/app/api/boards/route";
 
-function installSdk(sdk: CsprClickLike | undefined): void {
+type FakeWindow = {
+  csprclick?: CsprClickLike;
+  CasperWalletProvider?: () => CasperWalletProviderLike;
+};
+
+function fakeWindow(): FakeWindow {
   (globalThis as unknown as { window?: unknown }).window ??= {};
-  (globalThis as unknown as { window: { csprclick?: CsprClickLike } }).window.csprclick = sdk;
+  return (globalThis as unknown as { window: FakeWindow }).window;
 }
+
+function installSdk(sdk: CsprClickLike | undefined): void {
+  fakeWindow().csprclick = sdk;
+}
+
+/** Stand in for the browser extension, which injects exactly this factory. */
+function installExtension(provider: CasperWalletProviderLike = {}): void {
+  fakeWindow().CasperWalletProvider = () => provider;
+}
+
+/** No real timers in the settle loops — every wait is injected. */
+const noWait = async (): Promise<void> => {};
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  const w = (globalThis as unknown as { window?: { csprclick?: unknown } }).window;
-  if (w) delete w.csprclick;
+  const w = (globalThis as unknown as { window?: FakeWindow }).window;
+  if (w) {
+    delete w.csprclick;
+    delete w.CasperWalletProvider;
+  }
 });
 
 describe("accountFromCsprClick", () => {
@@ -162,6 +190,157 @@ describe("connecting", () => {
       },
     });
     await expect(csprClickConnector.disconnect()).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * The reported bug: Connect opened `casperwallet.io/download?browse=…%3Fclick%3Dconnect` in a new
+ * tab instead of the installed extension. From the shipped SDK, `connect()` opens with
+ * `if (this.shouldRedirectToInAppBrowser(e)) return`, and that guard fires on any touch-capable
+ * user agent — before the provider is consulted, so an installed, unlocked, already-connected
+ * wallet is redirected past all the same.
+ */
+describe("the in-app-browser redirect", () => {
+  /** Faithful to upstream: the guard runs first, and a redirect swallows the connect. */
+  function sdkWithRedirect(redirects: string[]): CsprClickLike {
+    const sdk: CsprClickLike = {
+      // The SDK's own `IsPresent` answers true here whether or not a wallet exists.
+      isProviderPresent: () => true,
+      shouldRedirectToInAppBrowser: (provider) => {
+        if (provider !== "casper-wallet") return false;
+        redirects.push(provider); // stands in for window.open(<download page>)
+        return true;
+      },
+      connect: async (provider) => {
+        if (sdk.shouldRedirectToInAppBrowser?.(provider)) return undefined;
+        return { public_key: "01aa", name: "Casper Wallet" };
+      },
+      getActiveAccount: () => null,
+    };
+    return sdk;
+  }
+
+  it("is disarmed when the extension is actually injected, so Connect reaches the wallet", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    const redirects: string[] = [];
+    installSdk(sdkWithRedirect(redirects));
+    installExtension();
+
+    expect(casperWalletInjected()).toBe(true);
+    expect(await csprClickConnector.connect()).toEqual({
+      publicKey: "01aa",
+      label: "Casper Wallet",
+    });
+    expect(redirects).toEqual([]); // no download tab
+  });
+
+  it("is left alone when no extension is injected — on a phone that handoff is the only route", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    const redirects: string[] = [];
+    installSdk(sdkWithRedirect(redirects));
+
+    expect(casperWalletInjected()).toBe(false);
+    await expect(csprClickConnector.connect()).resolves.toBeNull();
+    expect(redirects).toEqual(["casper-wallet"]);
+  });
+
+  it("restores the SDK's own method afterwards, own-property or prototype", () => {
+    // Upstream defines it on the prototype; shadowing it must not leave a permanent own-property
+    // behind, or the mobile handoff would stay disarmed for every later call.
+    class Sdk {
+      shouldRedirectToInAppBrowser(): boolean {
+        return true;
+      }
+    }
+    const proto = new Sdk() as unknown as CsprClickLike;
+    disarmInAppBrowserRedirect(proto)();
+    expect(Object.prototype.hasOwnProperty.call(proto, "shouldRedirectToInAppBrowser")).toBe(false);
+    expect(proto.shouldRedirectToInAppBrowser?.("casper-wallet")).toBe(true);
+
+    const own: CsprClickLike = { shouldRedirectToInAppBrowser: () => true };
+    disarmInAppBrowserRedirect(own)();
+    expect(own.shouldRedirectToInAppBrowser?.("casper-wallet")).toBe(true);
+
+    // An SDK version without the method at all is not a crash.
+    expect(() => disarmInAppBrowserRedirect({})()).not.toThrow();
+  });
+});
+
+describe("resolving the account after connect", () => {
+  it("waits for the account the SDK publishes after connect() has already resolved", async () => {
+    // The provider's already-connected branch is `getActivePublicKey().then(…)` — un-awaited — so
+    // reading getActiveAccount on the next line is a race the app loses.
+    let polls = 0;
+    const sdk: CsprClickLike = {
+      getActiveAccount: () => (++polls < 3 ? null : { public_key: "01bb", name: "Alice" }),
+    };
+    expect(await accountAfterConnect(sdk, "casper-wallet", undefined, { wait: noWait })).toEqual({
+      publicKey: "01bb",
+      label: "Alice",
+    });
+  });
+
+  it("falls back to the extension's own active key when CSPR.click never catches up", async () => {
+    installExtension({ getActivePublicKey: async () => "01cc" });
+    const sdk: CsprClickLike = { getActiveAccount: () => null };
+    expect(
+      await accountAfterConnect(sdk, "casper-wallet", undefined, { attempts: 2, wait: noWait }),
+    ).toEqual({ publicKey: "01cc", label: "Casper Wallet" });
+  });
+
+  it("treats a refusal as an answer instead of waiting two seconds for it", async () => {
+    // `requestConnection()` resolves false when the popup is declined.
+    let polls = 0;
+    const sdk: CsprClickLike = {
+      getActiveAccount: () => {
+        polls += 1;
+        return null;
+      },
+    };
+    expect(await accountAfterConnect(sdk, "casper-wallet", false, { wait: noWait })).toBeNull();
+    expect(polls).toBe(0);
+  });
+
+  it("reads nothing from an extension that is not connected to this site", async () => {
+    installExtension({
+      getActivePublicKey: async () => {
+        throw new Error("not connected");
+      },
+    });
+    await expect(casperWalletAccount()).resolves.toBeNull();
+  });
+});
+
+describe("the ?click=connect return leg", () => {
+  it("recognises the marker, including the malformed URL the SDK actually builds", () => {
+    // Upstream builds `window.location.href + "?click=connect"` — a bare concatenation, so a page
+    // that already had a query comes back with two `?` and searchParams cannot see the marker.
+    expect(isClickConnectReturn("https://casper.playhunch.xyz/markets?click=connect")).toBe(true);
+    expect(isClickConnectReturn("https://casper.playhunch.xyz/markets?tab=open?click=connect")).toBe(
+      true,
+    );
+    expect(isClickConnectReturn("https://casper.playhunch.xyz/markets")).toBe(false);
+    expect(isClickConnectReturn("https://casper.playhunch.xyz/markets?click=other")).toBe(false);
+    expect(isClickConnectReturn("not a url")).toBe(false);
+  });
+
+  it("strips the marker so a reload does not replay the handshake", () => {
+    expect(withoutClickConnect("https://x.dev/markets?click=connect")).toBe("/markets");
+    expect(withoutClickConnect("https://x.dev/markets?tab=open?click=connect")).toBe(
+      "/markets?tab=open",
+    );
+    expect(withoutClickConnect("https://x.dev/markets?tab=open&click=connect#bets")).toBe(
+      "/markets?tab=open#bets",
+    );
+  });
+
+  it("never resumes onto the demo wallet while the SDK script is still loading", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    // No `window.csprclick` yet — the loader is `afterInteractive`. Auto-connecting here would
+    // sign the visitor in as the placeholder account, which is worse than not resuming.
+    await expect(whenCsprClickReady({ attempts: 3, wait: noWait })).resolves.toBe(false);
+    installSdk({ connect: async () => ({ public_key: "01dd" }) });
+    await expect(whenCsprClickReady({ attempts: 3, wait: noWait })).resolves.toBe(true);
   });
 });
 
