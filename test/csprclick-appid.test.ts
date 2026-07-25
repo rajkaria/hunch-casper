@@ -78,6 +78,16 @@ describe("probeCsprClickAppId — definitive rejections demote, everything else 
     expect(csprClickAppIdRejection()).toBeNull();
   });
 
+  it("treats their Origin-gate 401 ('request not authorized') as inconclusive — it says nothing about the id", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "registered");
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ error: { code: "unauthorized", message: "request not authorized" } }), {
+        status: 401,
+      })) as unknown as typeof fetch;
+    expect(await probeCsprClickAppId(fetchImpl)).toBeNull();
+    expect(csprClickAppIdRejection()).toBeNull();
+  });
+
   it("treats a CSPR.click outage (5xx) as inconclusive, never as a rejection", async () => {
     vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "registered");
     const fetchImpl = (async () => new Response("bad gateway", { status: 502 })) as unknown as typeof fetch;
