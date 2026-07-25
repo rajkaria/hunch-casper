@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { resolveCsprClickAppId, csprClickContentMode } from "@/config/csprclick";
+import { resolveCsprClickAppId, csprClickContentMode, walletPosture } from "@/config/csprclick";
 
 describe("app id resolution is per network, with a shared fallback", () => {
   it("prefers the network-specific id", () => {
@@ -46,5 +46,22 @@ describe("content mode tracks the network, not a phantom env var", () => {
   it("maps each network to its CSPR.click content mode", () => {
     expect(csprClickContentMode("testnet")).toBe("testnet");
     expect(csprClickContentMode("mainnet")).toBe("mainnet");
+  });
+});
+
+describe("the bundle URL has no default, and that is deliberate", () => {
+  it("posture is 'unconfigured' with no app id — the demo wallet, visibly", () => {
+    expect(walletPosture(null, null)).toBe("unconfigured");
+    expect(walletPosture(null, "https://cdn.example/bundle.js")).toBe("unconfigured");
+  });
+
+  it("posture is 'no-bundle' with an app id but no loader", () => {
+    // The state this repo shipped twice: first with no script tag at all, then with one pointing
+    // at cdn.jsdelivr.net/npm/@make-software/csprclick-ui@1/… — a version line npm never had.
+    expect(walletPosture("app-123", null)).toBe("no-bundle");
+  });
+
+  it("posture is 'armed' only when both halves are present", () => {
+    expect(walletPosture("app-123", "https://cdn.example/bundle.js")).toBe("armed");
   });
 });
