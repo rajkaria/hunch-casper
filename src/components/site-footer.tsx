@@ -34,11 +34,17 @@ const COLUMNS: { heading: string; links: { label: string; href: string; external
 export function SiteFooter() {
   return (
     <footer className="mt-auto border-t border-border bg-surface/30">
+      {/* Signal line across the footer's top edge. */}
+      <div
+        aria-hidden="true"
+        className="h-px w-full"
+        style={{ background: "linear-gradient(90deg, transparent, var(--accent-glow) 30%, var(--violet-glow) 70%, transparent)" }}
+      />
       <div className="mx-auto w-full max-w-6xl px-4 py-14 sm:px-6">
         <div className="grid gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2">
-              <span className="grid h-6 w-6 place-items-center rounded-md bg-accent text-[13px] font-bold text-white">
+              <span className="logo-mark grid h-6 w-6 place-items-center rounded-md bg-gradient-to-b from-accent-bright to-accent text-[13px] font-bold text-white">
                 H
               </span>
               <span className="text-sm font-semibold tracking-tight">

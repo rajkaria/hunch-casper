@@ -1,27 +1,62 @@
 @import "tailwindcss";
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   Hunch on Casper · "Signal Floor" design system
+   A live trading terminal for an autonomous agent economy: near-black canvas,
+   signal-red primary, mono for anything that is data, motion that implies the
+   economy never stops. Tokens documented in docs/DESIGN.md.
+   ──────────────────────────────────────────────────────────────────────────── */
+
 :root {
-  --background: #070709;
-  --surface: #0f0f15;
-  --surface-2: #16161f;
-  --border: #24242f;
-  --foreground: #f4f4f6;
-  --muted: #9a9aa8;
+  /* Canvas & elevation */
+  --background: #060609;
+  --surface: #0d0d14;
+  --surface-2: #14141d;
+  --surface-3: #1b1b27;
+  --border: #232331;
+  --border-strong: #323244;
+
+  /* Ink */
+  --foreground: #f5f5f8;
+  --muted: #9d9dae;
+  --muted-2: #6f6f80;
+
+  /* Signal accents — same family as v1, tuned for glow work */
   --accent: #ff3b3b;
+  --accent-bright: #ff6257;
   --accent-2: #8b7bff;
   --gold: #e8c66b;
   --up: #35d0a0;
   --down: #ff6a6a;
+
+  /* Alpha ramps for glows and washes */
+  --accent-glow: rgba(255, 59, 59, 0.32);
+  --accent-wash: rgba(255, 59, 59, 0.1);
+  --violet-glow: rgba(139, 123, 255, 0.28);
+  --violet-wash: rgba(139, 123, 255, 0.09);
+  --up-wash: rgba(53, 208, 160, 0.1);
+  --gold-wash: rgba(232, 198, 107, 0.1);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 150ms;
+  --dur-base: 300ms;
+  --dur-slow: 700ms;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
+  --color-muted-2: var(--muted-2);
   --color-accent: var(--accent);
+  --color-accent-bright: var(--accent-bright);
   --color-accent-2: var(--accent-2);
   --color-gold: var(--gold);
   --color-up: var(--up);
@@ -41,7 +76,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Keyboard focus is visible everywhere against the dark theme (was browser-default only). */
+/* Keyboard focus is visible everywhere against the dark theme. */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -53,10 +88,27 @@ body {
   color: var(--foreground);
 }
 
-/* Anchored sections clear the sticky header — single source of truth is the
-   `scroll-mt-24` utility on each docs <Section>; this covers any other :target. */
+/* Anchored sections clear the sticky header. */
 :target {
   scroll-margin-top: 5.5rem;
+}
+
+/* Slim, theme-matched scrollbars (WebKit + Firefox). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid var(--background);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -72,15 +124,147 @@ body {
   }
 }
 
-/* Radial accent wash behind the landing hero. */
-.hero-glow {
-  background:
-    radial-gradient(60% 55% at 50% 0%, rgba(255, 59, 59, 0.14), transparent 70%),
-    radial-gradient(40% 40% at 85% 15%, rgba(139, 123, 255, 0.12), transparent 70%);
+/* ── Backgrounds & texture ─────────────────────────────────────────────────── */
+
+/* Faint dot-grid — the "chart paper" under the whole terminal. */
+.bg-grid {
+  background-image: radial-gradient(circle, rgba(245, 245, 248, 0.055) 1px, transparent 1px);
+  background-size: 26px 26px;
 }
 
+/* Hero backdrop: dot grid + drifting red/violet aurora, masked so it dies out
+   before the first content section. */
+.hero-aurora {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+.hero-aurora::before,
+.hero-aurora::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  border-radius: 9999px;
+  filter: blur(90px);
+  pointer-events: none;
+}
+.hero-aurora::before {
+  width: 44rem;
+  height: 44rem;
+  left: -10rem;
+  top: -22rem;
+  background: radial-gradient(closest-side, var(--accent-glow), transparent 70%);
+  animation: aurora-drift 16s ease-in-out infinite alternate;
+}
+.hero-aurora::after {
+  width: 36rem;
+  height: 36rem;
+  right: -12rem;
+  top: -14rem;
+  background: radial-gradient(closest-side, var(--violet-glow), transparent 70%);
+  animation: aurora-drift 20s ease-in-out infinite alternate-reverse;
+}
+@keyframes aurora-drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(4rem, 3rem, 0) scale(1.12);
+  }
+}
+
+/* Section wash used by alternating bands. */
+.band {
+  border-top: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(20, 20, 29, 0.55), rgba(13, 13, 20, 0.2));
+}
+
+/* ── Typography helpers ────────────────────────────────────────────────────── */
+
+/* Mono micro-label that opens every section — reads like a terminal prompt. */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.eyebrow::before {
+  content: "";
+  width: 1.25rem;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+/* Headline gradient — white burning into signal red. */
+.text-glow-red {
+  background: linear-gradient(115deg, #fff 30%, #ffc9c0 55%, var(--accent-bright) 85%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.num {
+  font-family: var(--font-mono), monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  padding: 0.75rem 1.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+.btn:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.btn-primary {
+  color: #fff;
+  background: linear-gradient(180deg, #ff5a4e, #e42e2e);
+  box-shadow:
+    0 0 0 1px rgba(255, 90, 78, 0.45),
+    0 8px 28px -8px var(--accent-glow);
+}
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 1px rgba(255, 120, 108, 0.6),
+    0 12px 36px -8px rgba(255, 59, 59, 0.5);
+}
+
+.btn-ghost {
+  color: var(--foreground);
+  border: 1px solid var(--border-strong);
+  background: rgba(20, 20, 29, 0.4);
+}
+.btn-ghost:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  background: var(--surface-2);
+}
+
+/* ── Cards & chips ─────────────────────────────────────────────────────────── */
+
 .card {
-  background: var(--surface);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface) 55%);
   border: 1px solid var(--border);
   border-radius: 1rem;
 }
@@ -91,16 +275,97 @@ body {
   border-radius: 9999px;
 }
 
-/* Interactive cards lift and warm their border on hover/focus. */
+/* Interactive cards lift, warm their border, and pick up a soft accent glow. */
 .card-hover {
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  transition:
+    border-color var(--dur-base) var(--ease-out),
+    background var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
 }
 .card-hover:hover {
+  transform: translateY(-3px);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: var(--surface-2);
+  background: linear-gradient(180deg, var(--surface-3), var(--surface-2) 60%);
+  box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.8), 0 0 24px -12px var(--accent-glow);
 }
 
-/* Small "live" status dot with a gentle pulse (respects reduced-motion above). */
+/* Accent-topped card: 2px signal line across the top edge, per-card colour via
+   --card-accent (defaults to signal red). */
+.card-signal {
+  position: relative;
+  overflow: hidden;
+}
+.card-signal::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--card-accent, var(--accent)) 30%, var(--card-accent, var(--accent)) 70%, transparent);
+  opacity: 0.9;
+}
+
+/* ── Form fields ───────────────────────────────────────────────────────────── */
+
+.input {
+  width: 100%;
+  border-radius: 0.625rem;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--foreground);
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.input::placeholder {
+  color: var(--muted-2);
+}
+.input:hover {
+  border-color: var(--border-strong);
+}
+.input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  background: var(--surface-3);
+}
+
+/* ── Data visual: odds bars ────────────────────────────────────────────────── */
+
+.odds-track {
+  height: 0.4rem;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: var(--surface-3);
+}
+.odds-fill {
+  position: relative;
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--bar-color, var(--accent)) 65%, transparent), var(--bar-color, var(--accent)));
+  transition: width var(--dur-slow) var(--ease-out);
+}
+/* A slow sheen sweeps every bar — the board reads as live, not printed. */
+.odds-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  transform: translateX(-100%);
+  animation: bar-sheen 3.2s var(--ease-out) infinite;
+}
+@keyframes bar-sheen {
+  0% {
+    transform: translateX(-100%);
+  }
+  55%,
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* ── Live indicators ───────────────────────────────────────────────────────── */
+
 .live-dot {
   position: relative;
   display: inline-block;
@@ -127,4 +392,155 @@ body {
     transform: scale(2.4);
     opacity: 0;
   }
+}
+
+/* ── Marquee ticker ────────────────────────────────────────────────────────── */
+
+.marquee {
+  display: flex;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+}
+.marquee-track {
+  display: flex;
+  flex-shrink: 0;
+  min-width: 100%;
+  align-items: center;
+  animation: marquee var(--marquee-duration, 48s) linear infinite;
+}
+.marquee:hover .marquee-track {
+  animation-play-state: paused;
+}
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+/* ── Scroll reveal ─────────────────────────────────────────────────────────── */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity var(--dur-slow) var(--ease-out),
+    transform var(--dur-slow) var(--ease-out);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* ── Skeletons ─────────────────────────────────────────────────────────────── */
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  background: var(--surface-2);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(245, 245, 248, 0.06), transparent);
+  transform: translateX(-100%);
+  animation: bar-sheen 1.6s var(--ease-out) infinite;
+}
+
+/* ── Loop diagram (hero SVG) ───────────────────────────────────────────────── */
+
+.loop-ring {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+.loop-flow {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-dasharray: 6 14;
+  animation: loop-flow 2.6s linear infinite;
+}
+@keyframes loop-flow {
+  to {
+    stroke-dashoffset: -40;
+  }
+}
+.loop-node {
+  animation: node-breathe 3.6s ease-in-out infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+@keyframes node-breathe {
+  0%,
+  100% {
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+/* Satellites orbit the ring at three speeds — the economy visibly circulating. */
+.loop-orbit {
+  transform-origin: 210px 210px;
+  animation: orbit var(--orbit-duration, 14s) linear infinite;
+}
+.loop-orbit.reverse {
+  animation-direction: reverse;
+}
+@keyframes orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.loop-center {
+  animation: center-pulse 3s ease-in-out infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+@keyframes center-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+/* ── Header ────────────────────────────────────────────────────────────────── */
+
+/* Nav links draw a red underline on hover / current page. */
+.nav-link {
+  position: relative;
+  padding-bottom: 2px;
+}
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 100%;
+  bottom: -2px;
+  height: 1.5px;
+  background: var(--accent);
+  transition: right var(--dur-base) var(--ease-out);
+}
+.nav-link:hover::after,
+.nav-link[aria-current="page"]::after {
+  right: 0;
+}
+
+/* Logo mark glow. */
+.logo-mark {
+  box-shadow: 0 0 16px -4px var(--accent-glow);
+  transition: box-shadow var(--dur-base) var(--ease-out);
+}
+a:hover .logo-mark {
+  box-shadow: 0 0 22px -4px rgba(255, 59, 59, 0.55);
 }

@@ -13,6 +13,13 @@
 import { createContainer } from "@/lib/container";
 import { DEFAULT_NETWORK, getNetworkConfig, type CasperNetwork } from "@/config/network";
 import { computeStats, formatCspr, type EconomyStats } from "@/core/stats";
+import { AnimatedNumber } from "@/components/animated-number";
+import { Reveal } from "@/components/reveal";
+
+/** Motes → whole CSPR as a number, for the count-up (display only; exactness lives in formatCspr). */
+function csprNumber(motes: string): number {
+  return /^\d+$/.test(motes) ? Number(BigInt(motes) / 1_000_000_000n) : 0;
+}
 
 const MAX_EVENTS = 5_000;
 
@@ -28,13 +35,29 @@ async function loadStats(network: CasperNetwork): Promise<EconomyStats | null> {
   }
 }
 
-function Figure({ value, label, hint }: { value: string; label: string; hint?: string }) {
+function Figure({
+  value,
+  numeric,
+  label,
+  hint,
+  delay = 0,
+}: {
+  value?: string;
+  numeric?: number;
+  label: string;
+  hint?: string;
+  delay?: number;
+}) {
   return (
-    <div className="card flex flex-col gap-1 p-5">
-      <span className="text-3xl font-semibold tabular-nums">{value}</span>
-      <span className="text-sm font-medium">{label}</span>
-      {hint ? <span className="text-[11px] text-muted">{hint}</span> : null}
-    </div>
+    <Reveal delay={delay} className="h-full">
+      <div className="card flex h-full flex-col gap-1 p-5">
+        <span className="num text-3xl font-semibold">
+          {numeric != null ? <AnimatedNumber value={numeric} /> : value}
+        </span>
+        <span className="text-sm font-medium">{label}</span>
+        {hint ? <span className="font-mono text-[10px] uppercase tracking-wider text-muted-2">{hint}</span> : null}
+      </div>
+    </Reveal>
   );
 }
 
@@ -45,9 +68,10 @@ export async function LiveNumbers({ network = DEFAULT_NETWORK }: { network?: Cas
   const cfg = getNetworkConfig(network);
 
   return (
-    <section className="border-t border-border bg-surface/40">
-      <div className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
-        <h2 className="text-2xl font-semibold sm:text-3xl">The economy, by the numbers</h2>
+    <section className="band">
+      <div className="mx-auto w-full max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
+        <span className="eyebrow text-up">Live, recomputable</span>
+        <h2 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">The economy, by the numbers</h2>
         <p className="mt-2 max-w-2xl text-sm text-muted">
           Folded from {stats.eventCount.toLocaleString("en-US")} on-chain transactions across the
           deployed contract packages, as of block{" "}
@@ -69,22 +93,25 @@ export async function LiveNumbers({ network = DEFAULT_NETWORK }: { network?: Cas
         </p>
 
         <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          <Figure value={stats.bets.toLocaleString("en-US")} label="Bets placed" hint="on chain, executed" />
+          <Figure numeric={stats.bets} label="Bets placed" hint="on chain, executed" />
           <Figure
-            value={formatCspr(stats.stakedMotes)}
+            numeric={csprNumber(stats.stakedMotes)}
             label="CSPR staked"
             hint="escrowed by the vault"
+            delay={60}
           />
-          <Figure value={String(stats.markets)} label="Markets" hint={`${stats.rounds} rounds opened`} />
+          <Figure numeric={stats.markets} label="Markets" hint={`${stats.rounds} rounds opened`} delay={120} />
           <Figure
-            value={String(stats.settled)}
+            numeric={stats.settled}
             label="Rounds settled"
             hint="resolved or voided on chain"
+            delay={180}
           />
           <Figure
-            value={String(stats.bettors)}
+            numeric={stats.bettors}
             label="Distinct bettors"
             hint="agents and humans with their own keys"
+            delay={240}
           />
           {/*
             The payout TOTAL is only foldable when the source carries amounts. A claim's payout is
@@ -94,15 +121,17 @@ export async function LiveNumbers({ network = DEFAULT_NETWORK }: { network?: Cas
           */}
           {stats.paidOutMotes === "0" ? (
             <Figure
-              value={String(stats.claims)}
+              numeric={stats.claims}
               label="Payouts claimed"
               hint="winners settled on chain"
+              delay={300}
             />
           ) : (
             <Figure
               value={formatCspr(stats.paidOutMotes)}
               label="CSPR paid out"
               hint="claimed by winners"
+              delay={300}
             />
           )}
         </div>

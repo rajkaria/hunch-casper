@@ -21,10 +21,10 @@ export function SiteHeader() {
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
-    <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur">
+    <header className="sticky top-0 z-40 border-b border-border bg-background/75 backdrop-blur-md">
       <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
         <Link href="/" className="flex items-center gap-2" onClick={() => setOpen(false)}>
-          <span className="grid h-6 w-6 place-items-center rounded-md bg-accent text-[13px] font-bold text-white">
+          <span className="logo-mark grid h-6 w-6 place-items-center rounded-md bg-gradient-to-b from-accent-bright to-accent text-[13px] font-bold text-white">
             H
           </span>
           <span className="text-sm font-semibold tracking-tight">
@@ -41,7 +41,7 @@ export function SiteHeader() {
               key={item.href}
               href={item.href}
               aria-current={isActive(item.href) ? "page" : undefined}
-              className={`transition-colors hover:text-foreground ${
+              className={`nav-link transition-colors hover:text-foreground ${
                 isActive(item.href) ? "text-foreground" : ""
               }`}
             >

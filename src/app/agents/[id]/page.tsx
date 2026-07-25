@@ -77,7 +77,7 @@ export default function AgentProfilePage() {
       <div className="flex items-center justify-between">
         <h1 className="font-mono text-2xl font-semibold tracking-tight">{agent}</h1>
         <button
-          className={`rounded-lg px-4 py-2 text-sm font-semibold ${following ? "bg-surface-2 text-foreground" : "bg-accent text-white"} disabled:opacity-50`}
+          className={`btn ${following ? "btn-ghost" : "btn-primary"} px-4 py-2 disabled:opacity-50`}
           disabled={busy || state !== "ready"}
           onClick={toggleFollow}
         >

@@ -202,7 +202,7 @@ export function BetPanel({ market }: { market: Market }) {
       </div>
 
       <div className="mt-4 flex items-center gap-2">
-        <div className="flex flex-1 items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
+        <div className="flex flex-1 items-center gap-2 rounded-full border border-border bg-surface-2 px-4 py-2 transition-colors focus-within:border-accent/60">
           <input
             inputMode="decimal"
             value={amount}
@@ -216,7 +216,7 @@ export function BetPanel({ market }: { market: Market }) {
           type="button"
           onClick={placeBet}
           disabled={betting || (connected && (!amountValid || !outcomeKey || overCap))}
-          className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition-opacity disabled:opacity-40"
+          className="btn btn-primary px-5 py-2 disabled:opacity-40"
         >
           {betting ? "Placing…" : connected ? "Place bet" : "Connect wallet"}
         </button>

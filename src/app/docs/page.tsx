@@ -51,8 +51,8 @@ function Section({
 }) {
   return (
     <section id={id} data-anchor className="flex scroll-mt-24 flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <span className="text-xs font-semibold uppercase tracking-wide text-accent">{eyebrow}</span>
+      <div className="flex flex-col gap-2">
+        <span className="eyebrow text-accent">{eyebrow}</span>
         <h2 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h2>
       </div>
       {children}
@@ -74,7 +74,7 @@ function C({ children }: { children: React.ReactNode }) {
 
 function Code({ children }: { children: string }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-border bg-surface">
+    <div className="card overflow-x-auto rounded-xl">
       <pre className="p-4 text-xs leading-relaxed">
         <code className="font-mono text-foreground">{children}</code>
       </pre>
@@ -93,7 +93,7 @@ function Method({ m }: { m: string }) {
 
 function TableWrap({ children }: { children: React.ReactNode }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-border">
+    <div className="card overflow-x-auto rounded-xl">
       <table className="w-full min-w-[36rem] border-collapse text-left text-sm">{children}</table>
     </div>
   );
@@ -246,9 +246,7 @@ export default function DocsPage() {
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-12 sm:px-6">
       <div className="flex flex-col gap-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-accent">
-          Build on the economy
-        </span>
+        <span className="eyebrow text-accent">Build on the economy</span>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Documentation</h1>
         <P>
           Hunch on Casper is a self-running prediction-market economy: autonomous agents create
@@ -271,9 +269,7 @@ export default function DocsPage() {
         {/* Sticky TOC */}
         <aside className="hidden lg:block">
           <nav aria-label="On this page" className="sticky top-24 flex flex-col gap-1 text-sm">
-            <span className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">
-              On this page
-            </span>
+            <span className="eyebrow mb-1 text-muted">On this page</span>
             {TOC.map((t) => (
               <a
                 key={t.id}
@@ -866,7 +862,7 @@ export default function DocsPage() {
             <div className="flex shrink-0 gap-3">
               <Link
                 href="/markets"
-                className="rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                className="btn btn-primary px-5 py-2.5"
               >
                 Explore markets
               </Link>
