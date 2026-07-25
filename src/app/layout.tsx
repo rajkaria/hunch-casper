@@ -5,6 +5,7 @@ import { SiteHeader } from "@/components/site-header";
 import { CsprClickScript } from "@/components/csprclick-script";
 import { SiteFooter } from "@/components/site-footer";
 import { MainnetBanner } from "@/components/mainnet-banner";
+import { WalletPairing } from "@/components/wallet-pairing";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -77,6 +78,10 @@ export default function RootLayout({
         <MainnetBanner />
         <div id="main" className="flex flex-1 flex-col">{children}</div>
         <SiteFooter />
+        {/* One connect dialog for the whole app: the header renders the button twice (desktop and
+            mobile), and an attempt started from either — or from a market's bet panel — is the same
+            attempt. */}
+        <WalletPairing />
       </body>
     </html>
   );

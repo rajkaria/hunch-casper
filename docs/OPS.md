@@ -185,6 +185,41 @@ now handled in `src/config/csprclick.ts`:
 Sign-in itself goes through `connect(providerKey)`, not `signIn()` — see `wallet-connector.ts` for
 why (both `signIn()` branches are dead without CSPR.click's React package).
 
+**The desktop-with-no-extension route, and why the app subscribes to SDK events.** Provider
+selection walks `casper-wallet → metamask-snap → walletconnect` and takes the first one
+`isProviderPresent()` answers for. In SDK 2.1 WalletConnect's check is, verbatim,
+`static IsPresent(){return!0}` — it is a relay protocol, so nothing local is detectable and the
+answer is *always* true. On a desktop with no wallet extension, WalletConnect is therefore always
+what gets selected, and its connect path does not open anything: it emits
+
+```
+triggerCustomEvent(PROVIDER_STATUS_UPDATE, { status: ShowPairingQR, pairingUri: uri })
+```
+
+and waits. The SDK has no subscribe method — every provider dispatches
+`new CustomEvent("csprclick", { detail })` on `window` — so an app that adds no listener sees
+nothing, shows nothing, and ships a Connect button that silently does nothing. That was this app.
+
+What handles it now:
+
+- `subscribeToCsprClick()` / `parseCsprClickEvent()` in `src/lib/wallet-connector.ts` read that
+  channel: the pairing URI, the accounts a paired wallet shares (`account-list-updated`), a
+  rejection, a failure — plus the extension's own `…:connected` events, which carry the account in
+  `detail.activeKey` when `connect()` itself resolves nothing.
+- `src/components/wallet-pairing.tsx` renders the URI as a QR (encoder: `src/lib/qr-code.ts`, no
+  dependency), with a `casperwallet://wc?uri=…` deep link, a copy button, and a cancel that aborts
+  the attempt.
+- Pairing alone does not finish the job: WalletConnect's `connect()` resolves `undefined` and the
+  app must hand one of the shared accounts back via `signInWithAccount()`. With more than one
+  account, the dialog asks.
+- Connecting resolves a `ConnectOutcome` — `connected` / `cancelled` / `no-wallet` / `failed` —
+  never `null`. `no-wallet` is the honest dead end and is shown as a message with an install link,
+  not as silence.
+
+Mobile is different and needs no QR: on an iOS/Android user agent the SDK deep-links
+`casperwallet://wc?uri=…` itself, so the dialog stays on "Waiting for your wallet" (with a cancel)
+until the app returns.
+
 **To activate:**
 
 1. Register the app at <https://console.cspr.click> and copy the app id. CSPR.click issues a
@@ -203,6 +238,11 @@ why (both `signIn()` branches are dead without CSPR.click's React package).
    `typeof window.csprclick` must be `"object"` and `window.csprclick.chainName` must match the
    network; if it is `undefined`, check the devtools console for "CSPRClickSDK not requested."
    Then connect a real wallet and confirm the header chip loses its `demo` badge.
+7. Verify the no-extension route too, since it is the one most visitors hit: in a clean browser
+   profile with no wallet extension, click **Connect wallet**. You must get the pairing dialog with
+   a QR (scannable by Casper Wallet on a phone → "WalletConnect"), not a button that does nothing.
+   With neither an extension nor a wallet answering, you must get "Could not connect a wallet" and
+   an install link — never silence.
 
 The id in force is the one for `NEXT_PUBLIC_DEFAULT_NETWORK`, which also decides the SDK's
 `chainName` (`src/config/csprclick.ts`). One network's id is never used for the other: an id

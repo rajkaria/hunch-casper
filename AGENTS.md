@@ -92,6 +92,12 @@ the maintainer's checkout).
 `pnpm typecheck && pnpm lint && pnpm test && pnpm build` — all green. `tsc` also typechecks test
 files, so re-run the full gate after the last edit.
 
+One test fixture is generated rather than written: `test/fixtures/qr-vectors.json`, which pins the
+QR encoder behind the wallet pairing dialog against an independent implementation. Regenerating it
+needs Python (`pip install segno zxing-cpp numpy`) and re-runs a real barcode decoder over our own
+symbols, refusing to write the file if any of them fails to scan:
+`python3 scripts/qr-fixtures.py > test/fixtures/qr-vectors.json`.
+
 ## Originality
 Hunch exists on other chains. All Casper code here is newly written for this buildathon. Keep that
 true and state it in the README + submission.
