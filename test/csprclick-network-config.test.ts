@@ -11,7 +11,17 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { resolveCsprClickAppId, csprClickContentMode, walletPosture } from "@/config/csprclick";
+import {
+  CSPR_CLICK_PROVIDERS,
+  csprClickBootstrapScript,
+  csprClickBundleUrl,
+  csprClickChainName,
+  csprClickContentMode,
+  csprClickInitOptions,
+  DEFAULT_CSPR_CLICK_SDK_URL,
+  resolveCsprClickAppId,
+  walletPosture,
+} from "@/config/csprclick";
 
 describe("app id resolution is per network, with a shared fallback", () => {
   it("prefers the network-specific id", () => {
@@ -42,26 +52,88 @@ describe("app id resolution is per network, with a shared fallback", () => {
   });
 });
 
-describe("content mode tracks the network, not a phantom env var", () => {
-  it("maps each network to its CSPR.click content mode", () => {
-    expect(csprClickContentMode("testnet")).toBe("testnet");
-    expect(csprClickContentMode("mainnet")).toBe("mainnet");
+describe("contentMode is a presentation mode, and the network is chainName", () => {
+  // Read out of the shipped SDK: `const m = {POPUP:"popup", IFRAME:"iframe"}` and
+  // `const y = {MAINNET:"casper", TESTNET:"casper-test"}`. The old code sent the *network* as
+  // contentMode, a value in neither enum, and never sent chainName at all.
+  it("only ever emits a real contentMode member", () => {
+    expect(["iframe", "popup"]).toContain(csprClickContentMode());
+  });
+
+  it("defaults to iframe, because popup mode opens a page CSPR.click deleted", () => {
+    // Probed 2026-07-25 against accounts.cspr.click, the SDK's own default host:
+    //   /signin.html         404  ← the page popup mode opens
+    //   /v2.1/index.html     200  ← the core frame iframe mode installs
+    //   /wallet-ui/sign.html 200  ← the signing UI
+    // Neither mode's signIn() is usable without CSPR.click's React package, which is why the
+    // connector drives connect(providerKey) instead; but the surviving frames decide this value.
+    expect(csprClickContentMode()).toBe("iframe");
+    expect(csprClickInitOptions("testnet", "app-123").contentMode).toBe("iframe");
+  });
+
+  it("carries the network in chainName, per network", () => {
+    expect(csprClickChainName("testnet")).toBe("casper-test");
+    expect(csprClickChainName("mainnet")).toBe("casper");
+  });
+
+  it("never offers a provider the SDK does not define", () => {
+    // `casperdash` and `torus` were offered for months; neither string exists in SDK 2.1, so
+    // `init`'s `providers.map` dropped both on the floor.
+    expect([...CSPR_CLICK_PROVIDERS]).toEqual([
+      "casper-wallet",
+      "ledger",
+      "metamask-snap",
+      "walletconnect",
+    ]);
   });
 });
 
-describe("the bundle URL has no default, and that is deliberate", () => {
+describe("the bootstrap defines the one global the SDK actually looks for", () => {
+  const script = csprClickBootstrapScript(csprClickInitOptions("testnet", "app-123"));
+
+  it("defines csprClickSDKAsyncInit — without it the SDK loads and does nothing", () => {
+    // The SDK's last statement: typeof window.csprClickSDKAsyncInit == "function"
+    //   ? (window.csprclick = new Sdk, window.csprClickSDKAsyncInit())
+    //   : console.log("CSPRClickSDK not requested.")
+    expect(script).toContain("window.csprClickSDKAsyncInit=function()");
+    expect(script).toContain("window.csprclick.init(");
+  });
+
+  it("passes the app id and the right chain into init", () => {
+    expect(script).toContain('"appId":"app-123"');
+    expect(script).toContain('"chainName":"casper-test"');
+  });
+
+  it("never emits the network as contentMode again", () => {
+    expect(script).not.toContain('"contentMode":"testnet"');
+    expect(script).not.toContain('"contentMode":"mainnet"');
+  });
+
+  it("is a single statement-terminated line — it is inlined into the document head", () => {
+    expect(script.endsWith(";")).toBe(true);
+    expect(script).not.toContain("\n");
+  });
+});
+
+describe("the bundle URL defaults to the verified upstream loader", () => {
+  it("defaults to the CDN path the official UI bundle builds for itself", () => {
+    // Probed 2026-07-25: HTTP 200, 1,439,314 bytes, text/javascript.
+    expect(DEFAULT_CSPR_CLICK_SDK_URL).toBe("https://cdn.cspr.click/latest/csprclick-sdk-2.1.js");
+    expect(csprClickBundleUrl()).toBe(DEFAULT_CSPR_CLICK_SDK_URL);
+  });
+
   it("posture is 'unconfigured' with no app id — the demo wallet, visibly", () => {
     expect(walletPosture(null, null)).toBe("unconfigured");
     expect(walletPosture(null, "https://cdn.example/bundle.js")).toBe("unconfigured");
   });
 
-  it("posture is 'no-bundle' with an app id but no loader", () => {
-    // The state this repo shipped twice: first with no script tag at all, then with one pointing
-    // at cdn.jsdelivr.net/npm/@make-software/csprclick-ui@1/… — a version line npm never had.
+  it("still reports 'no-bundle' if an operator blanks the loader", () => {
+    // Unreachable through `csprClickBundleUrl()` now that a default exists, but the health check
+    // reads this function, and "configured but inert" must stay nameable.
     expect(walletPosture("app-123", null)).toBe("no-bundle");
   });
 
-  it("posture is 'armed' only when both halves are present", () => {
+  it("posture is 'armed' when both halves are present", () => {
     expect(walletPosture("app-123", "https://cdn.example/bundle.js")).toBe("armed");
   });
 });

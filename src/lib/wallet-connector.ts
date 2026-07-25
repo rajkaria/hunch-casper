@@ -52,10 +52,24 @@ export const demoConnector: WalletConnector = {
 
 /** The slice of the CSPR.click global this app uses. */
 export interface CsprClickLike {
+  /**
+   * Connect a specific provider (`"casper-wallet"`, `"ledger"`, …). This — not `signIn()` — is what
+   * CSPR.click's own React UI calls when a user picks a wallet: `clickRef.connect(providerKey)`.
+   */
+  connect?: (provider: string, options?: unknown) => Promise<unknown>;
+  /** Whether that provider's extension/transport is actually available in this browser. */
+  isProviderPresent?: (provider: string) => boolean;
   signIn?: () => Promise<unknown>;
   disconnect?: () => Promise<unknown>;
   getActiveAccount?: () => { public_key?: string; publicKey?: string; name?: string } | null;
 }
+
+/**
+ * Providers we attempt, in order. Ledger is omitted deliberately: `isProviderPresent("ledger")`
+ * only reports whether WebHID/WebUSB exists, not whether a device is attached and unlocked, so it
+ * answers true on most desktops and would shadow an installed extension.
+ */
+const CONNECT_ORDER = ["casper-wallet", "metamask-snap", "walletconnect"] as const;
 
 declare global {
   interface Window {
@@ -92,13 +106,54 @@ export function accountFromCsprClick(raw: unknown): WalletAccountLike | null {
   return { publicKey, label: name ?? "CSPR.click" };
 }
 
+/**
+ * The first provider whose transport is actually present, or `null` if the visitor has no wallet.
+ * Defensive around `isProviderPresent`, which *throws* on a key the SDK does not know rather than
+ * returning false.
+ */
+export function firstAvailableProvider(
+  sdk: CsprClickLike,
+  order: readonly string[] = CONNECT_ORDER,
+): string | null {
+  if (!sdk.isProviderPresent) return null;
+  for (const provider of order) {
+    try {
+      if (sdk.isProviderPresent(provider)) return provider;
+    } catch {
+      /* unknown provider key — try the next */
+    }
+  }
+  return null;
+}
+
 export const csprClickConnector: WalletConnector = {
   id: "csprclick",
   available: () => csprClick() !== null && csprClickAppId() !== null,
+  /**
+   * Why this drives `connect(provider)` rather than `signIn()`.
+   *
+   * `signIn()` does one of two things in SDK 2.1, neither of which works here. In `popup` mode it
+   * opens `accounts.cspr.click/signin.html` — a page CSPR.click has deleted, verified 404. In
+   * `iframe` mode it only *emits* a SIGN_IN event, expecting their React component library to draw
+   * the account picker; this app does not ship that package (it pins React 18.3.1 against our
+   * React 19). Either way the button does nothing at all, silently.
+   *
+   * `connect(providerKey)` is the call their own picker makes once a wallet is chosen, and it goes
+   * straight to the extension. Our UI is the picker. `signIn()` stays as a last resort so a future
+   * SDK that fixes the hosted page still works without a change here.
+   */
   async connect(): Promise<WalletAccountLike | null> {
     const sdk = csprClick();
-    if (!sdk?.signIn) return null;
+    if (!sdk) return null;
     try {
+      const provider = firstAvailableProvider(sdk);
+      if (provider && sdk.connect) {
+        const result = await sdk.connect(provider);
+        // `connect` resolves without the account on some paths; the SDK exposes it separately once
+        // the extension has approved.
+        return accountFromCsprClick(result) ?? accountFromCsprClick(sdk.getActiveAccount?.());
+      }
+      if (!sdk.signIn) return null;
       const result = await sdk.signIn();
       // Some versions resolve the account; others resolve nothing and expose it separately.
       return accountFromCsprClick(result) ?? accountFromCsprClick(sdk.getActiveAccount?.());

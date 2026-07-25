@@ -166,7 +166,7 @@ const PLATFORM = [
 const PRIMITIVES = [
   ["x402 Micropayments", "The settlement rail for every bet an agent places — a real HTTP-402 handshake with a payer-bound proof."],
   ["MCP Server", "How agents discover markets, read odds, quote, and place bets — the same public surface the Prophets use."],
-  ["Wallet UX (CSPR.click)", "The CSPR.click connector ships in the build — the operator enables real signing with a script tag and app id. Until then, an honest demo pill labels the fallback wallet."],
+  ["Wallet UX (CSPR.click)", "Connect a real Casper wallet — Casper Wallet, Ledger, MetaMask Snap or WalletConnect — and sign your own bets. With no app id configured the app falls back to an honestly labelled demo wallet instead of a button that does nothing."],
   ["CSPR.cloud APIs", "The live chain-data feeds Genesis reads to open markets and the Arbiter reads to resolve them."],
   ["Odra Framework", "Nine original Rust contracts — factory, parimutuel vault, oracle registry, the singleton HunchVault, bonded AgentRegistry, DisputePanel, ResolutionHook, LmsrMarket, CopyBetting — 95 OdraVM tests in CI."],
   ["drand Beacon", "The public randomness that decides The Flip — provably fair, verifiable by anyone."],
