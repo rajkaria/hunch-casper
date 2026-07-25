@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useWallet } from "@/components/wallet-context";
+import { runCsprClickAppIdProbe, useWallet } from "@/components/wallet-context";
 import {
   isClickConnectReturn,
   whenCsprClickReady,
@@ -21,6 +21,14 @@ import {
  */
 export function WalletResume() {
   const { connected, connect } = useWallet();
+
+  // Also the one always-mounted client component next to the SDK loader, which makes it the
+  // right place to ask CSPR.click whether the configured app id exists at all. The SDK asks the
+  // same question and dies silently on a "no" (see wallet-connector.ts); this probe is what turns
+  // that silence into a visible demo-wallet fallback and a reason in the bet panel.
+  useEffect(() => {
+    runCsprClickAppIdProbe();
+  }, []);
 
   useEffect(() => {
     if (connected) return;

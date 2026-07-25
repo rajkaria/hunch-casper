@@ -19,6 +19,8 @@
  * is the contract either way, so a future npm-based connector is a swap here and nowhere else.
  */
 
+import { csprClickApplicationUrl } from "@/config/csprclick";
+
 export interface WalletAccountLike {
   publicKey: string;
   label: string;
@@ -160,6 +162,8 @@ declare global {
     csprclick?: CsprClickLike;
     /** Set by the CSPR.click bootstrap script; also readable from NEXT_PUBLIC_CSPR_CLICK_APP_ID. */
     __CSPR_CLICK_APP_ID__?: string;
+    /** Set by the bootstrap when a WalletConnect Cloud project id is configured. */
+    __CSPR_CLICK_WC_PROJECT_ID__?: string;
     /** Installed by the Casper Wallet browser extension. Its presence is not a heuristic. */
     CasperWalletProvider?: () => CasperWalletProviderLike;
   }
@@ -263,12 +267,28 @@ export type WalletTransport =
 const NO_WALLET_MESSAGE =
   "No Casper wallet found in this browser. Install the Casper Wallet extension to bet with your own account.";
 
+/**
+ * Whether the SDK was booted with a WalletConnect Cloud project id — the precondition for the
+ * pairing route to exist at all. The provider's constructor throws "WalletConnect settings not
+ * present" without one (`config/csprclick.ts` quotes the source), so offering `walletconnect`
+ * unconfigured buys the visitor "Could not establish a connection with the provider" from a QR
+ * flow that can never start. Unconfigured, it is simply not offered: a visitor with no extension
+ * gets the honest install prompt instead of a broken dialog.
+ */
+export function walletConnectConfigured(): boolean {
+  const fromEnv = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+  if (fromEnv && fromEnv.length > 0) return true;
+  return typeof window !== "undefined" && typeof window.__CSPR_CLICK_WC_PROJECT_ID__ === "string";
+}
+
 export function detectWalletTransport(
   sdk: CsprClickLike,
   order: readonly string[] = CONNECT_ORDER,
+  wcConfigured: boolean = walletConnectConfigured(),
 ): WalletTransport {
   if (!sdk.isProviderPresent) return { provider: null, reason: "undetectable" };
-  const provider = firstAvailableProvider(sdk, order);
+  const usable = wcConfigured ? order : order.filter((p) => !providerNeedsPairing(p));
+  const provider = firstAvailableProvider(sdk, usable);
   if (provider !== null) return { provider };
   return { provider: null, reason: "no-wallet", message: NO_WALLET_MESSAGE };
 }
@@ -279,6 +299,79 @@ export function csprClickAppId(): string | null {
   if (fromEnv && fromEnv.length > 0) return fromEnv;
   if (typeof window !== "undefined" && window.__CSPR_CLICK_APP_ID__) return window.__CSPR_CLICK_APP_ID__;
   return null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// App-id rejection — the failure the SDK cannot report
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Why the app probes CSPR.click's registration endpoint itself.
+ *
+ * "App id set + SDK loaded" was `available()`'s whole test, and it has a hole: an app id that
+ * CSPR.click never issued. The SDK's `init()` fetches `application/{appId}.json`, gets
+ * `401 {"error":{"message":"wrong application id"}}`, and crashes unhandled on the error body
+ * (`e.menu_items.map` — see `csprClickApplicationUrl` in `config/csprclick.ts` for the verbatim
+ * source). No event is emitted, the signing frame is never installed, and this app kept posture
+ * "armed" over a wallet that could never sign — worse than the labelled demo fallback, which at
+ * least works.
+ *
+ * So the connector asks the same endpoint the same question, and a conclusive "no" flips
+ * `available()` to false: `activeConnector()` hands out the demo wallet again, visibly, and the
+ * reason is kept for the UI. Only a definitive rejection (401/403/404) counts — a network burp or
+ * a CSPR.click outage (5xx) proves nothing about the id and must not demote a working config.
+ */
+let appIdRejection: string | null = null;
+
+/** The rejection reason, or `null` while the configured id is not known-bad. */
+export function csprClickAppIdRejection(): string | null {
+  return appIdRejection;
+}
+
+export function markCsprClickAppIdRejected(message: string): void {
+  appIdRejection = message;
+}
+
+export function __resetCsprClickAppIdRejection(): void {
+  appIdRejection = null;
+}
+
+/**
+ * Ask accounts.cspr.click whether the configured app id exists. Resolves to the rejection message
+ * when the answer is a definitive no, `null` otherwise (accepted, unreachable, or nothing to ask).
+ * Safe to call more than once; a marked rejection is remembered and not re-probed.
+ */
+export async function probeCsprClickAppId(fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  if (appIdRejection !== null) return appIdRejection;
+  const appId = csprClickAppId();
+  if (appId === null) return null;
+  try {
+    // `credentials: "omit"` on purpose: the SDK's own fetch sends cookies to keep a session alive,
+    // but this probe only asks whether the registration exists, and the answer is the same.
+    const res = await fetchImpl(csprClickApplicationUrl(appId), { credentials: "omit" });
+    if (res.ok) return null;
+    if (res.status !== 401 && res.status !== 403 && res.status !== 404) return null;
+    let detail = "";
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (typeof body?.error?.message === "string") detail = `: ${body.error.message}`;
+    } catch {
+      /* a bare status is still a definitive no */
+    }
+    markCsprClickAppIdRejected(
+      `CSPR.click rejected this site's app id (HTTP ${res.status}${detail}). ` +
+        `Real signing is off until a registered id is set — mint one at console.cspr.click and ` +
+        `redeploy with NEXT_PUBLIC_CSPR_CLICK_APP_ID.`,
+    );
+    if (typeof window !== "undefined") {
+      // The SDK's only symptom is an uncaught TypeError from deep inside its bundle. Say what
+      // actually happened, once, next to it.
+      console.warn(`[wallet] ${appIdRejection}`);
+    }
+    return appIdRejection;
+  } catch {
+    return null; // offline, CORS, DNS — inconclusive, so the config keeps the benefit of the doubt
+  }
 }
 
 /**
@@ -743,7 +836,11 @@ export async function whenCsprClickReady(
 
 export const csprClickConnector: WalletConnector = {
   id: "csprclick",
-  available: () => csprClick() !== null && csprClickAppId() !== null,
+  // Loaded, configured, AND not known-rejected: an app id CSPR.click refuses leaves the SDK
+  // half-initialised with no signing frame, and pretending that is "available" was this app's
+  // production posture for a while. See the app-id rejection block above.
+  available: () =>
+    csprClick() !== null && csprClickAppId() !== null && csprClickAppIdRejection() === null,
   /**
    * Why this drives `connect(provider)` rather than `signIn()`.
    *

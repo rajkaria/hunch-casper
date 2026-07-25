@@ -10,7 +10,7 @@
  * CSPR.click also issues a *different* app id per network, so one shared id cannot serve both.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CSPR_CLICK_PROVIDERS,
   csprClickBootstrapScript,
@@ -135,5 +135,33 @@ describe("the bundle URL defaults to the verified upstream loader", () => {
 
   it("posture is 'armed' when both halves are present", () => {
     expect(walletPosture("app-123", "https://cdn.example/bundle.js")).toBe("armed");
+  });
+});
+
+describe("WalletConnect settings ride along only when a project id is configured", () => {
+  // The SDK's WalletConnect provider throws "WalletConnect settings not present" without a
+  // `walletConnect: {projectId}` block in init(...) — a QR flow that can never start. The block
+  // is emitted exactly when NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is set, and the bootstrap
+  // publishes the same fact for the connector's offer-it-or-don't decision.
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("omits walletConnect from init options when no project id is set", () => {
+    vi.stubEnv("NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID", "");
+    expect(csprClickInitOptions("testnet", "app-1").walletConnect).toBeUndefined();
+  });
+
+  it("passes the project id through when set, and the bootstrap publishes it", () => {
+    vi.stubEnv("NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID", "wc-project-42");
+    const options = csprClickInitOptions("testnet", "app-1");
+    expect(options.walletConnect).toEqual({ projectId: "wc-project-42" });
+    const script = csprClickBootstrapScript(options);
+    expect(script).toContain('window.__CSPR_CLICK_WC_PROJECT_ID__="wc-project-42"');
+  });
+
+  it("keeps the bootstrap free of the WC global when unconfigured", () => {
+    vi.stubEnv("NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID", "");
+    expect(csprClickBootstrapScript(csprClickInitOptions("testnet", "app-1"))).not.toContain(
+      "__CSPR_CLICK_WC_PROJECT_ID__",
+    );
   });
 });

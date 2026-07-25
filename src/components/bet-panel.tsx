@@ -58,7 +58,7 @@ function ResultLine({ label, result }: { label: string; result: ChainResult }) {
 const SHOW_DEMO_RESOLVE = process.env.NEXT_PUBLIC_SHOW_DEMO_RESOLVE === "true";
 
 export function BetPanel({ market }: { market: Market }) {
-  const { account, connected, connect, connectError, signAndSend } = useWallet();
+  const { account, connected, connect, connectError, signAndSend, signingDisabledReason } = useWallet();
   const [outcomeKey, setOutcomeKey] = useState(market.outcomes[0]?.key ?? "");
   const [amount, setAmount] = useState("1");
   const [betting, setBetting] = useState(false);
@@ -252,6 +252,12 @@ export function BetPanel({ market }: { market: Market }) {
             <> · escrowed by the operator on your behalf</>
           )}
         </p>
+      )}
+      {/* The deployment itself is miswired: CSPR.click refused the app id, so real signing is
+          impossible no matter what the visitor does. Named out loud because the demo fallback it
+          causes would otherwise read as the visitor's fault. */}
+      {signingDisabledReason && (
+        <p className="mt-2 text-[11px] text-muted">{signingDisabledReason}</p>
       )}
       {/* A browser with no wallet in it: the one connect failure that needs a way forward. */}
       {connectError && (

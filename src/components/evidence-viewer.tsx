@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { MarketStatus } from "@/core/types";
 
 /**
  * Evidence viewer — renders the replayable resolution evidence for a settled market and shows
@@ -8,7 +9,17 @@ import { useEffect, useState } from "react";
  * a market has published evidence (so it is safe to drop onto every market page). The green/red
  * "verified" pill is the point: it reflects a live replay of the recipe against the snapshot, not a
  * claim — "audit this resolution" made a glance.
+ *
+ * Settled markets only. Evidence is published at resolution, so before then the probe's answer is
+ * a foregone 404 — which the component handled, but the browser still printed as a red network
+ * error on every open market's console. A guaranteed error on the happy path teaches people to
+ * ignore that console, so the fetch is skipped until the market's status says a bundle could
+ * exist. (`void` settles too: the Arbiter publishes a bundle with `winningOutcomeKey: null`.)
  */
+
+export function marketMayHaveEvidence(status: MarketStatus): boolean {
+  return status === "resolved" || status === "void";
+}
 
 interface EvidenceResponse {
   link: { recipeHash: string; bundleHash: string; uri: string; resolvedAtIso: string };
@@ -21,11 +32,22 @@ interface EvidenceResponse {
   verification: { ok: boolean; recipeHashMatches: boolean; bundleHashMatches: boolean; outcomeMatches: boolean } | null;
 }
 
-export function EvidenceViewer({ slug, network }: { slug: string; network: string }) {
+export function EvidenceViewer({
+  slug,
+  network,
+  status,
+}: {
+  slug: string;
+  network: string;
+  status: MarketStatus;
+}) {
+  const settled = marketMayHaveEvidence(status);
   const [data, setData] = useState<EvidenceResponse | null>(null);
-  const [state, setState] = useState<"loading" | "none" | "ready">("loading");
+  // An unsettled market starts (and stays) at "none": no probe, no state transition, no render.
+  const [state, setState] = useState<"loading" | "none" | "ready">(settled ? "loading" : "none");
 
   useEffect(() => {
+    if (!settled) return;
     let live = true;
     fetch(`/api/markets/${slug}/evidence?network=${network}`)
       .then((r) => (r.ok ? r.json() : null))
@@ -42,7 +64,7 @@ export function EvidenceViewer({ slug, network }: { slug: string; network: strin
     return () => {
       live = false;
     };
-  }, [slug, network]);
+  }, [slug, network, settled]);
 
   if (state !== "ready" || !data) return null;
   const v = data.verification;

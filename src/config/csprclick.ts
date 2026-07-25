@@ -98,6 +98,27 @@ export const CSPR_CLICK_PROVIDERS = [
   "walletconnect",
 ] as const;
 
+/**
+ * WalletConnect inside CSPR.click needs its own credential, and the SDK is unforgiving about it.
+ * The provider's constructor, verbatim from the shipped bundle:
+ *
+ *     constructor(e){ ...; if(!e.options.walletConnect) throw new Error("WalletConnect settings not present");
+ *       this.wcSettings = e.options.walletConnect }
+ *     async initializeWCClient(){ ... rf.init({ relayUrl: this.wcSettings.relayUrl || "wss://relay.walletconnect.com",
+ *       projectId: this.wcSettings.projectId, ... }) }
+ *
+ * So without a `walletConnect: { projectId }` block in `init(...)`, `getProviderInstance` throws,
+ * the SDK logs "Error getting provider instance", and a desktop visitor with no extension gets
+ * "Could not establish a connection with the provider" — a QR flow that can never start. The
+ * project id is minted at WalletConnect Cloud (cloud.reown.com), is public like the app id, and
+ * arrives via `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`. Absent, the connector stops *offering*
+ * WalletConnect at all (see `wallet-connector.ts`) — an install prompt is honest, a doomed
+ * pairing attempt is not.
+ */
+export function csprClickWalletConnectProjectId(): string | null {
+  return present(process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID);
+}
+
 /** The options object handed to `window.csprclick.init(...)`. */
 export interface CsprClickInitOptions {
   appName: string;
@@ -105,15 +126,19 @@ export interface CsprClickInitOptions {
   contentMode: CsprClickContentMode;
   chainName: "casper-test" | "casper";
   providers: readonly string[];
+  /** Present only when a WalletConnect Cloud project id is configured — see above. */
+  walletConnect?: { projectId: string };
 }
 
 export function csprClickInitOptions(network: CasperNetwork, appId: string): CsprClickInitOptions {
+  const wcProjectId = csprClickWalletConnectProjectId();
   return {
     appName: "Hunch on Casper",
     appId,
     contentMode: csprClickContentMode(),
     chainName: csprClickChainName(network),
     providers: CSPR_CLICK_PROVIDERS,
+    ...(wcProjectId !== null ? { walletConnect: { projectId: wcProjectId } } : {}),
   };
 }
 
@@ -138,7 +163,12 @@ export function csprClickBootstrapScript(options: CsprClickInitOptions): string 
     `window.csprClickSDKAsyncInit=function(){window.csprclick.init(${JSON.stringify(options)})};` +
     // Kept for `csprClickAppId()` in the connector, which reads it when the public env was not
     // inlined into the bundle. It is ours, not the SDK's — the SDK never looks at it.
-    `window.__CSPR_CLICK_APP_ID__=${JSON.stringify(options.appId)};`
+    `window.__CSPR_CLICK_APP_ID__=${JSON.stringify(options.appId)};` +
+    // Same contract for the WalletConnect project id: the connector consults it to decide whether
+    // offering the pairing route can possibly work (see `walletConnectConfigured`).
+    (options.walletConnect
+      ? `window.__CSPR_CLICK_WC_PROJECT_ID__=${JSON.stringify(options.walletConnect.projectId)};`
+      : "")
   );
 }
 
@@ -153,6 +183,32 @@ export function csprClickBootstrapScript(options: CsprClickInitOptions): string 
  * runs React 19 — see the note on `csprClickBundleUrl`).
  */
 export const DEFAULT_CSPR_CLICK_SDK_URL = "https://cdn.cspr.click/latest/csprclick-sdk-2.1.js";
+
+/**
+ * The registration record the SDK fetches before anything else works. First thing `init()` does
+ * after installing its listeners, verbatim from the shipped bundle:
+ *
+ *     fetch(`${host}/application/${this.appId}.json`, {credentials:"include"})
+ *       .then(e => (this.digestAuth = e.headers.get("WWW-Authenticate") || "", e.json()))
+ *       .then(e => { this.appSettings = {...e, menu_items: e.menu_items.map(...)}; ...
+ *         this.getClickFrame(this.digestAuth) })
+ *
+ * An app id CSPR.click has never issued gets `401 {"error":{"message":"wrong application id"}}`
+ * back — a body with no `menu_items` — so `.map` throws inside the promise chain, nothing catches
+ * it, and `getClickFrame` never runs. The SDK emits no event for this. It just stops: the signing
+ * frame is never installed, `connect()` half-works against the extension, `send()` can never work,
+ * and the only witness is an uncaught TypeError in the console. Probed 2026-07-26 with the then-
+ * deployed id; that is not a hypothetical, it is what production was doing.
+ *
+ * This URL is therefore the activation's ground truth, and both probes below (client-side in
+ * `wallet-connector.ts`, server-side in `lib/health.ts`) ask it the same question the SDK will:
+ * "does this app id exist?" — because the SDK's own answer to a "no" is to die silently.
+ */
+export const CSPR_CLICK_ACCOUNTS_HOST = "https://accounts.cspr.click";
+
+export function csprClickApplicationUrl(appId: string): string {
+  return `${CSPR_CLICK_ACCOUNTS_HOST}/api/application/${appId}.json`;
+}
 
 /**
  * The ids as configured on THIS deployment. Read as static `process.env.X` member expressions on
