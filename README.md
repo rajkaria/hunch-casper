@@ -242,9 +242,10 @@ recurring rounds roll over on their own (a matured round resolves and opens its 
 `/api/health` reports the loop's own vital signs — resolution, rotation, and whether the chain fold
 still sees events.
 
-**Honestly not done yet:** the demo video; CSPR.click (`NEXT_PUBLIC_CSPR_CLICK_APP_ID` is unset, so
-the header wallet is still the labelled demo one and a human cannot place a real bet); an unfunded
-Agent League prize pool; and mainnet, where nothing is deployed. See
+**Honestly not done yet:** the demo video; a human-approved signature end to end (CSPR.click is
+wired and armed on testnet — the visitor's own wallet signs the bet, and a browser with no extension
+gets a WalletConnect pairing QR — but nobody has yet clicked "Sign" in the extension against the
+live deployment); an unfunded Agent League prize pool; and mainnet, where nothing is deployed. See
 [`VISION.md`](./VISION.md) for what comes after the hackathon.
 
 ## Community & contributing
