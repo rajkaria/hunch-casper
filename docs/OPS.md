@@ -158,11 +158,22 @@ required.
 
 **To activate:**
 
-1. Register the app at <https://console.cspr.click> and copy the app id.
-2. `vercel env add NEXT_PUBLIC_CSPR_CLICK_APP_ID production` — paste the id.
+1. Register the app at <https://console.cspr.click> and copy the app id. CSPR.click issues a
+   **different id per network** — take both if you plan to serve both.
+2. `vercel env add NEXT_PUBLIC_TESTNET_CSPR_CLICK_APP_ID production` (and
+   `NEXT_PUBLIC_MAINNET_CSPR_CLICK_APP_ID` if you have it). `NEXT_PUBLIC_CSPR_CLICK_APP_ID` still
+   works as a single shared fallback.
 3. Redeploy. `NEXT_PUBLIC_*` vars bake at build time, so the currently-running build will not pick
    it up.
 4. Verify: the header chip should lose its `demo` badge after connecting a real wallet.
+
+The id in force is the one for `NEXT_PUBLIC_DEFAULT_NETWORK`, and it also decides the SDK's
+`contentMode` (`src/config/csprclick.ts`). One network's id is never used for the other: an id
+minted for mainnet would boot the SDK against the wrong chain, which is worse than falling back to
+the labelled demo account.
+
+An app id is a **public identifier** — it is inlined into the browser bundle by design and is not a
+secret. The CSPR.cloud API key (§2) is the opposite: server-only, never `NEXT_PUBLIC_`.
 
 With no app id set, no third-party script is served to anyone.
 
