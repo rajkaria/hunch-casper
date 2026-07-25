@@ -12,7 +12,7 @@
  * flips. Pure functions here, so both behaviours are unit-tested without a browser.
  */
 
-import type { CasperNetwork } from "@/config/network";
+import { getNetworkConfig, type CasperNetwork } from "@/config/network";
 
 /** The configured ids, as read from the environment. Any of them may be absent. */
 export interface CsprClickAppIds {
@@ -37,10 +37,122 @@ export function resolveCsprClickAppId(network: CasperNetwork, ids: CsprClickAppI
   return present(network === "mainnet" ? ids.mainnet : ids.testnet) ?? present(ids.shared);
 }
 
-/** CSPR.click's `contentMode`, which is simply the network the wallet should sign against. */
-export function csprClickContentMode(network: CasperNetwork): "testnet" | "mainnet" {
-  return network === "mainnet" ? "mainnet" : "testnet";
+/**
+ * `contentMode` is **not the network**. Read from the shipped SDK (2.1.0), the enum is:
+ *
+ *     const m = { POPUP: "popup", IFRAME: "iframe" };
+ *
+ * — how the wallet UI is *presented*, nothing to do with which chain is signed against. This file
+ * previously passed `"testnet"`/`"mainnet"` here, which is not a member of that enum: the SDK's
+ * `init` does `this.contentMode = e.contentMode ? e.contentMode : IFRAME`, so a bogus truthy value
+ * is stored verbatim and every later `contentMode == POPUP` comparison silently answers false. The
+ * network is carried by `chainName` instead (see below), which we were never sending at all.
+ */
+export type CsprClickContentMode = "iframe" | "popup";
+
+/**
+ * `iframe`, the SDK's own default — because the alternative is verifiably broken upstream.
+ *
+ * `signIn()` in the shipped SDK branches on exactly this value:
+ *
+ *     signIn(){ this.actionState = SIGN_IN;
+ *       if (this.contentMode == POPUP) { window.open(`${host}/signin.html?app=…`, "cc-signin-popup", …) }
+ *       else { this.emit(SIGN_IN, {provider: undefined}) } }
+ *
+ * Neither branch is usable on its own, which is why `wallet-connector.ts` drives `connect()`
+ * instead of `signIn()` — see the note there. What settles the value here is which hosted pages
+ * still exist. Probed 2026-07-25 against `https://accounts.cspr.click`, the SDK's own default host:
+ *
+ *     /signin.html            404 (nginx)   ← the page POPUP mode opens
+ *     /v2.1/index.html        200           ← the hidden core frame IFRAME mode installs
+ *     /wallet-ui/sign.html    200           ← the signing UI, used to approve a transaction
+ *
+ * So CSPR.click's SDK 2.1 ships a popup mode pointing at a page they have since deleted: choosing
+ * `popup` buys a 404 in a 480×480 window. `iframe` keeps the core frame and the signing UI, both
+ * alive, and the account picker is ours to render.
+ */
+export function csprClickContentMode(): CsprClickContentMode {
+  return process.env.NEXT_PUBLIC_CSPR_CLICK_CONTENT_MODE === "popup" ? "popup" : "iframe";
 }
+
+/**
+ * The chain the wallet signs against. `{ MAINNET: "casper", TESTNET: "casper-test" }` in the SDK —
+ * the same two strings `config/network.ts` already owns as `chainName`, so it is read from there
+ * rather than re-derived. This is the value that actually makes the wallet network-correct.
+ */
+export function csprClickChainName(network: CasperNetwork): "casper-test" | "casper" {
+  return getNetworkConfig(network).chainName;
+}
+
+/**
+ * Wallet providers offered in the picker. Exactly the four the shipped SDK defines
+ * (`casper-wallet`, `ledger`, `metamask-snap`, `walletconnect`). The list this app used to send
+ * also carried `casperdash` and `torus`; neither string appears anywhere in SDK 2.1, and `init`
+ * does `e.providers.map(...)` matching against its own enum, so both were silently dropped —
+ * offered in our config, absent from the picker.
+ */
+export const CSPR_CLICK_PROVIDERS = [
+  "casper-wallet",
+  "ledger",
+  "metamask-snap",
+  "walletconnect",
+] as const;
+
+/** The options object handed to `window.csprclick.init(...)`. */
+export interface CsprClickInitOptions {
+  appName: string;
+  appId: string;
+  contentMode: CsprClickContentMode;
+  chainName: "casper-test" | "casper";
+  providers: readonly string[];
+}
+
+export function csprClickInitOptions(network: CasperNetwork, appId: string): CsprClickInitOptions {
+  return {
+    appName: "Hunch on Casper",
+    appId,
+    contentMode: csprClickContentMode(),
+    chainName: csprClickChainName(network),
+    providers: CSPR_CLICK_PROVIDERS,
+  };
+}
+
+/**
+ * The bootstrap the SDK actually requires, and the reason the wallet stayed dead.
+ *
+ * The last line of `csprclick-sdk-2.1.js` is, verbatim:
+ *
+ *     !function(e){"function"==typeof e.csprClickSDKAsyncInit
+ *       ? (e.csprclick = new _h, e.csprClickSDKAsyncInit())
+ *       : console.log("CSPRClickSDK not requested.")}(window)
+ *
+ * So `window.csprclick` is installed **only if `window.csprClickSDKAsyncInit` is already a function
+ * when the bundle executes** — otherwise the SDK loads a megabyte of JavaScript and deliberately
+ * does nothing. This app instead published `window.__CSPR_CLICK_APP_ID__` and
+ * `window.__CSPR_CLICK_OPTIONS__`, two globals that appear **zero** times in the SDK. Supplying the
+ * loader URL alone would therefore have changed nothing: still no `window.csprclick`, still
+ * `available() === false`, still the demo pill — with a 1.4 MB download added to every page.
+ */
+export function csprClickBootstrapScript(options: CsprClickInitOptions): string {
+  return (
+    `window.csprClickSDKAsyncInit=function(){window.csprclick.init(${JSON.stringify(options)})};` +
+    // Kept for `csprClickAppId()` in the connector, which reads it when the public env was not
+    // inlined into the bundle. It is ours, not the SDK's — the SDK never looks at it.
+    `window.__CSPR_CLICK_APP_ID__=${JSON.stringify(options.appId)};`
+  );
+}
+
+/**
+ * The verified loader. Probed 2026-07-25: **HTTP 200, 1,439,314 bytes, `text/javascript`**.
+ *
+ * This is the URL the official UI bundle builds for itself at runtime —
+ * `` `${options.csprclickHost || "https://cdn.cspr.click/latest"}/csprclick-sdk-${"2.1"}.js` `` —
+ * so it is upstream's own path, not a guess. It is the plain SDK: it installs `window.csprclick`
+ * and nothing else, with no React peer dependency (the npm `@make-software/csprclick-ui` package
+ * is a React 18.3.1 component library that mounts a navbar into `#csprclick-navbar`, and this app
+ * runs React 19 — see the note on `csprClickBundleUrl`).
+ */
+export const DEFAULT_CSPR_CLICK_SDK_URL = "https://cdn.cspr.click/latest/csprclick-sdk-2.1.js";
 
 /**
  * The ids as configured on THIS deployment. Read as static `process.env.X` member expressions on
@@ -56,24 +168,28 @@ export function csprClickAppIdsFromEnv(): CsprClickAppIds {
 }
 
 /**
- * The URL of the browser bundle that installs `window.csprclick`. **There is no default**, and
- * that is the point.
+ * The URL of the browser bundle that installs `window.csprclick`.
  *
- * This file used to hardcode `cdn.jsdelivr.net/npm/@make-software/csprclick-ui@1/dist/
- * csprclick-ui.min.js`. Probed 2026-07-25: it **404s**, and always did — no `1.x` line of that
- * package was ever published (npm's oldest is `2.0.0-beta.7`, latest `2.1.0`), and no version of
- * it ships a UMD/IIFE build at all. `@make-software/csprclick-ui` is a **React component library**
- * with a hard peer dependency on React 18.3.1 (this app is on 19.2.4), and its sibling
- * `@make-software/csprclick-core-client@1.11.0` publishes *only* `.d.ts` declarations — no runtime
- * JavaScript whatsoever, despite naming `./index.js` as its `main`.
+ * The previous revision of this file concluded that no such bundle existed and refused to ship a
+ * default. That conclusion was half right, and the half that was wrong kept the wallet dead.
  *
- * So the "drop-in browser bundle" this integration was built around does not exist on npm. A
- * guessed CDN path would be the third time this codebase shipped a parser or URL asserted rather
- * than verified. Instead the operator supplies the exact URL their CSPR.click console gives them,
- * and until they do, **no script tag is emitted and no visitor's page 404s**.
+ * Right: `cdn.jsdelivr.net/npm/@make-software/csprclick-ui@1/dist/csprclick-ui.min.js` 404s and
+ * always did — no `1.x` of that package was ever published (npm's oldest is `2.0.0-beta.7`, latest
+ * `2.1.0`), no version ships a UMD/IIFE build, it is a React component library pinned to React
+ * 18.3.1 (this app is on React 19), and its sibling `@make-software/csprclick-core-client@1.11.0`
+ * is a 5.7 KB tarball of **nothing but `.d.ts` files** despite naming `./index.js` as `main`. Its
+ * own README says so: "contains type definitions for using CSPR.click SDK".
+ *
+ * Wrong: "therefore the drop-in bundle does not exist." It is simply not on npm. Upstream serves it
+ * from their own CDN, which is where the official UI bundle fetches it from at runtime, and which
+ * the `.d.ts`-only package's README points at. Verified by download, not by assertion — see
+ * `DEFAULT_CSPR_CLICK_SDK_URL`. A default that has been fetched and read is not the same class of
+ * claim as the guessed URL that motivated removing it, so the default is back and the wallet works
+ * out of the box. `NEXT_PUBLIC_CSPR_CLICK_BUNDLE_URL` still overrides, for a pinned or self-hosted
+ * copy.
  */
 export function csprClickBundleUrl(): string | null {
-  return present(process.env.NEXT_PUBLIC_CSPR_CLICK_BUNDLE_URL);
+  return present(process.env.NEXT_PUBLIC_CSPR_CLICK_BUNDLE_URL) ?? DEFAULT_CSPR_CLICK_SDK_URL;
 }
 
 /** What the wallet can actually do right now, given what is configured. */

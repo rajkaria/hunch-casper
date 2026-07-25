@@ -98,6 +98,63 @@ describe("connecting", () => {
     await expect(csprClickConnector.connect()).resolves.toBeNull();
   });
 
+  it("prefers connect(provider) over signIn — signIn's hosted page is a 404", async () => {
+    // `accounts.cspr.click/signin.html`, which popup mode opens, was deleted upstream; iframe mode
+    // only emits an event for a React package this app does not ship. `connect(providerKey)` is
+    // what CSPR.click's own picker calls, and it goes straight to the extension.
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    const calls: string[] = [];
+    installSdk({
+      isProviderPresent: (p: string) => p === "casper-wallet",
+      connect: async (p: string) => {
+        calls.push(p);
+        return { public_key: "01dd", name: "Casper Wallet" };
+      },
+      signIn: async () => {
+        calls.push("signIn");
+        return null;
+      },
+    });
+    expect(await csprClickConnector.connect()).toEqual({
+      publicKey: "01dd",
+      label: "Casper Wallet",
+    });
+    expect(calls).toEqual(["casper-wallet"]);
+  });
+
+  it("skips providers that are not installed and connects the one that is", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    const calls: string[] = [];
+    installSdk({
+      // Unknown keys THROW in the real SDK rather than returning false.
+      isProviderPresent: (p: string) => {
+        if (p === "casper-wallet") return false;
+        if (p === "metamask-snap") throw new Error("Unsupported wallet: " + p);
+        return true;
+      },
+      connect: async (p: string) => {
+        calls.push(p);
+        return { public_key: "01ee" };
+      },
+      getActiveAccount: () => null,
+    });
+    expect(await csprClickConnector.connect()).toEqual({
+      publicKey: "01ee",
+      label: "CSPR.click",
+    });
+    expect(calls).toEqual(["walletconnect"]);
+  });
+
+  it("falls back to signIn when no wallet transport is present at all", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    installSdk({
+      isProviderPresent: () => false,
+      connect: async () => ({ public_key: "01ff" }),
+      signIn: async () => ({ public_key: "01aa", name: "Alice" }),
+    });
+    expect(await csprClickConnector.connect()).toEqual({ publicKey: "01aa", label: "Alice" });
+  });
+
   it("does not throw when the SDK's own disconnect fails", async () => {
     installSdk({
       disconnect: async () => {

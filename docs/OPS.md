@@ -156,20 +156,34 @@ long time the seam was complete and nothing loaded the bundle, so `available()` 
 and the app was configured-but-inert. `test/csprclick-activation.test.ts` pins that both are
 required.
 
-**⚠️ An app id alone is not enough, and the bundle URL this repo used to hardcode does not exist.**
+**The loader exists after all — it is just not on npm.** An earlier revision of this runbook
+concluded there was no drop-in `<script>` and made the URL operator-supplied with no default. Half
+of that was right; the half that was wrong kept the wallet dead even after an app id was set.
 
-Probed 2026-07-25:
+Re-probed 2026-07-25, by download rather than assertion:
 
 | Thing | Reality |
 |---|---|
-| `cdn.jsdelivr.net/npm/@make-software/csprclick-ui@1/dist/csprclick-ui.min.js` (was hardcoded) | **HTTP 404.** No `1.x` line of that package was ever published — npm's oldest is `2.0.0-beta.7`, latest `2.1.0`. |
-| `@make-software/csprclick-ui@2.1.0` | A **React component library**. No UMD/IIFE build; peer-depends on **React 18.3.1** (this app runs 19.2.4), styled-components 5, and a GitHub-pinned `cspr-design`. |
-| `@make-software/csprclick-core-client@1.11.0` | Publishes **only `.d.ts` declarations** — zero runtime JavaScript, despite declaring `main: "./index.js"`. |
-| `cdn.cspr.click` | Exists (S3), but every path probed returns `AccessDenied`. |
+| `cdn.jsdelivr.net/npm/@make-software/csprclick-ui@1/…` (was hardcoded) | **HTTP 404**, always was. No `1.x` of that package was ever published. |
+| `@make-software/csprclick-ui@2.1.0` | A **React component library**. No UMD build; peer-depends on **React 18.3.1** (this app runs 19). Mounts a navbar into `#csprclick-navbar`. |
+| `@make-software/csprclick-core-client@1.11.0` | **`.d.ts` files only** — 5.7 KB, zero runtime JS, despite declaring `main: "./index.js"`. Its README says so outright. |
+| **`cdn.cspr.click/latest/csprclick-sdk-2.1.js`** | **HTTP 200, 1,439,314 bytes, `text/javascript`.** The plain SDK. Installs `window.csprclick`, no React needed. This is now the default. |
+| `accounts.cspr.click/signin.html` | **HTTP 404 (nginx).** The page the SDK's own `popup` mode opens — CSPR.click deleted it. |
+| `accounts.cspr.click/v2.1/index.html`, `/wallet-ui/sign.html` | **200.** The core frame and signing UI that `iframe` mode uses. |
 
-So there is no verified drop-in `<script>` that installs `window.csprclick`. The bundle URL is
-therefore **operator-supplied with no default**: guessing a CDN path would be the third time this
-codebase shipped a URL or parser asserted rather than verified.
+Two non-obvious things that make the difference between a working wallet and a silent no-op, both
+now handled in `src/config/csprclick.ts`:
+
+- **`window.csprClickSDKAsyncInit` must be defined before the SDK script runs.** Its last statement
+  is `typeof window.csprClickSDKAsyncInit == "function" ? (window.csprclick = new Sdk, …) :
+  console.log("CSPRClickSDK not requested.")`. This app used to publish `__CSPR_CLICK_APP_ID__` and
+  `__CSPR_CLICK_OPTIONS__` instead — two globals that appear **zero** times in the SDK.
+- **`contentMode` is `iframe`/`popup`, not the network.** The network is `chainName`
+  (`casper-test`/`casper`), which was never being sent. Sending the network as `contentMode` stored
+  a non-member of the enum and quietly disabled every `contentMode ==` comparison.
+
+Sign-in itself goes through `connect(providerKey)`, not `signIn()` — see `wallet-connector.ts` for
+why (both `signIn()` branches are dead without CSPR.click's React package).
 
 **To activate:**
 
@@ -178,19 +192,20 @@ codebase shipped a URL or parser asserted rather than verified.
 2. `vercel env add NEXT_PUBLIC_TESTNET_CSPR_CLICK_APP_ID production` (and
    `NEXT_PUBLIC_MAINNET_CSPR_CLICK_APP_ID` if you have it). `NEXT_PUBLIC_CSPR_CLICK_APP_ID` still
    works as a single shared fallback.
-3. **Get the loader.** In the CSPR.click console, take the exact `<script src=…>` their integration
-   snippet gives you and set it as `NEXT_PUBLIC_CSPR_CLICK_BUNDLE_URL`. Verify it first —
-   `curl -sIL "<url>" | head -1` must be a 200. If the console only offers the React SDK, this is
-   not an env-var job: it means adding `@make-software/csprclick-ui` as a dependency and resolving
-   its React 18 peer requirement against this app's React 19.
-4. Redeploy. `NEXT_PUBLIC_*` vars bake at build time, so the currently-running build will not pick
+3. In the console, whitelist what the wallet actually calls — REST `/accounts/**` and `/rates/**`;
+   RPC `account_put_deploy`, `account_put_transaction`, `info_get_deploy`, `info_get_transaction`,
+   `query_balance`. Leave the rest off; server-side chain reads use `CSPR_CLOUD_API_KEY`, not this.
+4. **Nothing to do for the loader** — `NEXT_PUBLIC_CSPR_CLICK_BUNDLE_URL` now defaults to the
+   verified CDN URL above. Set it only to pin a version or self-host.
+5. Redeploy. `NEXT_PUBLIC_*` vars bake at build time, so the currently-running build will not pick
    it up.
-5. Verify: `/api/health` → the `wallet` check reads **`armed`**. `no-bundle` means step 3 is
-   missing and every visitor still gets the demo wallet. Then connect a real wallet and confirm the
-   header chip loses its `demo` badge.
+6. Verify: `/api/health` → the `wallet` check reads **`armed`**. In the browser console,
+   `typeof window.csprclick` must be `"object"` and `window.csprclick.chainName` must match the
+   network; if it is `undefined`, check the devtools console for "CSPRClickSDK not requested."
+   Then connect a real wallet and confirm the header chip loses its `demo` badge.
 
-The id in force is the one for `NEXT_PUBLIC_DEFAULT_NETWORK`, and it also decides the SDK's
-`contentMode` (`src/config/csprclick.ts`). One network's id is never used for the other: an id
+The id in force is the one for `NEXT_PUBLIC_DEFAULT_NETWORK`, which also decides the SDK's
+`chainName` (`src/config/csprclick.ts`). One network's id is never used for the other: an id
 minted for mainnet would boot the SDK against the wrong chain, which is worse than falling back to
 the labelled demo account.
 
