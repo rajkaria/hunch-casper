@@ -254,7 +254,14 @@ up the `?click=connect` marker on the way back so the round trip finishes on its
    green lie.
 2. `vercel env add NEXT_PUBLIC_TESTNET_CSPR_CLICK_APP_ID production` (and
    `NEXT_PUBLIC_MAINNET_CSPR_CLICK_APP_ID` if you have it). `NEXT_PUBLIC_CSPR_CLICK_APP_ID` still
-   works as a single shared fallback.
+   works as a single shared fallback — but **remove it once a network-specific id is set, and never
+   leave a placeholder in it or in the mainnet var.** It falls back for *both* networks, so a stale
+   value there is not dormant: on 2026-07-26 prod held a never-issued id in the shared var beside a
+   correct testnet id, the SDK booted on the good id, and the client probe asked about the stale one
+   — a wrong-id verdict that demoted every visitor to the demo wallet with a green `/api/health`
+   (server-side resolution was network-aware, the connector's was not). Both are network-aware now;
+   the shipped value is verifiable from the browser bundle:
+   `curl -s https://<domain>/ | grep -o '__CSPR_CLICK_APP_ID__=[^;]*'`.
 3. In the console, whitelist what the wallet actually calls — REST `/accounts/**` and `/rates/**`;
    RPC `account_put_deploy`, `account_put_transaction`, `info_get_deploy`, `info_get_transaction`,
    `query_balance`. Leave the rest off; server-side chain reads use `CSPR_CLOUD_API_KEY`, not this.

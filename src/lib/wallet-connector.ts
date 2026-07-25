@@ -19,7 +19,8 @@
  * is the contract either way, so a future npm-based connector is a swap here and nowhere else.
  */
 
-import { csprClickApplicationUrl } from "@/config/csprclick";
+import { csprClickAppIdsFromEnv, csprClickApplicationUrl, resolveCsprClickAppId } from "@/config/csprclick";
+import { DEFAULT_NETWORK } from "@/config/network";
 
 export interface WalletAccountLike {
   publicKey: string;
@@ -293,12 +294,22 @@ export function detectWalletTransport(
   return { provider: null, reason: "no-wallet", message: NO_WALLET_MESSAGE };
 }
 
-/** Configured app id, from the bootstrap script or the public env. */
+/**
+ * The app id this page is actually running — the one the probe below must ask about.
+ *
+ * Ground truth is `window.__CSPR_CLICK_APP_ID__`: the id the bootstrap resolved and the id
+ * `csprclick.init()` was handed. The legacy `NEXT_PUBLIC_CSPR_CLICK_APP_ID` is only a *fallback
+ * input* to that resolution (`resolveCsprClickAppId`: the network's own id first, the shared one
+ * second), so reading it first inverted the precedence — and that inversion shipped. Production
+ * held a correct `NEXT_PUBLIC_TESTNET_CSPR_CLICK_APP_ID` beside a stale shared one: the SDK booted
+ * on the good id, this function handed the probe the stale id, CSPR.click answered "wrong
+ * application id", and a variable everyone had written off as dormant demoted a working wallet to
+ * the labelled demo account. Off-browser (SSR, unit tests) we repeat the bootstrap's own
+ * resolution rather than guess.
+ */
 export function csprClickAppId(): string | null {
-  const fromEnv = process.env.NEXT_PUBLIC_CSPR_CLICK_APP_ID;
-  if (fromEnv && fromEnv.length > 0) return fromEnv;
   if (typeof window !== "undefined" && window.__CSPR_CLICK_APP_ID__) return window.__CSPR_CLICK_APP_ID__;
-  return null;
+  return resolveCsprClickAppId(DEFAULT_NETWORK, csprClickAppIdsFromEnv());
 }
 
 // ---------------------------------------------------------------------------------------------

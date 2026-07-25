@@ -53,9 +53,21 @@ describe("activation requires BOTH the bundle and an app id", () => {
 });
 
 describe("app id resolution", () => {
-  it("prefers the build-time public env", () => {
+  it("prefers the id the bootstrap booted the SDK with", () => {
     vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "from-env");
-    expect(csprClickAppId()).toBe("from-env");
+    w.window = { __CSPR_CLICK_APP_ID__: "from-script" };
+    expect(csprClickAppId()).toBe("from-script");
+  });
+
+  it("never lets a stale shared var outrank the network's own id", () => {
+    // Exactly what production shipped on 2026-07-26: a correct testnet id beside a shared var that
+    // CSPR.click never issued. The SDK booted on the good id; this function used to hand the probe
+    // the bogus one, which answered "wrong application id" and demoted a working wallet to demo.
+    vi.stubEnv("NEXT_PUBLIC_TESTNET_CSPR_CLICK_APP_ID", "6489026e-real");
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "5b5387a1-never-issued");
+    expect(csprClickAppId()).toBe("6489026e-real");
+    w.window = { __CSPR_CLICK_APP_ID__: "6489026e-real" };
+    expect(csprClickAppId()).toBe("6489026e-real");
   });
 
   it("falls back to the bootstrap global", () => {
@@ -64,7 +76,14 @@ describe("app id resolution", () => {
     expect(csprClickAppId()).toBe("from-script");
   });
 
+  it("still reads the shared env var off-browser, when it is all there is", () => {
+    vi.stubEnv("NEXT_PUBLIC_TESTNET_CSPR_CLICK_APP_ID", "");
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "from-env");
+    expect(csprClickAppId()).toBe("from-env");
+  });
+
   it("is null when neither is set", () => {
+    vi.stubEnv("NEXT_PUBLIC_TESTNET_CSPR_CLICK_APP_ID", "");
     vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "");
     expect(csprClickAppId()).toBeNull();
   });

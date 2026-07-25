@@ -161,8 +161,9 @@ export function csprClickInitOptions(network: CasperNetwork, appId: string): Csp
 export function csprClickBootstrapScript(options: CsprClickInitOptions): string {
   return (
     `window.csprClickSDKAsyncInit=function(){window.csprclick.init(${JSON.stringify(options)})};` +
-    // Kept for `csprClickAppId()` in the connector, which reads it when the public env was not
-    // inlined into the bundle. It is ours, not the SDK's — the SDK never looks at it.
+    // This is what `csprClickAppId()` in the connector reads first: the id the SDK is actually
+    // being initialised with, so the connector's probe asks about the same id rather than about
+    // whichever env var happened to be inlined. It is ours, not the SDK's — the SDK never reads it.
     `window.__CSPR_CLICK_APP_ID__=${JSON.stringify(options.appId)};` +
     // Same contract for the WalletConnect project id: the connector consults it to decide whether
     // offering the pairing route can possibly work (see `walletConnectConfigured`).
