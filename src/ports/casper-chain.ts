@@ -53,12 +53,42 @@ export interface CreateMarketInput {
   bondMotes: string;
 }
 
+/**
+ * A bet transaction built but NOT signed — for the visitor's own wallet to sign.
+ *
+ * `transactionHash` is known here, before any signature exists, because the hash covers the
+ * payload and approvals are appended to it. That is what lets the server bind a prepared bet to
+ * the hash it will have on chain (see `lib/bet-ticket.ts`) instead of taking the client's word for
+ * what was signed.
+ */
+export interface UnsignedBetTransaction {
+  /** The transaction as JSON text, ready to hand to a wallet. */
+  transactionJson: string;
+  transactionHash: string;
+  /** Gas limit baked into the transaction, in motes — the visitor pays it, so the UI shows it. */
+  gasMotes: string;
+}
+
 export interface CasperChainPort {
   readonly network: CasperNetwork;
   /** Current block height — a cheap liveness probe. */
   getBlockHeight(): Promise<number>;
   /** Escrow a stake into the parimutuel vault. Returns the on-chain deploy. */
   placeBet(input: PlaceBetInput): Promise<DeployResult>;
+  /**
+   * Build the bet transaction with the BETTOR as initiator and hand it back unsigned, so their
+   * wallet signs and their account pays — the difference between a bet the user authorised and a
+   * bet the operator made on their behalf.
+   *
+   * Optional: an adapter with no chain behind it (the mock) has no transaction to offer, and the
+   * route falls back to the operator-signed path rather than inventing one.
+   */
+  buildBetTransaction?(input: PlaceBetInput): Promise<UnsignedBetTransaction>;
+  /**
+   * Wait for a transaction submitted by SOMEONE ELSE (a visitor's wallet) to execute. Same
+   * confirmation semantics as `placeBet`: a revert is a failure, not a bet.
+   */
+  confirmTransaction?(transactionHash: string): Promise<DeployResult>;
   /** Post a resolution and trigger settlement. */
   resolveMarket(input: ResolveMarketInput): Promise<DeployResult>;
   /** Open a market inside the v2 vault. Rejects when no v2 vault is configured. */

@@ -6,7 +6,7 @@ import type { Market } from "@/core/types";
 import { csprToMotes, motesToCspr } from "@/core/types";
 import { previewPayoutMotes } from "@/core/market-payout";
 import { exceedsBetCap, maxBetCspr } from "@/config/network";
-import { useWallet } from "@/components/wallet-context";
+import { isDemoAccount, useWallet } from "@/components/wallet-context";
 
 interface ChainResult {
   deployHash: string;
@@ -41,7 +41,13 @@ function ResultLine({ label, result }: { label: string; result: ChainResult }) {
  * The S2 thin-slice trade panel: place a bet and (as the oracle) resolve — both through the
  * `CasperChainPort` via `/api/chain/*`. With the mock adapter it returns pseudo hashes; once
  * `CASPER_CHAIN_MODE=real` + testnet contracts are wired the SAME panel submits live Casper
- * transactions, no UI change. Human wallet connect (CSPR.click) + richer betting land in S4.
+ * transactions, no UI change.
+ *
+ * Betting has two paths, and which one runs depends only on whether the visitor has a wallet that
+ * can sign. With one, the server prepares an unsigned transaction and THEY sign and fund it —
+ * self-custodial, `self.env().caller()` is really them. Without one (the demo account, or a
+ * deployment on the simulated chain), it falls back to the operator-signed `/api/chain/bet`, and
+ * the panel says so rather than letting "Betting as 01ab…" imply custody it does not have.
  */
 /**
  * The operator "Oracle resolve" control is a leftover S2 thin-slice demo aid: it lets whoever holds
@@ -52,7 +58,7 @@ function ResultLine({ label, result }: { label: string; result: ChainResult }) {
 const SHOW_DEMO_RESOLVE = process.env.NEXT_PUBLIC_SHOW_DEMO_RESOLVE === "true";
 
 export function BetPanel({ market }: { market: Market }) {
-  const { account, connected, connect } = useWallet();
+  const { account, connected, connect, connectError, signAndSend } = useWallet();
   const [outcomeKey, setOutcomeKey] = useState(market.outcomes[0]?.key ?? "");
   const [amount, setAmount] = useState("1");
   const [betting, setBetting] = useState(false);
@@ -64,6 +70,43 @@ export function BetPanel({ market }: { market: Market }) {
   const [resolveResult, setResolveResult] = useState<ChainResult | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
 
+  /**
+   * Bet with the visitor's OWN wallet: the server builds the transaction with them as initiator,
+   * their wallet signs and submits it, and the server indexes it against the ticket it signed.
+   *
+   * Returns `null` when this route is not available on this deployment — a demo account with no
+   * key, a simulated chain with no transaction to build — which the caller reads as "fall back to
+   * the operator-signed route". A *declined signature* is not that: it throws, because retrying it
+   * against the operator's key would place a bet the visitor just refused, with someone else's
+   * money.
+   */
+  async function betWithWallet(amountMotes: string, bettor: string): Promise<unknown | null> {
+    // A stale demo account can outlive a page load — it is in localStorage, and the SDK loads
+    // after it is read. Its key is not a signable one, so this is a fallback case, not an error.
+    if (!signAndSend || isDemoAccount(account)) return null;
+    const prepared = await fetch("/api/chain/bet/prepare", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ network: market.network, marketId: market.id, outcomeKey, amountMotes, bettor }),
+    });
+    const prep = await prepared.json();
+    // 501 = "this deployment cannot do wallet-signed bets", the one case worth falling back on.
+    if (prepared.status === 501) return null;
+    if (!prepared.ok) throw new Error(prep.error ?? "could not prepare the bet");
+
+    const sent = await signAndSend(prep.transactionJson, bettor);
+    if (!sent.ok) throw new Error(sent.message);
+
+    const confirmed = await fetch("/api/chain/bet/confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ticket: prep.ticket }),
+    });
+    const json = await confirmed.json();
+    if (!confirmed.ok) throw new Error(json.error ?? "the bet was submitted but could not be confirmed");
+    return json;
+  }
+
   async function placeBet() {
     if (!account) {
       connect();
@@ -74,6 +117,11 @@ export function BetPanel({ market }: { market: Market }) {
     setBetResult(null);
     try {
       const amountMotes = csprToMotes(Number(amount));
+      const self = await betWithWallet(amountMotes, account.publicKey);
+      if (self !== null) {
+        setBetResult(self as ChainResult);
+        return;
+      }
       const res = await fetch("/api/chain/bet", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -196,6 +244,27 @@ export function BetPanel({ market }: { market: Market }) {
       {connected && account && (
         <p className="mt-1 text-[11px] text-muted">
           Betting as <span className="font-mono text-foreground">{account.label}</span>
+          {signAndSend ? (
+            <> · you sign and fund this bet from your own account</>
+          ) : (
+            // Say it rather than let it be assumed. With no wallet key of its own the stake is
+            // escrowed by the operator's account and this public key is a label on it.
+            <> · escrowed by the operator on your behalf</>
+          )}
+        </p>
+      )}
+      {/* A browser with no wallet in it: the one connect failure that needs a way forward. */}
+      {connectError && (
+        <p className="mt-2 text-xs text-down">
+          {connectError}{" "}
+          <a
+            href="https://www.casperwallet.io/download"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-foreground"
+          >
+            Get Casper Wallet
+          </a>
         </p>
       )}
       {betError && <p className="mt-2 text-xs text-down">{betError}</p>}

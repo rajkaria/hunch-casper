@@ -66,6 +66,7 @@ the browser. Everything in §2.3 is a secret.
 | `NEXT_PUBLIC_ONCHAIN_RECEIPTS` | — | JSON `[{label, hash, network}]` rendered as explorer links |
 | `NEXT_PUBLIC_SHOW_DEMO_RESOLVE` | off | Shows the manual operator resolve control |
 | `NEXT_PUBLIC_CSPR_CLICK_APP_ID` | to let humans bet | CSPR.click app id. Setting it is the ENTIRE activation — the app loads the bundle itself (§3b) |
+| `BET_TICKET_SECRET` | falls back to `CRON_SECRET`, then `CASPER_BETTOR_KEY` | HMAC key binding a prepared wallet-signed bet to its transaction hash (§3c). Server-only |
 
 `NEXT_PUBLIC_MAINNET_*` mirrors every testnet key.
 
@@ -185,40 +186,50 @@ now handled in `src/config/csprclick.ts`:
 Sign-in itself goes through `connect(providerKey)`, not `signIn()` — see `wallet-connector.ts` for
 why (both `signIn()` branches are dead without CSPR.click's React package).
 
-**The desktop-with-no-extension route, and why the app subscribes to SDK events.** Provider
-selection walks `casper-wallet → metamask-snap → walletconnect` and takes the first one
-`isProviderPresent()` answers for. In SDK 2.1 WalletConnect's check is, verbatim,
-`static IsPresent(){return!0}` — it is a relay protocol, so nothing local is detectable and the
-answer is *always* true. On a desktop with no wallet extension, WalletConnect is therefore always
-what gets selected, and its connect path does not open anything: it emits
+**A third thing, and the one visitors actually reported:** `connect()` opens with
+`if (this.shouldRedirectToInAppBrowser(e)) return`, which for `casper-wallet` opens
+`casperwallet.io/download?browse=<this page>?click=connect` in a new tab and swallows the connect —
+whenever the SDK reads the device as mobile. Its test is
+`/iPad|iPhone|iPod/.test(ua) || (ua.includes("Macintosh") && navigator.maxTouchPoints >= 1) ||
+/(android)/i.test(ua)`, evaluated **before** the provider is consulted, so an installed, unlocked,
+already-connected extension gets redirected past all the same — the symptom being a download tab
+and a page that still says "Connect wallet". The same `||` is in the provider's own `IsPresent()`,
+which answers true on a mobile-looking UA whether or not a wallet exists anywhere.
+
+**And a fourth, for the visitor who has no extension at all:** WalletConnect's `IsPresent()` is
+`return !0` — always true — so it wins the provider race for every desktop visitor without an
+extension, and its connect path does not open anything. It emits
 
 ```
 triggerCustomEvent(PROVIDER_STATUS_UPDATE, { status: ShowPairingQR, pairingUri: uri })
 ```
 
-and waits. The SDK has no subscribe method — every provider dispatches
-`new CustomEvent("csprclick", { detail })` on `window` — so an app that adds no listener sees
-nothing, shows nothing, and ships a Connect button that silently does nothing. That was this app.
+and waits. The SDK has **no subscribe method** — every provider dispatches
+`new CustomEvent("csprclick", {detail})` on `window` — so an app that adds no listener sees
+nothing, shows nothing, and ships a Connect button that silently does nothing.
 
-What handles it now:
+That route is now built rather than avoided:
 
-- `subscribeToCsprClick()` / `parseCsprClickEvent()` in `src/lib/wallet-connector.ts` read that
-  channel: the pairing URI, the accounts a paired wallet shares (`account-list-updated`), a
-  rejection, a failure — plus the extension's own `…:connected` events, which carry the account in
-  `detail.activeKey` when `connect()` itself resolves nothing.
+- `subscribeToCsprClick()` / `parseCsprClickEvent()` read the channel: the pairing URI, the
+  accounts a paired wallet shares (`account-list-updated`), `user-rejected-pairing`,
+  `error-connecting-wallet` — plus the extension's own `…:connected` events, which carry the
+  account in `detail.activeKey`.
 - `src/components/wallet-pairing.tsx` renders the URI as a QR (encoder: `src/lib/qr-code.ts`, no
-  dependency), with a `casperwallet://wc?uri=…` deep link, a copy button, and a cancel that aborts
-  the attempt.
-- Pairing alone does not finish the job: WalletConnect's `connect()` resolves `undefined` and the
-  app must hand one of the shared accounts back via `signInWithAccount()`. With more than one
-  account, the dialog asks.
-- Connecting resolves a `ConnectOutcome` — `connected` / `cancelled` / `no-wallet` / `failed` —
-  never `null`. `no-wallet` is the honest dead end and is shown as a message with an install link,
-  not as silence.
+  dependency), with a `casperwallet://wc?uri=…` deep link, a copy button, an account picker when a
+  wallet shares several, and a cancel that aborts the attempt.
+- Pairing alone connects nothing: WalletConnect's `connect()` resolves `undefined`, and the app
+  must hand one of the shared accounts back through `signInWithAccount()`.
+- `no-wallet` now means what it says — the SDK reports no provider present at all — and is shown as
+  a message with an install link, never as silence.
 
-Mobile is different and needs no QR: on an iOS/Android user agent the SDK deep-links
-`casperwallet://wc?uri=…` itself, so the dialog stays on "Waiting for your wallet" (with a cancel)
-until the app returns.
+Mobile needs no QR: on an iOS/Android UA the SDK deep-links `casperwallet://wc?uri=…` itself, so
+the dialog stays on "Waiting for your wallet" (with a cancel) until the app returns.
+
+`wallet-connector.ts` therefore treats `typeof window.CasperWalletProvider === "function"` as the
+only evidence a wallet is installed, and disarms `shouldRedirectToInAppBrowser` for exactly one
+`connect()` call when it is. When no extension is injected the handoff is left alone — on a real
+phone the Casper Wallet in-app browser genuinely is the only route — and `<WalletResume />` picks
+up the `?click=connect` marker on the way back so the round trip finishes on its own.
 
 **To activate:**
 
@@ -241,8 +252,12 @@ until the app returns.
 7. Verify the no-extension route too, since it is the one most visitors hit: in a clean browser
    profile with no wallet extension, click **Connect wallet**. You must get the pairing dialog with
    a QR (scannable by Casper Wallet on a phone → "WalletConnect"), not a button that does nothing.
-   With neither an extension nor a wallet answering, you must get "Could not connect a wallet" and
-   an install link — never silence.
+   With the SDK reporting nothing present at all you must get "Could not connect a wallet" and an
+   install link — never silence.
+8. If Connect opens a `casperwallet.io/download` tab, the SDK read the device as mobile. Check
+   `typeof window.CasperWalletProvider` — `"function"` means the extension is there and the
+   disarm above should have run; `"undefined"` means it genuinely is not injected in that browser
+   (no extension, or a mobile browser that cannot host one), and the handoff is correct.
 
 The id in force is the one for `NEXT_PUBLIC_DEFAULT_NETWORK`, which also decides the SDK's
 `chainName` (`src/config/csprclick.ts`). One network's id is never used for the other: an id
@@ -251,6 +266,39 @@ the labelled demo account.
 
 An app id is a **public identifier** — it is inlined into the browser bundle by design and is not a
 secret. The CSPR.cloud API key (§2) is the opposite: server-only, never `NEXT_PUBLIC_`.
+
+### 3c. Who actually signs a human bet
+
+Two paths, chosen by whether the visitor has a wallet that can sign:
+
+| | signs | funds the stake + gas | `self.env().caller()` |
+|---|---|---|---|
+| `POST /api/chain/bet` | operator (`CASPER_BETTOR_KEY`) | operator | the operator |
+| `POST /api/chain/bet/prepare` → wallet → `/confirm` | the visitor | the visitor | the visitor |
+
+The second is the real one, and it is what a connected Casper Wallet gets. The server builds the
+*same* Odra proxy-session transaction `placeBet` builds — same plan, same envelope, same gas — but
+with the visitor's public key as initiator, and hands it back **unsigned**. Their wallet signs and
+submits it via `csprclick.send()`; `/confirm` then waits for execution and indexes it.
+
+The panel states which path ran ("you sign and fund this bet from your own account" vs "escrowed by
+the operator on your behalf"), because the difference decides who can `claim`.
+
+**Why `/confirm` needs a ticket.** Its naive form — "here is a hash and here is what it was worth" —
+is a free-money endpoint for the read model: post any executed transaction's hash with a 10,000 CSPR
+stake attached and the boards would show a bet nobody made. Confirming the hash executed does not
+help; *some* transaction executed. So `prepare` mints an HMAC over exactly what it built (including
+the transaction hash, which is known before signing because approvals are appended to the payload,
+not part of it), and `/confirm` reads the bet's terms only from that ticket. See `lib/bet-ticket.ts`.
+
+`BET_TICKET_SECRET` is the variable to set. Nothing breaks if you do not: it falls back to
+`CRON_SECRET`, then `CASPER_BETTOR_KEY`, both server-only and both already present in real mode. With
+none of them the prepare route returns 500 rather than mint a ticket anyone could forge.
+
+Fallback is deliberate and narrow. A deployment that cannot offer wallet signing at all — the
+simulated chain, or a demo account with no key — answers **501** on `prepare`, and the panel quietly
+uses the operator-signed route. A **declined signature is never retried** that way: falling back
+there would place a bet the visitor had just refused, with someone else's money.
 
 With no app id set, no third-party script is served to anyone.
 

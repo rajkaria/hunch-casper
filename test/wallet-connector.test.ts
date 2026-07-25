@@ -1,18 +1,10 @@
 /**
  * The wallet connector seam.
  *
- * Two behaviours are worth pinning here.
- *
- * The first is the fallback: the app uses the labelled demo account unless CSPR.click is BOTH
- * loaded and configured. An app id with no SDK, or an SDK with no app id, cannot complete a
- * sign-in — and a Connect button that does nothing is worse than one that honestly connects a demo
- * account, because the second at least says what it is.
- *
- * The second is why this file grew: on a desktop with no extension, CSPR.click always selects
- * WalletConnect, whose presence check is a hardcoded `true`, and whose connect path *emits a
- * pairing URI and waits*. Every ending of that flow — a URI to show, accounts to choose from, a
- * rejection, a failure, a cancel — is now a value the UI can render, and the tests below are that
- * list. `null` used to mean all five at once, which is how a button ends up doing nothing at all.
+ * The behaviour worth pinning: the app falls back to the labelled demo account unless CSPR.click
+ * is BOTH loaded and configured. An app id with no SDK, or an SDK with no app id, cannot complete
+ * a sign-in — and a Connect button that does nothing is worse than one that honestly connects a
+ * demo account, because the second at least says what it is.
  */
 
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -21,33 +13,46 @@ import {
   CSPR_CLICK_STATUS,
   DEMO_ACCOUNT,
   PROVIDER_STATUS_UPDATE,
+  accountAfterConnect,
   accountFromCsprClick,
   activeConnector,
-  casperWalletPairingDeepLink,
-  connectViaCsprClick,
+  casperWalletAccount,
+  casperWalletInjected,
   csprClickAppId,
   csprClickConnector,
   demoConnector,
-  firstAvailableProvider,
-  hasInstalledWallet,
+  disarmInAppBrowserRedirect,
+  detectWalletTransport,
+  casperWalletPairingDeepLink,
+  isClickConnectReturn,
   parseCsprClickEvent,
   providerNeedsPairing,
   subscribeToCsprClick,
+  whenCsprClickReady,
+  withoutClickConnect,
+  type CasperWalletProviderLike,
   type CsprClickLike,
-  type ConnectOutcome,
 } from "@/lib/wallet-connector";
 import { GET as boardsGET } from "@/app/api/boards/route";
 
-function installSdk(sdk: CsprClickLike | undefined): void {
+type FakeWindow = {
+  csprclick?: CsprClickLike;
+  CasperWalletProvider?: () => CasperWalletProviderLike;
+};
+
+function fakeWindow(): FakeWindow {
   (globalThis as unknown as { window?: unknown }).window ??= {};
-  (globalThis as unknown as { window: { csprclick?: CsprClickLike } }).window.csprclick = sdk;
+  return (globalThis as unknown as { window: FakeWindow }).window;
 }
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-  const w = (globalThis as unknown as { window?: { csprclick?: unknown } }).window;
-  if (w) delete w.csprclick;
-});
+function installSdk(sdk: CsprClickLike | undefined): void {
+  fakeWindow().csprclick = sdk;
+}
+
+/** Stand in for the browser extension, which injects exactly this factory. */
+function installExtension(provider: CasperWalletProviderLike = {}): void {
+  fakeWindow().CasperWalletProvider = () => provider;
+}
 
 /** A stand-in for the `window` CSPR.click dispatches its events on. */
 function eventBus() {
@@ -65,6 +70,24 @@ function eventBus() {
   };
 }
 
+/** No real timers in the settle loops — every wait is injected. */
+const noWait = async (): Promise<void> => {};
+
+/** WalletConnect's usability is a UA question, so the UA has to be stubbable. */
+function stubUserAgent(userAgent: string): void {
+  vi.stubGlobal("navigator", { userAgent, maxTouchPoints: 0 });
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  const w = (globalThis as unknown as { window?: FakeWindow }).window;
+  if (w) {
+    delete w.csprclick;
+    delete w.CasperWalletProvider;
+  }
+});
+
 describe("accountFromCsprClick", () => {
   it("reads both the snake_case and camelCase key fields the SDK has used", () => {
     // A wallet that silently fails to connect because a field was renamed is a bad afternoon.
@@ -73,17 +96,6 @@ describe("accountFromCsprClick", () => {
       label: "Alice",
     });
     expect(accountFromCsprClick({ publicKey: "01bb" })).toEqual({ publicKey: "01bb", label: "CSPR.click" });
-  });
-
-  it("falls back to cspr_name, which is where WalletConnect accounts carry their name", () => {
-    // Accounts the SDK builds from a WalletConnect session always have `name: null`.
-    expect(accountFromCsprClick({ public_key: "01cc", name: null, cspr_name: "alice.cspr" })).toEqual(
-      { publicKey: "01cc", label: "alice.cspr" },
-    );
-    expect(accountFromCsprClick({ public_key: "01cc" }, "Casper Wallet")).toEqual({
-      publicKey: "01cc",
-      label: "Casper Wallet",
-    });
   });
 
   it("rejects anything without a usable key", () => {
@@ -114,39 +126,412 @@ describe("connector selection", () => {
   });
 });
 
-describe("provider selection", () => {
-  it("skips providers that are not installed, and survives the ones that throw", () => {
-    // Unknown keys THROW in the real SDK rather than returning false.
-    const sdk: CsprClickLike = {
+describe("connecting", () => {
+  it("the demo connector resolves the labelled placeholder", async () => {
+    const outcome = await demoConnector.connect();
+    expect(outcome).toEqual({ ok: true, account: DEMO_ACCOUNT });
+    // Obviously fake on sight: a plausible-looking fake key would be strictly worse.
+    expect(DEMO_ACCOUNT.publicKey).toContain("demo");
+  });
+
+  it("returns the signed-in account from CSPR.click", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    installSdk({ signIn: async () => ({ public_key: "01aa", name: "Alice" }) });
+    expect(await csprClickConnector.connect()).toEqual({
+      ok: true,
+      account: { publicKey: "01aa", label: "Alice" },
+    });
+  });
+
+  it("falls back to getActiveAccount for SDK versions whose signIn resolves nothing", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    installSdk({ signIn: async () => undefined, getActiveAccount: () => ({ public_key: "01cc" }) });
+    expect(await csprClickConnector.connect()).toEqual({
+      ok: true,
+      account: { publicKey: "01cc", label: "CSPR.click" },
+    });
+  });
+
+  it("leaves the app disconnected — not broken — when a sign-in is cancelled", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    installSdk({
+      signIn: async () => {
+        throw new Error("user cancelled");
+      },
+    });
+    // The wallet was there and refused: a cancellation, not something to shout about.
+    await expect(csprClickConnector.connect()).resolves.toMatchObject({
+      ok: false,
+      reason: "failed",
+    });
+  });
+
+  it("prefers connect(provider) over signIn — signIn's hosted page is a 404", async () => {
+    // `accounts.cspr.click/signin.html`, which popup mode opens, was deleted upstream; iframe mode
+    // only emits an event for a React package this app does not ship. `connect(providerKey)` is
+    // what CSPR.click's own picker calls, and it goes straight to the extension.
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    const calls: string[] = [];
+    installSdk({
+      isProviderPresent: (p: string) => p === "casper-wallet",
+      connect: async (p: string) => {
+        calls.push(p);
+        return { public_key: "01dd", name: "Casper Wallet" };
+      },
+      signIn: async () => {
+        calls.push("signIn");
+        return null;
+      },
+    });
+    expect(await csprClickConnector.connect()).toEqual({
+      ok: true,
+      account: { publicKey: "01dd", label: "Casper Wallet" },
+    });
+    expect(calls).toEqual(["casper-wallet"]);
+  });
+
+  it("skips providers that are not installed and connects the one that is", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    // WalletConnect is last in the order and reached only when nothing local answered. It is a
+    // real transport on every device now that the pairing dialog exists — see the pairing tests
+    // below for the route it takes when `connect()` hands back no account.
+    stubUserAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36");
+    const calls: string[] = [];
+    installSdk({
+      // Unknown keys THROW in the real SDK rather than returning false.
       isProviderPresent: (p: string) => {
         if (p === "casper-wallet") return false;
         if (p === "metamask-snap") throw new Error("Unsupported wallet: " + p);
         return true;
       },
-    };
-    expect(firstAvailableProvider(sdk)).toBe("walletconnect");
+      connect: async (p: string) => {
+        calls.push(p);
+        return { public_key: "01ee" };
+      },
+      getActiveAccount: () => null,
+    });
+    expect(await csprClickConnector.connect()).toEqual({
+      ok: true,
+      account: { publicKey: "01ee", label: "WalletConnect" },
+    });
+    expect(calls).toEqual(["walletconnect"]);
   });
 
-  it("treats WalletConnect as present-but-remote, because its presence check is a literal true", () => {
-    // SDK 2.1: `static IsPresent(){return!0}`. Nothing local is detected, so an app that trusts
-    // this answer alone concludes "a wallet is available" on a machine with no wallet at all.
-    const noExtension: CsprClickLike = { isProviderPresent: (p) => p === "walletconnect" };
-    expect(firstAvailableProvider(noExtension)).toBe("walletconnect");
-    expect(hasInstalledWallet(noExtension)).toBe(false);
-    expect(providerNeedsPairing("walletconnect")).toBe(true);
-
-    const withExtension: CsprClickLike = { isProviderPresent: () => true };
-    expect(hasInstalledWallet(withExtension)).toBe(true);
-    expect(providerNeedsPairing("casper-wallet")).toBe(false);
+  it("falls back to signIn when no wallet transport is present at all", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    installSdk({
+      connect: async () => ({ public_key: "01ff" }),
+      signIn: async () => ({ public_key: "01aa", name: "Alice" }),
+    });
+    expect(await csprClickConnector.connect()).toEqual({
+      ok: true,
+      account: { publicKey: "01aa", label: "Alice" },
+    });
   });
 
-  it("builds the deep link Casper Wallet's app answers, escaping the URI", () => {
-    expect(casperWalletPairingDeepLink("wc:topic@2?relay-protocol=irn&symKey=ab")).toBe(
-      "casperwallet://wc?uri=wc%3Atopic%402%3Frelay-protocol%3Dirn%26symKey%3Dab",
-    );
+  it("does not throw when the SDK's own disconnect fails", async () => {
+    installSdk({
+      disconnect: async () => {
+        throw new Error("already gone");
+      },
+    });
+    await expect(csprClickConnector.disconnect()).resolves.toBeUndefined();
   });
 });
 
+/**
+ * The reported bug: Connect opened `casperwallet.io/download?browse=…%3Fclick%3Dconnect` in a new
+ * tab instead of the installed extension. From the shipped SDK, `connect()` opens with
+ * `if (this.shouldRedirectToInAppBrowser(e)) return`, and that guard fires on any touch-capable
+ * user agent — before the provider is consulted, so an installed, unlocked, already-connected
+ * wallet is redirected past all the same.
+ */
+describe("the in-app-browser redirect", () => {
+  /** Faithful to upstream: the guard runs first, and a redirect swallows the connect. */
+  function sdkWithRedirect(redirects: string[]): CsprClickLike {
+    const sdk: CsprClickLike = {
+      // The SDK's own `IsPresent` answers true here whether or not a wallet exists.
+      isProviderPresent: () => true,
+      shouldRedirectToInAppBrowser: (provider) => {
+        if (provider !== "casper-wallet") return false;
+        redirects.push(provider); // stands in for window.open(<download page>)
+        return true;
+      },
+      connect: async (provider) => {
+        if (sdk.shouldRedirectToInAppBrowser?.(provider)) return undefined;
+        return { public_key: "01aa", name: "Casper Wallet" };
+      },
+      getActiveAccount: () => null,
+    };
+    return sdk;
+  }
+
+  it("is disarmed when the extension is actually injected, so Connect reaches the wallet", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    const redirects: string[] = [];
+    installSdk(sdkWithRedirect(redirects));
+    installExtension();
+
+    expect(casperWalletInjected()).toBe(true);
+    expect(await csprClickConnector.connect()).toEqual({
+      ok: true,
+      account: { publicKey: "01aa", label: "Casper Wallet" },
+    });
+    expect(redirects).toEqual([]); // no download tab
+  });
+
+  it("is left alone when no extension is injected — on a phone that handoff is the only route", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    const redirects: string[] = [];
+    installSdk(sdkWithRedirect(redirects));
+
+    expect(casperWalletInjected()).toBe(false);
+    await expect(csprClickConnector.connect()).resolves.toMatchObject({ ok: false });
+    expect(redirects).toEqual(["casper-wallet"]);
+  });
+
+  it("restores the SDK's own method afterwards, own-property or prototype", () => {
+    // Upstream defines it on the prototype; shadowing it must not leave a permanent own-property
+    // behind, or the mobile handoff would stay disarmed for every later call.
+    class Sdk {
+      shouldRedirectToInAppBrowser(): boolean {
+        return true;
+      }
+    }
+    const proto = new Sdk() as unknown as CsprClickLike;
+    disarmInAppBrowserRedirect(proto)();
+    expect(Object.prototype.hasOwnProperty.call(proto, "shouldRedirectToInAppBrowser")).toBe(false);
+    expect(proto.shouldRedirectToInAppBrowser?.("casper-wallet")).toBe(true);
+
+    const own: CsprClickLike = { shouldRedirectToInAppBrowser: () => true };
+    disarmInAppBrowserRedirect(own)();
+    expect(own.shouldRedirectToInAppBrowser?.("casper-wallet")).toBe(true);
+
+    // An SDK version without the method at all is not a crash.
+    expect(() => disarmInAppBrowserRedirect({})()).not.toThrow();
+  });
+});
+
+describe("resolving the account after connect", () => {
+  it("waits for the account the SDK publishes after connect() has already resolved", async () => {
+    // The provider's already-connected branch is `getActivePublicKey().then(…)` — un-awaited — so
+    // reading getActiveAccount on the next line is a race the app loses.
+    let polls = 0;
+    const sdk: CsprClickLike = {
+      getActiveAccount: () => (++polls < 3 ? null : { public_key: "01bb", name: "Alice" }),
+    };
+    expect(await accountAfterConnect(sdk, "casper-wallet", undefined, { wait: noWait })).toEqual({
+      publicKey: "01bb",
+      label: "Alice",
+    });
+  });
+
+  it("falls back to the extension's own active key when CSPR.click never catches up", async () => {
+    installExtension({ getActivePublicKey: async () => "01cc" });
+    const sdk: CsprClickLike = { getActiveAccount: () => null };
+    expect(
+      await accountAfterConnect(sdk, "casper-wallet", undefined, { attempts: 2, wait: noWait }),
+    ).toEqual({ publicKey: "01cc", label: "Casper Wallet" });
+  });
+
+  it("treats a refusal as an answer instead of waiting two seconds for it", async () => {
+    // `requestConnection()` resolves false when the popup is declined.
+    let polls = 0;
+    const sdk: CsprClickLike = {
+      getActiveAccount: () => {
+        polls += 1;
+        return null;
+      },
+    };
+    expect(await accountAfterConnect(sdk, "casper-wallet", false, { wait: noWait })).toBeNull();
+    expect(polls).toBe(0);
+  });
+
+  it("reads nothing from an extension that is not connected to this site", async () => {
+    installExtension({
+      getActivePublicKey: async () => {
+        throw new Error("not connected");
+      },
+    });
+    await expect(casperWalletAccount()).resolves.toBeNull();
+  });
+});
+
+describe("the ?click=connect return leg", () => {
+  it("recognises the marker, including the malformed URL the SDK actually builds", () => {
+    // Upstream builds `window.location.href + "?click=connect"` — a bare concatenation, so a page
+    // that already had a query comes back with two `?` and searchParams cannot see the marker.
+    expect(isClickConnectReturn("https://casper.playhunch.xyz/markets?click=connect")).toBe(true);
+    expect(isClickConnectReturn("https://casper.playhunch.xyz/markets?tab=open?click=connect")).toBe(
+      true,
+    );
+    expect(isClickConnectReturn("https://casper.playhunch.xyz/markets")).toBe(false);
+    expect(isClickConnectReturn("https://casper.playhunch.xyz/markets?click=other")).toBe(false);
+    expect(isClickConnectReturn("not a url")).toBe(false);
+  });
+
+  it("strips the marker so a reload does not replay the handshake", () => {
+    expect(withoutClickConnect("https://x.dev/markets?click=connect")).toBe("/markets");
+    expect(withoutClickConnect("https://x.dev/markets?tab=open?click=connect")).toBe(
+      "/markets?tab=open",
+    );
+    expect(withoutClickConnect("https://x.dev/markets?tab=open&click=connect#bets")).toBe(
+      "/markets?tab=open#bets",
+    );
+  });
+
+  it("never resumes onto the demo wallet while the SDK script is still loading", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    // No `window.csprclick` yet — the loader is `afterInteractive`. Auto-connecting here would
+    // sign the visitor in as the placeholder account, which is worse than not resuming.
+    await expect(whenCsprClickReady({ attempts: 3, wait: noWait })).resolves.toBe(false);
+    installSdk({ connect: async () => ({ public_key: "01dd" }) });
+    await expect(whenCsprClickReady({ attempts: 3, wait: noWait })).resolves.toBe(true);
+  });
+});
+
+/**
+ * The other half of the dead Connect button: a browser with no extension in it.
+ *
+ * WalletConnect's `IsPresent()` in the SDK is `return !0` — always true — so it wins the provider
+ * race for every desktop visitor without an extension, and its desktop branch only *emits* a
+ * `ShowPairingQR` event, expecting the host app to draw the QR. For a while nothing here listened,
+ * so nothing opened, nothing errored, nothing rendered; the app answered by refusing to select
+ * WalletConnect on desktop at all, which was honest and still a dead end. Now the event is read
+ * and the QR is drawn, so the transport is real everywhere — and "no wallet" means the SDK itself
+ * reports nothing present, which is the only case that earns an install prompt.
+ */
+describe("when there is no extension in the browser", () => {
+  const desktop = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126";
+  const android = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/126";
+
+  it("routes a desktop visitor to WalletConnect pairing rather than to nothing", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    stubUserAgent(desktop);
+    const uri = "wc:8f4a@2?relay-protocol=irn&symKey=deadbeef";
+    const seen: string[] = [];
+    const bus = eventBus();
+    installSdk({
+      // Faithful to the SDK on a desktop with no extension: casper-wallet's IsPresent is
+      // `typeof window.CasperWalletProvider === "function" || isIOS || isAndroid` → false;
+      // metamask-snap's is `window.ethereum !== undefined` → false; walletconnect's is `return !0`.
+      isProviderPresent: (p: string) => p === "walletconnect",
+      connect: async () => {
+        bus.status({ status: CSPR_CLICK_STATUS.showPairingQr, pairingUri: uri });
+        return undefined;
+      },
+      signInWithAccount: async (a: unknown) => a,
+    });
+
+    expect(detectWalletTransport(window.csprclick!)).toEqual({ provider: "walletconnect" });
+    const pending = csprClickConnector.connect({ events: bus.target, onPairing: (u) => seen.push(u) });
+    await Promise.resolve();
+    // The URI reaches the UI instead of being emitted into the void.
+    expect(seen).toEqual([uri]);
+
+    bus.status({
+      status: CSPR_CLICK_STATUS.accountListUpdated,
+      accounts: [{ public_key: "01aa", name: null, cspr_name: "alice.cspr" }],
+    });
+    await expect(pending).resolves.toEqual({
+      ok: true,
+      account: { publicKey: "01aa", label: "alice.cspr" },
+    });
+  });
+
+  it("still says no-wallet, with something to act on, when the SDK reports nothing present", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    stubUserAgent(desktop);
+    const calls: string[] = [];
+    installSdk({
+      isProviderPresent: () => false,
+      connect: async (p: string) => {
+        calls.push(p);
+        return undefined;
+      },
+    });
+    expect(detectWalletTransport(window.csprclick!)).toMatchObject({
+      provider: null,
+      reason: "no-wallet",
+    });
+    const outcome = await csprClickConnector.connect();
+    expect(outcome).toMatchObject({ ok: false, reason: "no-wallet" });
+    // The point: it did not fire a connect into the void, and it says something actionable.
+    expect(calls).toEqual([]);
+    expect(!outcome.ok && outcome.message).toMatch(/install/i);
+  });
+
+  it("prefers a local wallet over pairing wherever one exists", () => {
+    stubUserAgent(android);
+    installSdk({ isProviderPresent: () => true });
+    expect(detectWalletTransport(window.csprclick!)).toEqual({ provider: "casper-wallet" });
+    installSdk({ isProviderPresent: (p: string) => p === "walletconnect" });
+    expect(detectWalletTransport(window.csprclick!)).toEqual({ provider: "walletconnect" });
+    expect(providerNeedsPairing("walletconnect")).toBe(true);
+    expect(providerNeedsPairing("casper-wallet")).toBe(false);
+  });
+});
+
+describe("signing a prepared transaction", () => {
+  it("returns the hash the wallet reports", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    const seen: Array<[string, string]> = [];
+    installSdk({
+      send: async (json: string, key: string) => {
+        seen.push([json, key]);
+        return { transactionHash: "abc123" };
+      },
+    });
+    await expect(csprClickConnector.sendTransaction!("{\"payload\":1}", "01aa")).resolves.toEqual({
+      ok: true,
+      transactionHash: "abc123",
+    });
+    expect(seen).toEqual([["{\"payload\":1}", "01aa"]]);
+  });
+
+  it("distinguishes a declined signature from a failure — the bet path must never retry a decline", async () => {
+    // A cancel that read as a generic failure would be retried against the operator-signed route,
+    // placing a bet the visitor had just refused to sign, with someone else's money.
+    installSdk({ send: async () => ({ cancelled: true }) });
+    await expect(csprClickConnector.sendTransaction!("{}", "01aa")).resolves.toMatchObject({
+      ok: false,
+      reason: "cancelled",
+    });
+
+    installSdk({ send: async () => ({ error: "node rejected the transaction" }) });
+    await expect(csprClickConnector.sendTransaction!("{}", "01aa")).resolves.toMatchObject({
+      ok: false,
+      reason: "failed",
+    });
+
+    installSdk({ send: async () => ({}) });
+    await expect(csprClickConnector.sendTransaction!("{}", "01aa")).resolves.toMatchObject({
+      ok: false,
+      reason: "failed",
+    });
+  });
+
+  it("reports a thrown signer as a failure rather than escaping", async () => {
+    installSdk({
+      send: async () => {
+        throw new Error("extension port closed");
+      },
+    });
+    await expect(csprClickConnector.sendTransaction!("{}", "01aa")).resolves.toEqual({
+      ok: false,
+      reason: "failed",
+      message: "extension port closed",
+    });
+  });
+});
+
+/**
+ * Reading CSPR.click's event channel.
+ *
+ * SDK 2.1 has no subscribe method: every provider dispatches `new CustomEvent("csprclick", …)` on
+ * `window`. Subscribing is the only way to see a pairing URI, the accounts a paired wallet shares,
+ * or an extension announcing the key it just approved.
+ */
 describe("reading CSPR.click's events", () => {
   it("recognises the pairing URI, which is the whole reason this app subscribes", () => {
     const signal = parseCsprClickEvent({
@@ -183,36 +568,48 @@ describe("reading CSPR.click's events", () => {
         detail: { provider: "walletconnect", providerEvent: PROVIDER_STATUS_UPDATE, custom },
       });
     expect(status({ status: CSPR_CLICK_STATUS.userRejectedPairing })).toEqual({ kind: "rejected" });
-    expect(status({ status: CSPR_CLICK_STATUS.errorConnectingWallet })).toEqual({
+    expect(status({ status: CSPR_CLICK_STATUS.errorConnectingWallet })).toMatchObject({
       kind: "failed",
-      reason: "the wallet could not connect",
     });
     expect(status({ status: CSPR_CLICK_STATUS.invalidSessionTopic, error: "stale topic" })).toEqual({
       kind: "failed",
-      reason: "stale topic",
+      message: "stale topic",
     });
-    expect(status({ status: CSPR_CLICK_STATUS.accountListUpdated, accounts: [] })).toEqual({
+    expect(status({ status: CSPR_CLICK_STATUS.accountListUpdated, accounts: [] })).toMatchObject({
       kind: "failed",
-      reason: "the wallet paired but shared no account",
     });
   });
 
   it("reads the extension's own announcement, where the account rides on activeKey", () => {
     expect(
       parseCsprClickEvent({
-        detail: { provider: "casper-wallet", providerEvent: "casper-wallet:connected", activeKey: "01dd" },
+        detail: {
+          provider: "casper-wallet",
+          providerEvent: "casper-wallet:connected",
+          activeKey: "01dd",
+        },
       }),
     ).toEqual({ kind: "connected", account: { publicKey: "01dd", label: "Casper Wallet" } });
     // A disconnect also carries a key; it is not a connection.
     expect(
       parseCsprClickEvent({
-        detail: { provider: "casper-wallet", providerEvent: "casper-wallet:disconnected", activeKey: "01dd" },
+        detail: {
+          provider: "casper-wallet",
+          providerEvent: "casper-wallet:disconnected",
+          activeKey: "01dd",
+        },
       }),
     ).toBeNull();
   });
 
   it("ignores events it has no opinion about instead of throwing on them", () => {
-    for (const junk of [null, 42, {}, { detail: null }, { detail: { providerEvent: "csprclick:loaded" } }]) {
+    for (const junk of [
+      null,
+      42,
+      {},
+      { detail: null },
+      { detail: { providerEvent: "csprclick:loaded" } },
+    ]) {
       expect(parseCsprClickEvent(junk)).toBeNull();
     }
   });
@@ -228,113 +625,21 @@ describe("reading CSPR.click's events", () => {
   });
 });
 
-describe("connecting", () => {
-  it("the demo connector resolves the labelled placeholder", async () => {
-    const outcome = await demoConnector.connect();
-    expect(outcome).toEqual({ kind: "connected", account: DEMO_ACCOUNT });
-    // Obviously fake on sight: a plausible-looking fake key would be strictly worse.
-    expect(DEMO_ACCOUNT.publicKey).toContain("demo");
-  });
-
-  it("returns the signed-in account from CSPR.click", async () => {
-    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
-    installSdk({ signIn: async () => ({ public_key: "01aa", name: "Alice" }) });
-    expect(await csprClickConnector.connect()).toEqual({
-      kind: "connected",
-      account: { publicKey: "01aa", label: "Alice" },
-    });
-  });
-
-  it("falls back to getActiveAccount for SDK versions whose signIn resolves nothing", async () => {
-    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
-    installSdk({ signIn: async () => undefined, getActiveAccount: () => ({ public_key: "01cc" }) });
-    expect(await csprClickConnector.connect()).toEqual({
-      kind: "connected",
-      account: { publicKey: "01cc", label: "CSPR.click" },
-    });
-  });
-
-  it("leaves the app disconnected — not broken — when a sign-in is cancelled", async () => {
-    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
-    installSdk({
-      signIn: async () => {
-        throw new Error("user cancelled");
-      },
-    });
-    await expect(csprClickConnector.connect()).resolves.toEqual({ kind: "cancelled" });
-  });
-
-  it("prefers connect(provider) over signIn — signIn's hosted page is a 404", async () => {
-    // `accounts.cspr.click/signin.html`, which popup mode opens, was deleted upstream; iframe mode
-    // only emits an event for a React package this app does not ship. `connect(providerKey)` is
-    // what CSPR.click's own picker calls, and it goes straight to the extension.
-    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
-    const calls: string[] = [];
-    installSdk({
-      isProviderPresent: (p: string) => p === "casper-wallet",
-      connect: async (p: string) => {
-        calls.push(p);
-        return { public_key: "01dd", name: "Casper Wallet" };
-      },
-      signIn: async () => {
-        calls.push("signIn");
-        return null;
-      },
-    });
-    expect(await csprClickConnector.connect()).toEqual({
-      kind: "connected",
-      account: { publicKey: "01dd", label: "Casper Wallet" },
-    });
-    expect(calls).toEqual(["casper-wallet"]);
-  });
-
-  it("says so when no wallet transport is present at all", async () => {
-    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
-    installSdk({
-      isProviderPresent: () => false,
-      connect: async () => ({ public_key: "01ff" }),
-      signIn: async () => undefined,
-    });
-    // This is the ending that used to be `null`, i.e. indistinguishable from "you cancelled".
-    expect(await csprClickConnector.connect()).toEqual({
-      kind: "no-wallet",
-      reason: "no Casper wallet is available in this browser",
-    });
-  });
-
-  it("still uses signIn when it works and no provider is present", async () => {
-    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
-    installSdk({
-      isProviderPresent: () => false,
-      signIn: async () => ({ public_key: "01aa", name: "Alice" }),
-    });
-    expect(await csprClickConnector.connect()).toEqual({
-      kind: "connected",
-      account: { publicKey: "01aa", label: "Alice" },
-    });
-  });
-
-  it("does not throw when the SDK's own disconnect fails", async () => {
-    installSdk({
-      disconnect: async () => {
-        throw new Error("already gone");
-      },
-    });
-    await expect(csprClickConnector.disconnect()).resolves.toBeUndefined();
-  });
-});
-
+/**
+ * The WalletConnect route end to end: a desktop with no extension, a phone that answers, and every
+ * way that can end. `connect()` there resolves `undefined` on success and says everything over the
+ * event channel, so each of these endings used to be indistinguishable from a click that did not
+ * register.
+ */
 describe("the WalletConnect pairing flow", () => {
+  const PAIRING_URI = "wc:8f4a@2?relay-protocol=irn&symKey=deadbeef";
+
   /** An SDK whose only provider is WalletConnect: exactly a desktop with no extension. */
   function pairingSdk(bus: ReturnType<typeof eventBus>, signedIn: unknown[] = []): CsprClickLike {
     return {
       isProviderPresent: (p) => p === "walletconnect",
-      // The real one resolves `undefined` on success and reports everything over events.
       connect: async () => {
-        bus.status({
-          status: CSPR_CLICK_STATUS.showPairingQr,
-          pairingUri: "wc:8f4a@2?relay-protocol=irn&symKey=deadbeef",
-        });
+        bus.status({ status: CSPR_CLICK_STATUS.showPairingQr, pairingUri: PAIRING_URI });
         return undefined;
       },
       signInWithAccount: async (account) => {
@@ -345,32 +650,18 @@ describe("the WalletConnect pairing flow", () => {
     };
   }
 
-  it("hands the pairing URI to the caller instead of waiting in silence", async () => {
-    const bus = eventBus();
-    const seen: string[] = [];
-    const pending = connectViaCsprClick(pairingSdk(bus), {
-      events: bus.target,
-      onPairing: (uri) => seen.push(uri),
-    });
-
-    // Let `connect()` run; the URI arrives from inside it.
-    await Promise.resolve();
-    expect(seen).toEqual(["wc:8f4a@2?relay-protocol=irn&symKey=deadbeef"]);
-
-    const account = { public_key: "01aa", name: null, cspr_name: "alice.cspr" };
-    bus.status({ status: CSPR_CLICK_STATUS.accountListUpdated, accounts: [account] });
-    await expect(pending).resolves.toEqual({
-      kind: "connected",
-      account: { publicKey: "01aa", label: "alice.cspr" },
-    });
-  });
+  function connect(sdk: CsprClickLike, options: Parameters<typeof csprClickConnector.connect>[0]) {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    installSdk(sdk);
+    return csprClickConnector.connect(options);
+  }
 
   it("finishes the sign-in with the SDK's own account object", async () => {
-    // Pairing alone leaves a session with no account: `signInWithAccount` is what completes it, and
-    // it must receive the SDK's object — the normalised one has none of the session fields.
+    // Pairing alone leaves a session with no account: `signInWithAccount` completes it, and it must
+    // receive the SDK's object — the normalised one has none of the session fields.
     const bus = eventBus();
     const signedIn: unknown[] = [];
-    const pending = connectViaCsprClick(pairingSdk(bus, signedIn), { events: bus.target });
+    const pending = connect(pairingSdk(bus, signedIn), { events: bus.target });
     await Promise.resolve();
     const account = { public_key: "01aa", custom: { wcSessionTopic: "topic-1" } };
     bus.status({ status: CSPR_CLICK_STATUS.accountListUpdated, accounts: [account] });
@@ -382,7 +673,7 @@ describe("the WalletConnect pairing flow", () => {
     const bus = eventBus();
     const signedIn: unknown[] = [];
     let offered: { publicKey: string; label: string }[] = [];
-    const pending = connectViaCsprClick(pairingSdk(bus, signedIn), {
+    const pending = connect(pairingSdk(bus, signedIn), {
       events: bus.target,
       onAccounts: (accounts, choose) => {
         offered = accounts;
@@ -393,7 +684,7 @@ describe("the WalletConnect pairing flow", () => {
     const accounts = [{ public_key: "01aa" }, { public_key: "01bb", cspr_name: "bob.cspr" }];
     bus.status({ status: CSPR_CLICK_STATUS.accountListUpdated, accounts });
     await expect(pending).resolves.toEqual({
-      kind: "connected",
+      ok: true,
       account: { publicKey: "01bb", label: "bob.cspr" },
     });
     expect(offered.map((a) => a.publicKey)).toEqual(["01aa", "01bb"]);
@@ -402,120 +693,80 @@ describe("the WalletConnect pairing flow", () => {
 
   it("takes the first account when the caller offers no picker", async () => {
     const bus = eventBus();
-    const pending = connectViaCsprClick(pairingSdk(bus), { events: bus.target });
+    const pending = connect(pairingSdk(bus), { events: bus.target });
     await Promise.resolve();
     bus.status({
       status: CSPR_CLICK_STATUS.accountListUpdated,
       accounts: [{ public_key: "01aa" }, { public_key: "01bb" }],
     });
     await expect(pending).resolves.toEqual({
-      kind: "connected",
+      ok: true,
       account: { publicKey: "01aa", label: "WalletConnect" },
     });
   });
 
   it("reports a rejected pairing as cancelled, not as an error", async () => {
     const bus = eventBus();
-    const pending = connectViaCsprClick(pairingSdk(bus), { events: bus.target });
+    const pending = connect(pairingSdk(bus), { events: bus.target });
     await Promise.resolve();
     bus.status({ status: CSPR_CLICK_STATUS.userRejectedPairing });
-    await expect(pending).resolves.toEqual({ kind: "cancelled" });
+    await expect(pending).resolves.toMatchObject({ ok: false, reason: "cancelled" });
   });
 
   it("reports a failed pairing with the reason the SDK gave", async () => {
     const bus = eventBus();
-    const pending = connectViaCsprClick(pairingSdk(bus), { events: bus.target });
+    const pending = connect(pairingSdk(bus), { events: bus.target });
     await Promise.resolve();
     bus.status({ status: CSPR_CLICK_STATUS.errorConnectingWallet, error: "relay unreachable" });
-    await expect(pending).resolves.toEqual({ kind: "failed", reason: "relay unreachable" });
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      reason: "failed",
+      message: "relay unreachable",
+    });
   });
 
-  it("cancels when the visitor closes the dialog, and tries to clean up the half-open session", async () => {
+  it("cancels when the visitor closes the dialog, and cleans up the half-open session", async () => {
     // The SDK's pairing promise never settles once it is waiting on a phone — there is no API to
     // cancel it — so the abort has to be the thing that ends the attempt here.
     const bus = eventBus();
     const disconnected: (string | undefined)[] = [];
     let cancelled = 0;
-    const sdk: CsprClickLike = {
-      ...pairingSdk(bus),
-      cancelSignIn: () => {
-        cancelled++;
-      },
-      disconnect: async (provider) => {
-        disconnected.push(provider);
-        return true;
-      },
-    };
     const controller = new AbortController();
-    const pending = connectViaCsprClick(sdk, { events: bus.target, signal: controller.signal });
+    const pending = connect(
+      {
+        ...pairingSdk(bus),
+        cancelSignIn: () => {
+          cancelled++;
+        },
+        disconnect: async (provider?: string) => {
+          disconnected.push(provider);
+          return true;
+        },
+      },
+      { events: bus.target, signal: controller.signal },
+    );
     await Promise.resolve();
     controller.abort();
-    await expect(pending).resolves.toEqual({ kind: "cancelled" });
+    await expect(pending).resolves.toMatchObject({ ok: false, reason: "cancelled" });
     expect(cancelled).toBe(1);
     expect(disconnected).toEqual(["walletconnect"]);
   });
 
   it("stops listening once it has an answer", async () => {
     const bus = eventBus();
-    const pending = connectViaCsprClick(pairingSdk(bus), { events: bus.target });
+    const pending = connect(pairingSdk(bus), { events: bus.target });
     await Promise.resolve();
     bus.status({ status: CSPR_CLICK_STATUS.accountListUpdated, accounts: [{ public_key: "01aa" }] });
     const first = await pending;
     // A late event from an abandoned session must not reopen a settled attempt.
     bus.status({ status: CSPR_CLICK_STATUS.userRejectedPairing });
-    await expect(Promise.resolve(first)).resolves.toEqual({
-      kind: "connected",
-      account: { publicKey: "01aa", label: "WalletConnect" },
-    });
+    expect(first).toEqual({ ok: true, account: { publicKey: "01aa", label: "WalletConnect" } });
   });
 
-  it("keeps waiting when the extension has not answered yet, instead of inventing a failure", async () => {
-    // Casper Wallet's `connect()` resolves its own `requestConnection()` — the key arrives later,
-    // on an event. Treating that gap as a failure would break the extension flow, which is the one
-    // that already worked.
-    const bus = eventBus();
-    const controller = new AbortController();
-    const pending = connectViaCsprClick(
-      {
-        isProviderPresent: (p) => p === "casper-wallet",
-        connect: async () => true,
-        getActiveAccount: () => null,
-      },
-      { events: bus.target, signal: controller.signal },
+  it("builds the deep link Casper Wallet's app answers, escaping the URI", () => {
+    expect(casperWalletPairingDeepLink("wc:topic@2?relay-protocol=irn&symKey=ab")).toBe(
+      "casperwallet://wc?uri=wc%3Atopic%402%3Frelay-protocol%3Dirn%26symKey%3Dab",
     );
-    const settledEarly = await Promise.race([
-      pending.then(() => true),
-      new Promise<false>((r) => setTimeout(() => r(false), 20)),
-    ]);
-    expect(settledEarly).toBe(false);
-
-    // The visitor's cancel is what ends it — and it ends as `cancelled`, not as an error.
-    controller.abort();
-    const outcome: ConnectOutcome = await pending;
-    expect(outcome).toEqual({ kind: "cancelled" });
-  });
-
-  it("completes the extension path from its event when connect() resolves nothing", async () => {
-    const bus = eventBus();
-    const pending = connectViaCsprClick(
-      {
-        isProviderPresent: (p) => p === "casper-wallet",
-        connect: async () => {
-          bus.emit({
-            provider: "casper-wallet",
-            providerEvent: "casper-wallet:connected",
-            activeKey: "01dd",
-          });
-          return undefined;
-        },
-        getActiveAccount: () => null,
-      },
-      { events: bus.target },
-    );
-    await expect(pending).resolves.toEqual({
-      kind: "connected",
-      account: { publicKey: "01dd", label: "Casper Wallet" },
-    });
   });
 });
 

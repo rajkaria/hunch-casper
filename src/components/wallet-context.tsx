@@ -4,8 +4,8 @@ import { useCallback, useSyncExternalStore } from "react";
 import {
   DEMO_ACCOUNT,
   activeConnector,
-  csprClickConnector,
-  hasInstalledWallet,
+  casperWalletInjected,
+  type SendTransactionOutcome,
   type WalletAccountLike,
   type WalletConnector,
 } from "@/lib/wallet-connector";
@@ -84,10 +84,13 @@ function serverSnapshot(): WalletAccount | null {
 /**
  * What a connection attempt is doing right now.
  *
- * This exists because "connecting" is not instantaneous and, on the WalletConnect route, is not even
- * on this device: the SDK hands back a pairing URI and waits for a phone. Without a state to render,
- * the Connect button appears to do nothing — the exact failure this store now makes impossible,
- * since every ending has a state and `error` is never silent.
+ * A connect is neither instantaneous nor, on the WalletConnect route, even on this device: the SDK
+ * hands back a pairing URI and waits for a phone. Without a state to render, the button looks
+ * inert for as long as that takes — which is the failure this store exists to make impossible.
+ * Every ending has a phase, and the error phase is never silent.
+ *
+ * It lives outside the hook, next to the account store, because the header renders the button
+ * twice and a market page renders a third entry point: they are all one attempt.
  */
 export type WalletConnectState =
   | { phase: "idle" }
@@ -120,12 +123,27 @@ export interface WalletContextValue {
   connected: boolean;
   connect: () => void;
   disconnect: () => void;
-  /** Where a connection attempt has got to, so the UI can show a QR, a picker, or an error. */
-  connectState: WalletConnectState;
-  /** Abandon an in-flight attempt (the visitor closed the pairing dialog), or clear an error. */
-  cancelConnect: () => void;
   /** Which connector is live — `"csprclick"` when a real wallet can sign, `"demo"` otherwise. */
   connectorId: WalletConnector["id"];
+  /** Where an attempt has got to, so the UI can show a QR, an account picker, or an error. */
+  connectState: WalletConnectState;
+  /** Abandon an in-flight attempt (the visitor closed the dialog), or clear an error. */
+  cancelConnect: () => void;
+  /**
+   * Why the last connect attempt did not produce an account — `null` after a success, and `null`
+   * for a plain cancellation, which needs no explanation. Set for the case that does: a browser
+   * with no wallet in it at all, where the button otherwise looked broken. The same fact as the
+   * `error` phase above, kept as a string for callers that only want the inline line.
+   */
+  connectError: string | null;
+  /**
+   * Sign and submit a prepared transaction with the connected wallet, or `null` when this
+   * connector has no key of its own (the demo account). `null` is the caller's signal to use the
+   * operator-signed route — it is a capability answer, not a failure.
+   */
+  signAndSend:
+    | ((transactionJson: string, publicKey: string) => Promise<SendTransactionOutcome>)
+    | null;
 }
 
 export function useWallet(): WalletContextValue {
@@ -151,22 +169,23 @@ export function useWallet(): WalletContextValue {
       .then((outcome) => {
         if (inFlight !== controller) return; // superseded by a newer attempt
         inFlight = null;
-        switch (outcome.kind) {
-          case "connected":
-            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(outcome.account));
-            setConnectState(IDLE);
-            return;
-          case "cancelled":
-            setConnectState(IDLE);
-            return;
-          case "no-wallet":
-            // The honest dead end: no extension, and nothing answered the pairing request. Say so,
-            // and offer the one thing that fixes it.
-            setConnectState({ phase: "error", message: outcome.reason, canInstall: true });
-            return;
-          case "failed":
-            setConnectState({ phase: "error", message: outcome.reason, canInstall: false });
+        if (outcome.ok) {
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(outcome.account));
+          setConnectState(IDLE);
+          return;
         }
+        // A cancelled connect is the visitor's own decision, freshly made. Telling them about it
+        // reads as an error message for having changed their mind.
+        if (outcome.reason === "cancelled") {
+          setConnectState(IDLE);
+          return;
+        }
+        setConnectState({
+          phase: "error",
+          message: outcome.message,
+          // The one failure with something to do about it.
+          canInstall: outcome.reason === "no-wallet",
+        });
       });
   }, []);
 
@@ -182,28 +201,31 @@ export function useWallet(): WalletContextValue {
     inFlight?.abort();
     inFlight = null;
     setConnectState(IDLE);
+    emit();
     void activeConnector().disconnect();
   }, []);
-
+  const connector = typeof window === "undefined" ? null : activeConnector();
+  const send = connector?.sendTransaction;
   return {
     account,
     connected: account !== null,
     connect,
     disconnect,
+    connectorId: connector?.id ?? "demo",
     connectState,
     cancelConnect,
-    connectorId: typeof window === "undefined" ? "demo" : activeConnector().id,
+    connectError: connectState.phase === "error" ? connectState.message : null,
+    signAndSend: send ? (json, publicKey) => send.call(connector, json, publicKey) : null,
   };
 }
 
 /**
- * Whether a wallet the visitor has *locally* could sign — an extension or a snap. False means the
- * only route left is pairing a phone over WalletConnect, which is worth saying out loud rather than
- * discovering by staring at a QR nobody can scan.
+ * Whether a wallet the visitor has *locally* could sign — the extension in `window`, not
+ * `isProviderPresent`. False means the only route left is pairing a phone over WalletConnect,
+ * which the pairing dialog says out loud rather than leaving someone to work out from a QR.
  */
 export function localWalletAvailable(): boolean {
-  if (typeof window === "undefined" || !window.csprclick) return false;
-  return csprClickConnector.available() && hasInstalledWallet(window.csprclick);
+  return casperWalletInjected();
 }
 
 /** Truncate a public key for display: `01demo…0000`. */

@@ -5,6 +5,7 @@ import { SiteHeader } from "@/components/site-header";
 import { CsprClickScript } from "@/components/csprclick-script";
 import { SiteFooter } from "@/components/site-footer";
 import { MainnetBanner } from "@/components/mainnet-banner";
+import { WalletResume } from "@/components/wallet-resume";
 import { WalletPairing } from "@/components/wallet-pairing";
 
 const geistSans = Geist({
@@ -68,6 +69,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <CsprClickScript />
+        <WalletResume />
         <a
           href="#main"
           className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-accent focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
@@ -79,8 +81,7 @@ export default function RootLayout({
         <div id="main" className="flex flex-1 flex-col">{children}</div>
         <SiteFooter />
         {/* One connect dialog for the whole app: the header renders the button twice (desktop and
-            mobile), and an attempt started from either — or from a market's bet panel — is the same
-            attempt. */}
+            mobile) and a market page adds a third entry point — they are all one attempt. */}
         <WalletPairing />
       </body>
     </html>
