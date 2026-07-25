@@ -15,13 +15,17 @@
  * which Odra 2.8.2 routes through its `proxy_caller_with_return.wasm` session (a direct call
  * would attach ZERO value). See `buildBetPlan`/`usesProxy`.
  *
- * CUSTODY (S2 scope): real mode is **single-custodian** — every `bet` is signed and funded by
- * the one operator key (`CASPER_BETTOR_KEY`), so on-chain the bettor is the operator, not the
- * end user. `input.bettor` is an off-chain label only. This is correct for the S2 qualifier
- * (the operator demonstrates one real bet + resolution); genuine per-user custody, where each
- * user's own wallet signs so `self.env().caller()` is the real bettor and they can `claim`,
- * requires CSPR.click connect (humans) / per-agent keys (Prophets) and lands in S4/S7. Do NOT
- * expose this real path to untrusted multi-user betting as-is.
+ * CUSTODY — two paths, and the difference is who signs:
+ *
+ *  - `placeBet` is **single-custodian**: signed and funded by the one operator key
+ *    (`CASPER_BETTOR_KEY`), so on chain the bettor is the operator and `input.bettor` is an
+ *    off-chain label only. It is what agents and the demo wallet use. Do NOT expose this path to
+ *    untrusted multi-user betting as-is.
+ *  - `buildBetTransaction` + `confirmTransaction` are **self-custodial**: the same plan and the
+ *    same proxy envelope, built with the visitor's public key as initiator and handed back
+ *    unsigned. Their wallet signs, their account pays the gas and the stake, and
+ *    `self.env().caller()` is genuinely them — which is what makes `claim` theirs to call.
+ *    Per-agent keys (Prophets) are still pending; see the note in `lib/agent-bet.ts`.
  */
 
 import { readFileSync } from "node:fs";
@@ -36,6 +40,7 @@ import {
   Key,
   KeyAlgorithm,
   PrivateKey,
+  PublicKey,
   RpcClient,
   SessionBuilder,
   type Transaction,
@@ -48,6 +53,7 @@ import type {
   DeployResult,
   PlaceBetInput,
   ResolveMarketInput,
+  UnsignedBetTransaction,
 } from "@/ports/casper-chain";
 import type { CasperNetwork } from "@/config/network";
 import { explorerTransactionUrl, getNetworkConfig } from "@/config/network";
@@ -250,15 +256,16 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
       fallback: opts.marketPackageHash || undefined,
     });
 
-  async function submit(tx: Transaction, key: PrivateKey): Promise<DeployResult> {
-    tx.sign(key);
-    const res = await rpc.putTransaction(tx);
-    const hash = res.transactionHash.toHex();
-
-    // `putTransaction` means "a node queued it", not "it happened". Reporting success here let a
-    // reverted escrow — an out-of-gas bet, a closed market, a revert code — be indexed as a placed
-    // bet and shown on the boards, so the read model claimed money that never moved. Wait for the
-    // execution result and let a failure surface as a failure.
+  /**
+   * Wait for a transaction to execute and turn the outcome into a result or a throw.
+   *
+   * Split from `submit` because a transaction the *visitor's wallet* submitted needs exactly the
+   * same treatment and none of the submitting: `putTransaction` means "a node queued it", not "it
+   * happened", and that is equally true whoever sent it. Reporting success early let a reverted
+   * escrow — out of gas, closed market, revert code — be indexed as a placed bet, so the read
+   * model claimed money that never moved.
+   */
+  async function confirm(hash: string): Promise<DeployResult> {
     const outcome = opts.confirmImpl
       ? await opts.confirmImpl(hash)
       : await awaitExecution(network, hash, opts.confirmOptions);
@@ -275,21 +282,30 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
     return { deployHash: hash, explorerUrl: explorerTransactionUrl(network, hash) };
   }
 
+  async function submit(tx: Transaction, key: PrivateKey): Promise<DeployResult> {
+    tx.sign(key);
+    const res = await rpc.putTransaction(tx);
+    return confirm(res.transactionHash.toHex());
+  }
+
   /**
    * Submit a payable plan through Odra's proxy-caller session. The proxy wasm mints a one-time
    * cargo purse from the signer and injects it so the contract's `attached_value()` reads the
    * attached CSPR; a direct package call would attach ZERO — a silent money bug. The five proxy
    * args are exactly what Odra 2.8.2's own client sends, with `amount === attached_value`.
    */
-  function submitPayable(plan: CasperCallPlan, key: PrivateKey): Promise<DeployResult> {
-    const tx = new SessionBuilder()
-      .from(key.publicKey)
+  function buildPayable(plan: CasperCallPlan, from: PublicKey): Transaction {
+    return new SessionBuilder()
+      .from(from)
       .wasm(readFileSync(opts.proxyWasmPath))
       .runtimeArgs(buildProxyArgs(plan))
       .chainName(cfg.chainName)
       .payment(Number(plan.gasMotes))
       .build();
-    return submit(tx, key);
+  }
+
+  function submitPayable(plan: CasperCallPlan, key: PrivateKey): Promise<DeployResult> {
+    return submit(buildPayable(plan, key.publicKey), key);
   }
 
   return {
@@ -309,6 +325,36 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
         vaultMarketId: target.vaultMarketId,
       });
       return submitPayable(plan, key);
+    },
+
+    /**
+     * The same bet, built for the visitor's own key and left unsigned.
+     *
+     * Identical plan, identical proxy envelope, identical gas — the ONLY difference from
+     * `placeBet` is the initiator and who signs. That is deliberate: the money path's ABI must not
+     * fork depending on who is paying, or the wallet-signed bet would be a second, less-tested
+     * encoding of the same call.
+     */
+    async buildBetTransaction(input: PlaceBetInput): Promise<UnsignedBetTransaction> {
+      const target = targetFor(input.marketId);
+      const plan = buildBetPlan(input, {
+        marketContract: target.contract,
+        vaultMarketId: target.vaultMarketId,
+      });
+      const tx = buildPayable(plan, PublicKey.fromHex(input.bettor));
+      const json = tx.toJSON();
+      return {
+        transactionJson: JSON.stringify(json),
+        // The hash covers the payload; approvals are appended to a signed copy and do not change
+        // it. So this is the hash the transaction will carry on chain once the wallet signs it.
+        transactionHash: tx.hash.toHex(),
+        gasMotes: plan.gasMotes,
+      };
+    },
+
+    /** Confirm a transaction a visitor's wallet submitted. Same semantics as our own submits. */
+    async confirmTransaction(transactionHash: string): Promise<DeployResult> {
+      return confirm(transactionHash);
     },
 
     /**

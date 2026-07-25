@@ -8,11 +8,8 @@
 
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
-import { exceedsBetCap, isCasperNetwork, maxBetCspr } from "@/config/network";
+import { validateBetRequest } from "@/lib/bet-request";
 import { isSimulated } from "@/config/chain-mode";
-import { motesToCspr } from "@/core/types";
-
-const MOTES = /^\d+$/;
 
 export async function POST(req: Request): Promise<Response> {
   let body: Record<string, unknown>;
@@ -22,48 +19,14 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
-  const { network, marketId, outcomeKey, amountMotes, bettor } = body ?? {};
-
-  if (!isCasperNetwork(network)) {
-    return NextResponse.json({ error: "network must be 'testnet' or 'mainnet'" }, { status: 400 });
+  // Shared with `/api/chain/bet/prepare` so the operator-signed and wallet-signed paths cannot
+  // drift on caps, unknown markets, or a closed market. See `lib/bet-request.ts`.
+  const validated = await validateBetRequest(body);
+  if (!validated.ok) {
+    return NextResponse.json({ error: validated.rejection.error }, { status: validated.rejection.status });
   }
-  if (typeof marketId !== "string" || marketId.length === 0) {
-    return NextResponse.json({ error: "marketId is required" }, { status: 400 });
-  }
-  if (typeof outcomeKey !== "string" || outcomeKey.length === 0) {
-    return NextResponse.json({ error: "outcomeKey is required" }, { status: 400 });
-  }
-  if (typeof amountMotes !== "string" || !MOTES.test(amountMotes) || BigInt(amountMotes) <= 0n) {
-    return NextResponse.json({ error: "amountMotes must be a positive integer motes string" }, { status: 400 });
-  }
-  if (typeof bettor !== "string" || bettor.length === 0) {
-    return NextResponse.json({ error: "bettor is required" }, { status: 400 });
-  }
-
-  // Mainnet guardrail: fresh unaudited contracts hold real value, so bets are capped.
-  if (exceedsBetCap(network, motesToCspr(amountMotes))) {
-    return NextResponse.json(
-      { error: `bet exceeds the ${network} cap of ${maxBetCspr(network)} CSPR` },
-      { status: 400 },
-    );
-  }
-
+  const { network, market, outcomeKey, amountMotes, bettor } = validated.request;
   const container = createContainer(network);
-
-  // Validate against the catalogue read model before touching the chain: the bet must be on a
-  // real market and a real outcome of it. (Closes the S4-review correctness gap; safe because the
-  // money path itself is pure-math + operator-custody, but a bet on a bad outcome is nonsense.)
-  const slug = marketId.startsWith(`${network}:`) ? marketId.slice(network.length + 1) : marketId;
-  const market = await container.store.get(slug, network);
-  if (!market) {
-    return NextResponse.json({ error: `unknown market '${marketId}'` }, { status: 400 });
-  }
-  if (!market.outcomes.some((o) => o.key === outcomeKey)) {
-    return NextResponse.json({ error: `'${outcomeKey}' is not an outcome of ${marketId}` }, { status: 400 });
-  }
-  if (market.status !== "open") {
-    return NextResponse.json({ error: `market ${marketId} is ${market.status}` }, { status: 409 });
-  }
 
   // Phase 1 — submit the escrow to the chain (the money authority). A failure here means no
   // value moved, so it is the only case that returns 502.
