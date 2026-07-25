@@ -350,16 +350,20 @@ export async function probeCsprClickAppId(fetchImpl: typeof fetch = fetch): Prom
     // but this probe only asks whether the registration exists, and the answer is the same.
     const res = await fetchImpl(csprClickApplicationUrl(appId), { credentials: "omit" });
     if (res.ok) return null;
-    if (res.status !== 401 && res.status !== 403 && res.status !== 404) return null;
-    let detail = "";
+    let message = "";
     try {
       const body = (await res.json()) as { error?: { message?: string } };
-      if (typeof body?.error?.message === "string") detail = `: ${body.error.message}`;
+      if (typeof body?.error?.message === "string") message = body.error.message;
     } catch {
-      /* a bare status is still a definitive no */
+      /* not JSON — inconclusive */
     }
+    // Their 401 is overloaded: "wrong application id" means the id does not exist, while
+    // "request not authorized" only means the request carried no Origin header (a browser always
+    // sends one here, but the distinction cost a healthy deploy a false FAIL server-side). Only
+    // an explicit wrong-id verdict — or a 404 — demotes.
+    if (res.status !== 404 && !message.includes("application id")) return null;
     markCsprClickAppIdRejected(
-      `CSPR.click rejected this site's app id (HTTP ${res.status}${detail}). ` +
+      `CSPR.click rejected this site's app id (HTTP ${res.status}${message ? `: ${message}` : ""}). ` +
         `Real signing is off until a registered id is set — mint one at console.cspr.click and ` +
         `redeploy with NEXT_PUBLIC_CSPR_CLICK_APP_ID.`,
     );

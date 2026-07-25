@@ -145,19 +145,33 @@ export interface HealthOptions {
   /** Injected for tests: KV probe and clock. */
   fetchImpl?: typeof fetch;
   now?: number;
+  /**
+   * This deployment's own origin, forwarded to the CSPR.click app-id probe as an `Origin`
+   * header. Their accounts service answers 401 "request not authorized" to any request without
+   * one — valid id or not — which the first cut of this probe misread as a rejected id and
+   * FAILed a perfectly healthy deploy. Browsers add the header automatically; a server has to
+   * say who it is.
+   */
+  siteOrigin?: string;
 }
 
 /**
  * Ask accounts.cspr.click whether the configured app id actually exists — the reality behind the
  * "armed" posture. An id CSPR.click never issued gets a 401 whose error body the SDK crashes on,
  * unhandled, in every visitor's browser; the deploy that surfaced this ran green for a week that
- * way. Definitive statuses only: 401/403/404 is "rejected", 2xx is "accepted", anything else
- * (their outage, a timeout, no network from this instance) is "unreachable" and judged as such —
- * never as a rejection.
+ * way.
+ *
+ * Only CSPR.click *saying the id is wrong* counts as a rejection. Their service returns 401 for
+ * at least two unrelated reasons — `"wrong application id"` (the id does not exist) and
+ * `"request not authorized"` (the request carried no Origin header) — and conflating them
+ * demotes healthy deploys. Everything that is not an explicit wrong-id verdict or a 2xx is
+ * "unreachable": their outage, a timeout, a missing Origin, all judged inconclusive, never as a
+ * rejection.
  */
 async function csprClickAppIdCheck(
   appId: string | null,
   fetchImpl: typeof fetch = fetch,
+  siteOrigin?: string,
 ): Promise<{ status: "accepted" | "rejected" | "unreachable"; detail?: string } | undefined> {
   if (appId === null) return undefined;
   const controller = new AbortController();
@@ -166,19 +180,20 @@ async function csprClickAppIdCheck(
     const res = await fetchImpl(csprClickApplicationUrl(appId), {
       signal: controller.signal,
       cache: "no-store",
+      ...(siteOrigin ? { headers: { origin: siteOrigin } } : {}),
     });
     if (res.ok) return { status: "accepted" };
-    if (res.status === 401 || res.status === 403 || res.status === 404) {
-      let detail = `HTTP ${res.status}`;
-      try {
-        const body = (await res.json()) as { error?: { message?: string } };
-        if (typeof body?.error?.message === "string") detail = `${detail} ${body.error.message}`;
-      } catch {
-        /* a bare status is still definitive */
-      }
-      return { status: "rejected", detail };
+    let message = "";
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (typeof body?.error?.message === "string") message = body.error.message;
+    } catch {
+      /* not JSON — inconclusive */
     }
-    return { status: "unreachable", detail: `HTTP ${res.status}` };
+    if (res.status === 404 || message.includes("application id")) {
+      return { status: "rejected", detail: `HTTP ${res.status} ${message}`.trim() };
+    }
+    return { status: "unreachable", detail: `HTTP ${res.status} ${message}`.trim() };
   } catch {
     return { status: "unreachable" };
   } finally {
@@ -201,7 +216,7 @@ export async function gatherHealth(
   const [persistence, fleet, appIdCheck] = await Promise.all([
     probePersistence(opts.fetchImpl),
     fleetBalances(network),
-    csprClickAppIdCheck(configuredAppId, opts.fetchImpl),
+    csprClickAppIdCheck(configuredAppId, opts.fetchImpl, opts.siteOrigin),
   ]);
   const inputs: HealthInputs = {
     network,

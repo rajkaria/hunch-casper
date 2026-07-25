@@ -22,9 +22,13 @@ import { DEFAULT_NETWORK, isCasperNetwork } from "@/config/network";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request): Promise<Response> {
-  const param = new URL(req.url).searchParams.get("network");
+  const url = new URL(req.url);
+  const param = url.searchParams.get("network");
   const network = isCasperNetwork(param) ? param : DEFAULT_NETWORK;
-  const report = await gatherHealth(network);
+  // The site's own origin rides along for the CSPR.click app-id probe: accounts.cspr.click
+  // answers 401 "request not authorized" to ANY request without an Origin header, valid id or
+  // not, so probing without one can only ever produce noise.
+  const report = await gatherHealth(network, { siteOrigin: url.origin });
   return NextResponse.json(report, {
     status: report.status === "ok" ? 200 : 503,
     headers: { "cache-control": "no-store" },
