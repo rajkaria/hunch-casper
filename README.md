@@ -56,10 +56,17 @@ transaction on cspr.live:
 |---|---|---|
 | `MarketFactory` | `hash-7f63a93187…f43d777` | on-chain registry |
 | `OracleRegistry` | `hash-269834fd37…c6282` | [deploy `b85537…`](https://testnet.cspr.live/transaction/b85537a2c5926c4687e87510b345ce5bb9a4153d20f79687d5c830bdc3d60298) · [register_oracle `c26957…`](https://testnet.cspr.live/transaction/c26957021830fa491b4fcab31bf20736bcefff4fec1fd762cb34059977206843) |
-| `ParimutuelMarket` (vault) | `hash-c6a1afd320…64529` | [deploy `2b0cbe…`](https://testnet.cspr.live/transaction/2b0cbe25f382b40828b34d9c889fea3f1ac03cddbca32fe0dc4e0b6256d1d677) · [register_market `d179b6…`](https://testnet.cspr.live/transaction/d179b690b768a807466f9864f7fbb617de5a4a5fc01aa0161ebe67176ecc84aa) |
+| `ParimutuelMarket` (v1 vault) | `hash-c6a1afd320…64529` | [deploy `2b0cbe…`](https://testnet.cspr.live/transaction/2b0cbe25f382b40828b34d9c889fea3f1ac03cddbca32fe0dc4e0b6256d1d677) · [register_market `d179b6…`](https://testnet.cspr.live/transaction/d179b690b768a807466f9864f7fbb617de5a4a5fc01aa0161ebe67176ecc84aa) |
+| `HunchVault` (v2 singleton) | `hash-ce45136047…2876a1` | [deploy `43eab0…`](https://testnet.cspr.live/transaction/43eab0e436ff79f80f182946156fdde6f8cdd4fda1ffad83cbe89de31b9417d3) · [create_market `e2bb36…`](https://testnet.cspr.live/transaction/e2bb364cf9a717d0c68c14b1142bff6f4d4c31ed700d17393e4e7968dc1f2739) · [resolve `46312a…`](https://testnet.cspr.live/transaction/46312a4ce8739ba4c4a2701714cfb628ae78eb961564bc6fa6819d8690dd409c) · [claim `136425…`](https://testnet.cspr.live/transaction/1364254cad96bb52e5e03b3fc4c209ca321c0df26f261f3711028b0b65a11ad2) |
 
-The deployed OracleRegistry registers the Arbiter as the on-chain oracle, and the market is
-registered in the factory — the economy's on-chain foundation, produced by `contracts/bin/cli.rs`.
+The OracleRegistry registers the Arbiter as the on-chain oracle; the v1 vault is registered in the
+factory. Bets now route to five per-market `ParimutuelMarket` packages where the address map names
+one, and to the `HunchVault` v2 singleton otherwise — where a new market is a **measured 3.74 CSPR
+`create_market` state entry** rather than a ~324 CSPR install, and guardrailed permissionless
+creation is switched on ([`set_open_creation`
+`74a0de…`](https://testnet.cspr.live/transaction/74a0de8a9adc95a35289df9ee6c42a8002ca6a93fa24fab25223387cd5b5beaf)).
+Every hash is produced by `contracts/bin/cli.rs`; the full step-by-step receipt list is in
+[`docs/BUIDL.md`](./docs/BUIDL.md).
 
 ## What it does
 
@@ -156,14 +163,16 @@ Mainnet — the **same code, one build**, flipped by the **Testnet ⇄ Mainnet**
 (the deploy manifest is byte-identical across networks). Mainnet carries a 25 CSPR per-bet cap and
 an unaudited-build disclosure.
 
-The proof surface is wired and waiting only on the credential-gated ops step
-([`contracts/DEPLOY.md`](./contracts/DEPLOY.md)): once `NEXT_PUBLIC_*_MARKET_FACTORY` /
-`_ORACLE_REGISTRY` / `_VAULT` and `NEXT_PUBLIC_ONCHAIN_RECEIPTS` (real tx hashes, JSON) are set, a
-**Live on Casper** section renders on the landing page and `/docs#onchain` with real cspr.live
-links — deployed contract packages and transaction receipts. `NEXT_PUBLIC_*_MARKET_ADDRS`
-(slug → package hash, JSON) routes each bet/resolve to its own deployed `ParimutuelMarket`, with
-the vault as fallback. Until wired, the app serves the deterministic mock adapter — CI and the demo
-need zero secrets, and every mock hash is labelled `simulated`.
+**Testnet is wired and running in real chain mode.** `NEXT_PUBLIC_TESTNET_MARKET_FACTORY` /
+`_ORACLE_REGISTRY` / `_VAULT` / `_VAULT_V2`, the per-market `_MARKET_ADDRS` routing map, and
+`NEXT_PUBLIC_ONCHAIN_RECEIPTS` are all set on the deployment, so the **Live on Casper** section
+renders real cspr.live links on the landing page and `/docs#onchain`, and
+[`/api/health`](https://casper.playhunch.xyz/api/health) reports `"chainMode":"real"`. Bets route
+to a market's own `ParimutuelMarket` package when the map names one and to the singleton
+`HunchVault` v2 otherwise. **Mainnet is deliberately untouched** — the same build serves it behind
+the header toggle, but no mainnet contracts are deployed, so that side stays on the deterministic
+mock adapter. That is also the default for a fresh clone: CI and local dev need zero secrets, and
+every mock hash is labelled `simulated` rather than linked to an explorer.
 
 ## Architecture
 
@@ -208,7 +217,11 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build
 3. Set the `NEXT_PUBLIC_*` env vars in `.env.example` once contracts are deployed.
 4. Optional: set the Upstash/Vercel KV env vars so bets and boards persist across serverless
    instances (unset → in-memory demo state with the cold-start seed). A GitHub Actions workflow
-   ticks the economy every 10 minutes, 24/7 (the Vercel Hobby cron stays daily).
+   drives the 24/7 tick because the Vercel Hobby cron fires only once a day. It *asks* for every
+   10 minutes; GitHub throttles scheduled workflows on a repo this size, and the measured delivery
+   over the last 30 runs is a **median gap of ~84 minutes, about 16 ticks a day**. The economy is
+   sized against that, not against the requested cadence — `gh workflow run economy.yml --ref main`
+   forces one when you need it now.
 
 ## Status
 
@@ -220,10 +233,18 @@ distribution (chat bots, embeds, narrated alerts); human NL market creation with
 recipes; **verifiable resolution** (recipe + evidence hashes, replay harness); **optimistic
 resolution** with staked disputes; **oracle-as-a-service** (metered query API + settlement hooks);
 **probability feeds** with calibration exports; **LMSR** continuous liquidity + LP vaults;
-**copy-betting**; and the **Testnet ⇄ Mainnet** toggle end-to-end. 1352 TS tests + 95 OdraVM
-contract tests, green gate each sprint (`typecheck / lint / test / build`), GitHub CI green.
-Remaining to fully launch is credential-gated ops (mint the real testnet tx, wire addresses,
-register the bots, fund the audit/bounty/mainnet deploy) + the submission pack — see
+**copy-betting**; and the **Testnet ⇄ Mainnet** toggle end-to-end. 1367 TS tests + 95 OdraVM
+contract tests, green gate each sprint (`typecheck / lint / test / build`), GitHub CI green, and
+`pnpm audit` clean.
+
+**The loop closes on chain.** Testnet runs in real chain mode with four funded agent purses; the
+recurring rounds roll over on their own (a matured round resolves and opens its successor), and
+`/api/health` reports the loop's own vital signs — resolution, rotation, and whether the chain fold
+still sees events.
+
+**Honestly not done yet:** the demo video; CSPR.click (`NEXT_PUBLIC_CSPR_CLICK_APP_ID` is unset, so
+the header wallet is still the labelled demo one and a human cannot place a real bet); an unfunded
+Agent League prize pool; and mainnet, where nothing is deployed. See
 [`VISION.md`](./VISION.md) for what comes after the hackathon.
 
 ## Community & contributing

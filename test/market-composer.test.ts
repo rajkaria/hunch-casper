@@ -31,7 +31,9 @@ describe("composeMarket", () => {
       expect(res.definition.outcomes.map((o) => o.key)).toEqual(["yes", "no"]);
       expect(res.definition.title.endsWith("?")).toBe(true);
       expect(res.recipeHash.startsWith("sha256:")).toBe(true);
-      expect(res.definition.category).toBe("provably-fair");
+      // A CSPR price market from CoinGecko is Casper-native. The category is derived from the
+      // resolver, never stamped — see test/market-category-from-resolver.test.ts.
+      expect(res.definition.category).toBe("casper-native");
       expect(res.definition.slug).toContain("user-");
     }
   });

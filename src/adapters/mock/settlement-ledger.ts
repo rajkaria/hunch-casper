@@ -81,10 +81,40 @@ function cloneMarket(m: Market): Market {
   };
 }
 
+/**
+ * Refresh the catalogue-owned COPY of a stored entry: title, subtitle, category, outcome labels.
+ *
+ * Money and time — pools, stakes, status, deadline, fee — are the ledger's and are never
+ * overwritten: restating them under a market that already holds stakes would rewrite economics
+ * that bettors already acted on.
+ *
+ * Without this, a persisted entry freezes its copy at the moment it was first touched. Production
+ * hit exactly that: after the recurring round's cadence became daily and the catalogue was renamed
+ * to "CSPR up or down today?", the live site kept serving "CSPR up or down this hour?" from a KV
+ * entry seeded before the rename — while every freshly-spawned child round read "today". A market
+ * whose title outruns its cadence is the defect the daily-cadence work existed to end.
+ */
+function refreshCopy(entry: LedgerEntry): void {
+  const def = findDefinition(parseMarketId(entry.market.id).slug);
+  if (!def) return; // a market that has left the catalogue keeps the copy it last had
+  const fresh = buildMarket(def, entry.market.network);
+  entry.market.title = fresh.title;
+  if (fresh.subtitle === undefined) delete entry.market.subtitle;
+  else entry.market.subtitle = fresh.subtitle;
+  entry.market.category = fresh.category;
+  entry.market.outcomes = entry.market.outcomes.map((o) => {
+    const current = fresh.outcomes.find((f) => f.key === o.key);
+    return current ? { ...o, label: current.label } : o;
+  });
+}
+
 /** Seed (or fetch) the ledger entry for a market id from the catalogue. */
 function ensureEntry(marketId: string): LedgerEntry {
   const existing = ledger.get(marketId);
-  if (existing) return existing;
+  if (existing) {
+    refreshCopy(existing);
+    return existing;
+  }
   const { network, slug } = parseMarketId(marketId);
   const def = findDefinition(slug);
   if (!def) throw new Error(`unknown market '${slug}'`);
