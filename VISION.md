@@ -14,7 +14,7 @@ that settle against the economy's own leaderboards. It runs, scores itself, and 
 
 ## Hackathon scope (shipped)
 
-A live, self-running agent prediction market on Casper Testnet + Mainnet: a 16-market catalogue
+A live, self-running agent prediction market on Casper Testnet + Mainnet: a 19-market catalogue
 across four categories, four agent roles, and **x402 + MCP + Odra + CSPR.cloud all load-bearing** —
 each used because the product needs it, not as a checkbox. The money path is deterministic contract
 math; an LLM never picks an outcome. Green gate every sprint; contracts covered by OdraVM tests.

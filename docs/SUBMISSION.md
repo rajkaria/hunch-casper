@@ -40,14 +40,14 @@ scores itself.
   outcome or touches a payout — it only proposes markets and narrates.
 - **x402 + MCP public rails.** The exact surface our Prophets use is a public, documented agent
   rail: a real HTTP-402 handshake with payer-bound, single-use proofs, and a live JSON-RPC MCP
-  server with 7 tools any agent can join in one command.
-- **Testnet + mainnet, one build.** The full 16-market catalogue runs on both networks off a
+  server with 8 tools any agent can join in one command.
+- **Testnet + mainnet, one build.** The full 19-market catalogue runs on both networks off a
   byte-identical deploy manifest, flipped by a header toggle. Mainnet keeps a 25 CSPR per-bet cap
   and an unaudited-build disclosure on every surface.
 
 ## What's real (transparency)
 
-We label the line honestly, in the UI itself. **Real:** the four Odra contracts (original Rust,
+We label the line honestly, in the UI itself. **Real:** the nine Odra contracts (original Rust,
 95 OdraVM tests in CI), the testnet deployment and its transaction receipts (the "Live on Casper"
 section links contract packages and real txs to cspr.live), the x402 handshake (with on-chain CSPR
 transfer verification in real mode), the live chain signals Genesis reads (CSPR.cloud validators,
@@ -60,22 +60,25 @@ payout engine, LLM narrations are advisory flavor, and the header wallet is a mo
 
 ## Tech stack & the Casper toolkit
 
-Next.js 16 + TypeScript (strict) on Vercel; Odra 2.8 / Rust for the contracts; Vitest (1352 TS
-tests) + OdraVM (22 contract tests) behind a `typecheck / lint / test / build` CI gate; ports &
+Next.js 16 + TypeScript (strict) on Vercel; Odra 2.8 / Rust for the contracts; Vitest (1367 TS
+tests) + OdraVM (95 contract tests) behind a `typecheck / lint / test / build` CI gate; ports &
 adapters so the deterministic mock and the real `casper-js-sdk` adapter satisfy the same contract
 tests. Every Casper toolkit item is load-bearing:
 
 - **x402 Micropayments** — the settlement rail for every agent bet: a real HTTP-402 challenge with
   a payer-bound, single-use nonce. In real mode (`CASPER_X402_PAYTO`) proofs are verified against
   an actual on-chain CSPR transfer — payer, target, amount, success.
-- **MCP Server** — how agents discover markets and act: `POST /api/mcp`, JSON-RPC 2.0, 7 tools
-  (list/get/odds/quote/place_bet/reputation/leaderboard). The Prophets dogfood the same public
+- **MCP Server** — how agents discover markets and act: `POST /api/mcp`, JSON-RPC 2.0, 8 tools
+  (list/get/odds/quote/place_bet/oracle-reputation/leaderboard/agent-reputation). The Prophets dogfood the same public
   surface third-party agents use.
 - **CSPR.cloud APIs** — the live signal Genesis opens markets from: active-validator count with an
   API key, keyless node-RPC block height as fallback. Market subtitles carry the true source label.
-- **Odra Framework** — three original contracts: `MarketFactory` (registry), `ParimutuelMarket`
+- **Odra Framework** — nine original contracts: `MarketFactory` (registry), `ParimutuelMarket`
   (payable escrow + pull-style `claim()` with pure pool math), `OracleRegistry` (staked oracle
-  reputation). All covered on OdraVM in CI.
+  reputation), the singleton `HunchVault` (a market becomes a 3.74 CSPR state entry instead of a
+  324 CSPR install), `AgentRegistry` (bonded third-party identity), `DisputePanel` (optimistic
+  resolution), `ResolutionHook` (oracle-as-a-service), `LmsrMarket` (continuous liquidity), and
+  `CopyBetting` (mirrored-fee split). All covered on OdraVM in CI.
 - **CSPR.click** — honestly: not integrated yet. The header wallet is a mock with a `demo` pill;
   the CSPR.click drop-in is the first post-hackathon integration ([`VISION.md`](../VISION.md)).
 - **drand Beacon** — the public randomness The Flip's resolver binds to: provably fair by
@@ -105,12 +108,25 @@ tests. Every Casper toolkit item is load-bearing:
 
 ## Final checklist
 
-- [ ] Demo video recorded (< 3 min, shot list in [`DEMO_SCRIPT.md`](./DEMO_SCRIPT.md)), uploaded
+Done:
+
+- [x] Testnet contract addresses wired (`NEXT_PUBLIC_TESTNET_MARKET_FACTORY` / `_ORACLE_REGISTRY` /
+      `_VAULT` / `_VAULT_V2`, per-market `NEXT_PUBLIC_TESTNET_MARKET_ADDRS`) — `/api/health`
+      reports `"chainMode":"real"`
+- [x] `NEXT_PUBLIC_ONCHAIN_RECEIPTS` pasted — the "Live on Casper" section renders real cspr.live
+      links
+- [x] GitHub repo public + CI green, `pnpm audit` clean
+- [x] Screenshot committed at `docs/assets/screenshot.png`
+- [x] npm package published (`hunch-casper-sdk`)
+
+Blocked on the operator (nobody else can do these):
+
+- [ ] **Demo video** recorded (< 3 min, shot list in [`DEMO_SCRIPT.md`](./DEMO_SCRIPT.md)), uploaded
       (YouTube unlisted), and linked in `README.md` + this file
-- [ ] Testnet contract addresses wired (`NEXT_PUBLIC_TESTNET_MARKET_FACTORY` /
-      `_ORACLE_REGISTRY` / `_VAULT`, per-market `NEXT_PUBLIC_TESTNET_MARKET_ADDRS`)
-- [ ] `NEXT_PUBLIC_ONCHAIN_RECEIPTS` pasted (real tx hashes → the "Live on Casper" section renders)
-- [ ] GitHub repo public + CI green
-- [ ] Screenshot committed at `docs/assets/screenshot.png`
-- [ ] npm package published (`hunch-casper-sdk`) — optional
+- [ ] **CSPR.click app id** registered → `NEXT_PUBLIC_CSPR_CLICK_APP_ID` on the Vercel project, then
+      **redeploy** (a `NEXT_PUBLIC_*` value is baked at build time). Runbook: [`OPS.md`](./OPS.md)
+      §3b. Until this lands the header wallet is the labelled demo one and **no human can place a
+      real bet** — the single hardest blocker on the judge experience.
+- [ ] **League prize pool** funded → `CASPER_LEAGUE_PRIZE_MOTES`. Until then `/league` says, truthfully
+      but unattractively, that no prize pool is funded.
 - [ ] Submission form fields filled (title, one-liner, links, video, track)

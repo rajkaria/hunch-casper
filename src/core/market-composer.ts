@@ -30,6 +30,7 @@ import {
   recipeFromBinding,
 } from "@/core/resolution-recipe";
 import { assessMarket } from "@/core/category-policy";
+import { categoryForResolver } from "@/core/market-category";
 
 export interface ComposeMarketInput {
   /** The human's claim / question, e.g. "Will CSPR cross $0.10 by Sept 1?". */
@@ -161,7 +162,9 @@ export async function composeMarket(
     slug: `user-${slugify(claim)}-${input.seq}`,
     title,
     subtitle,
-    category: "provably-fair",
+    // Derived from the frozen recipe — a community market is filed by how it will be settled,
+    // never by a hardcoded shelf. See core/market-category.
+    category: categoryForResolver(recipe),
     outcomes,
     feeBps: input.feeBps ?? DEFAULT_FEE_BPS,
     cadence: "one-shot",

@@ -722,7 +722,8 @@ export default function DocsPage() {
               successful on-chain native CSPR transfer from the payer to that account of at least the
               quoted amount, read straight from the node RPC — or set{" "}
               <C>CASPER_REAL_AGENT_X402=true</C>, the weaker opt-in that keeps mock nonce-match
-              verification. The port shape stays identical either way.
+              verification. The port shape stays identical either way. This deployment runs the
+              first of the two: every agent bet you see landed as a genuine on-chain CSPR transfer.
             </P>
           </Section>
 
@@ -828,19 +829,30 @@ export default function DocsPage() {
 
           <Section id="onchain" eyebrow="Receipts, not claims" title="On-chain proof">
             <P>
-              The public demo runs the deterministic mock economy so it is always alive and
-              credential-free — and every simulated hash in the feed is labelled{" "}
-              <C>simulated</C>, never linked to the live explorer. The chain layer&rsquo;s reality
-              is proven separately: the deployed contract package hashes and real transaction
-              receipts (a live bet through Odra&rsquo;s payable proxy, a live oracle resolution)
-              render on the{" "}
+              This deployment runs on testnet in <C>real</C> chain mode. Agent bets are signed and
+              submitted from purses the agents themselves control, recurring rounds resolve and
+              re-open on chain unattended, and the deployed contract package hashes plus real
+              transaction receipts (a live bet through Odra&rsquo;s payable proxy, a live oracle
+              resolution) render as cspr.live links on the{" "}
               <Link href="/#onchain-proof" className="text-foreground underline decoration-border underline-offset-4 hover:decoration-accent">
                 landing page
+              </Link>
+              . Check it yourself:{" "}
+              <Link href="/api/health" className="text-foreground underline decoration-border underline-offset-4 hover:decoration-accent">
+                <C>/api/health</C>
               </Link>{" "}
-              as cspr.live links the moment the ops deploy wires{" "}
-              <C>NEXT_PUBLIC_TESTNET_MARKET_FACTORY</C> / <C>_ORACLE_REGISTRY</C> / <C>_VAULT</C>{" "}
-              and <C>NEXT_PUBLIC_ONCHAIN_RECEIPTS</C>. Until then the section hides — the proof
-              surface never fabricates a hash.
+              reports the live chain mode, which contracts are wired, and how long ago an agent last
+              acted — never a secret&rsquo;s value.
+            </P>
+            <P>
+              A clone with no credentials — and CI — runs the deterministic mock adapter instead, so
+              the project is always alive without secrets. The two modes are never confused in the
+              UI: a mock hash carries a <C>simulated</C> chip and is never linked to an explorer,
+              and only a real one gets an <C>on-chain</C> chip. The proof section itself hides
+              entirely unless <C>NEXT_PUBLIC_TESTNET_MARKET_FACTORY</C> / <C>_ORACLE_REGISTRY</C> /{" "}
+              <C>_VAULT</C> and <C>NEXT_PUBLIC_ONCHAIN_RECEIPTS</C> are wired — it never fabricates
+              a hash. <C>Mainnet has no contracts deployed</C>: the same build serves it behind the
+              header toggle, on the mock adapter.
             </P>
           </Section>
 

@@ -62,3 +62,14 @@ next-env.d.ts
 /docs/BUILD_SPEC.md
 /docs/ROADMAP_SPEC.md
 /docs/context/
+# Sprint specs and task-by-task plans written for the maintainer's own agentic workflow. They
+# narrate work-in-progress state ("no traction yet", "awaiting review") and carry tool-specific
+# process instructions — noise to a reader of the public repo, and stale the moment they land.
+# The durable versions of what they say live in docs/OPS.md, VISION.md and the commit history.
+/docs/superpowers/
+
+# editors / local tooling
+.idea/
+.vscode/
+*.swp
+.DS_Store

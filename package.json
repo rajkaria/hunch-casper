@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "casper-js-sdk": "5.0.12",
-    "next": "16.2.10",
+    "next": "16.2.11",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
@@ -25,14 +25,17 @@
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
-    "eslint-config-next": "16.2.10",
+    "eslint-config-next": "16.2.11",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.9"
   },
   "pnpm": {
     "overrides": {
-      "postcss@<8.5.10": ">=8.5.10"
+      "postcss@<8.5.18": ">=8.5.18",
+      "sharp@<0.35.0": ">=0.35.0",
+      "minimatch@3": "10.2.5",
+      "brace-expansion@<5.0.8": "5.0.8"
     }
   }
 }

@@ -46,7 +46,7 @@ economy that scores itself and keeps the self-scoring honest.
 
 Every Casper primitive is load-bearing, not decorative: x402 is the settlement rail for every bet,
 MCP is how agents discover and act, Odra contracts hold the money and the oracle reputation, and
-live CSPR chain signals are what Genesis reads to open markets. The same 16-market catalogue runs on
+live CSPR chain signals are what Genesis reads to open markets. The same 19-market catalogue runs on
 **testnet and mainnet** off one byte-identical deploy manifest, flipped by a header toggle (mainnet
 adds a 25 CSPR per-bet cap and an unaudited-build disclosure).
 
@@ -62,7 +62,7 @@ adds a 25 CSPR per-bet cap and an unaudited-build disclosure).
   single-participant / no-winner / void rounds refund in full). Verified by 5 parity vectors + 300
   property runs against the contract's `claim()`.
 - **x402 + MCP public rails** — a real HTTP-402 handshake with payer-bound, single-use proofs, and a
-  live JSON-RPC MCP server (7 tools) any agent can join in one command.
+  live JSON-RPC MCP server (8 tools) any agent can join in one command.
 - **Testnet + mainnet, one build** — the full catalogue runs on both networks off a byte-identical
   deploy manifest.
 
@@ -71,11 +71,13 @@ adds a 25 CSPR per-bet cap and an unaudited-build disclosure).
 - **x402 Micropayments** — the settlement rail for every agent bet: an HTTP-402 challenge with a
   payer-bound, single-use nonce. In real mode (`CASPER_X402_PAYTO`) proofs are verified against an
   actual on-chain CSPR transfer — payer, target, amount, success.
-- **MCP Server** — `POST /api/mcp`, JSON-RPC 2.0, 7 tools (list / get / odds / quote / place_bet /
-  reputation / leaderboard). The Prophets dogfood the same public surface third-party agents use.
-- **Odra Framework** — three original contracts: `MarketFactory` (registry), `ParimutuelMarket`
-  (payable escrow + pull-style `claim()`), `OracleRegistry` (staked oracle reputation). All covered
-  on OdraVM in CI.
+- **MCP Server** — `POST /api/mcp`, JSON-RPC 2.0, 8 tools (list / get / odds / quote / place_bet /
+  oracle-reputation / leaderboard / agent-reputation). The Prophets dogfood the same public surface
+  third-party agents use.
+- **Odra Framework** — nine original contracts: `MarketFactory` (registry), `ParimutuelMarket`
+  (payable escrow + pull-style `claim()`), `OracleRegistry` (staked oracle reputation), the
+  singleton `HunchVault`, `AgentRegistry`, `DisputePanel`, `ResolutionHook`, `LmsrMarket`, and
+  `CopyBetting`. All covered on OdraVM in CI.
 - **CSPR.cloud APIs** — the live signal Genesis opens markets from (active-validator count with an
   API key; keyless node-RPC block height as fallback).
 - **drand Beacon** — the public randomness "The Flip" market binds to for provable fairness.
@@ -85,11 +87,16 @@ adds a 25 CSPR per-bet cap and an unaudited-build disclosure).
 **Real:** nine original Odra/Rust contracts (95 OdraVM tests in CI), the testnet deployment + real
 transaction receipts on cspr.live (below), the x402 handshake with on-chain CSPR transfer
 verification in real mode, the live chain signals Genesis reads, the MCP server, and the payout math
-(mirrors the contract's `claim()` exactly). **Simulated, and labelled honestly in the UI:** the
-public demo runs a deterministic mock economy so it is always alive and credential-free — mock-mode
-tx hashes carry a `simulated` chip and never link to the explorer, and LLM narrations are advisory
-flavor only. **Every line of Casper code in this repository is original and newly written for this
-buildathon.**
+(mirrors the contract's `claim()` exactly). The live testnet deployment runs in **real chain mode**:
+agent bets are signed and submitted from purses the agents control, and recurring rounds resolve and
+re-open on chain without a human. **Simulated, and labelled honestly in the UI:** a fresh clone (and
+CI) runs the deterministic mock adapter so the project is always alive and credential-free — mock
+tx hashes carry a `simulated` chip and never link to the explorer, only real ones get an `on-chain`
+chip; the cold-start demo seed populates boards through the real payout engine; and LLM narrations
+are advisory flavor only. **Mainnet has no contracts deployed** — the same build serves it behind
+the header toggle, on the mock adapter. **Not integrated:** CSPR.click, so the header wallet is a
+demo one wearing a `demo` pill and human betting is not live yet. **Every line of Casper code in
+this repository is original and newly written for this buildathon.**
 
 ---
 
@@ -106,7 +113,10 @@ buildathon.**
 
 ## Deployed contract packages (Casper testnet)
 
-Four original Odra/Rust contracts. Click any hash to open the contract package on cspr.live.
+Four of the nine original Odra/Rust contracts are installed on testnet — the four the live money
+path needs. The other five (`AgentRegistry`, `DisputePanel`, `ResolutionHook`, `LmsrMarket`,
+`CopyBetting`) ship in the repo under OdraVM test coverage and are not yet installed on chain.
+Click any hash to open the contract package on cspr.live.
 
 | Contract | Role | Package hash | Explorer |
 |---|---|---|---|
@@ -164,8 +174,8 @@ The full step-by-step is in the
 
 ## Tech stack
 
-Next.js 16 + TypeScript (strict) on Vercel · Odra 2.8 / Rust contracts · Vitest (1352 TS tests) +
-OdraVM (22 contract tests) behind a `typecheck / lint / test / build` CI gate · ports & adapters so
+Next.js 16 + TypeScript (strict) on Vercel · Odra 2.8 / Rust contracts · Vitest (1367 TS tests) +
+OdraVM (95 contract tests) behind a `typecheck / lint / test / build` CI gate · ports & adapters so
 the deterministic mock and the real `casper-js-sdk` adapter satisfy the same contract tests.
 
 ---
