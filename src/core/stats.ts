@@ -20,9 +20,18 @@ export interface EconomyStats {
   /** Rounds that reached a resolution. */
   settled: number;
   bets: number;
+  /**
+   * Payouts claimed on chain.
+   *
+   * Counted separately from `paidOutMotes` because a claim's *amount* is computed inside the vault
+   * and published in its `PayoutClaimed` event — a CSPR.cloud deploy row carries the call, not the
+   * transfer. So the count is provable from deploy history and the total is not, and the site shows
+   * whichever it can actually stand behind rather than a plausible number.
+   */
+  claims: number;
   /** Total staked across every folded bet, in motes. */
   stakedMotes: string;
-  /** Total paid out across every folded claim, in motes. */
+  /** Total paid out across every folded claim, in motes — `0` when the source carries no amounts. */
   paidOutMotes: string;
   /** Distinct bettors — the number that matters for traction: agents we do not own. */
   bettors: number;
@@ -39,6 +48,7 @@ const EMPTY: EconomyStats = {
   rounds: 0,
   settled: 0,
   bets: 0,
+  claims: 0,
   stakedMotes: "0",
   paidOutMotes: "0",
   bettors: 0,
@@ -62,6 +72,7 @@ export function computeStats(events: ChainEvent[]): EconomyStats {
   const bettors = new Set<string>();
   const oracles = new Set<string>();
   let bets = 0;
+  let claims = 0;
   let staked = 0n;
   let paidOut = 0n;
   let lastBlockHeight = 0;
@@ -82,6 +93,7 @@ export function computeStats(events: ChainEvent[]): EconomyStats {
         if (e.oracleId) oracles.add(e.oracleId);
         break;
       case "payout_claimed":
+        claims++;
         paidOut = addMotes(paidOut, e.amountMotes);
         break;
       case "market_created":
@@ -94,6 +106,7 @@ export function computeStats(events: ChainEvent[]): EconomyStats {
     rounds: rounds.size,
     settled: settledRounds.size,
     bets,
+    claims,
     stakedMotes: staked.toString(),
     paidOutMotes: paidOut.toString(),
     bettors: bettors.size,
