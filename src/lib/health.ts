@@ -255,11 +255,7 @@ export async function gatherHealth(
   const [persistence, fleet, appIdCheck] = await Promise.all([
     probePersistence(opts.fetchImpl),
     fleetBalances(network),
-<<<<<<< HEAD
     csprClickAppIdCheck(configuredAppId, opts.fetchImpl, opts.siteOrigin),
-=======
-    csprClickAppIdCheck(configuredAppId, opts.fetchImpl),
->>>>>>> origin/main
   ]);
   const inputs: HealthInputs = {
     network,
