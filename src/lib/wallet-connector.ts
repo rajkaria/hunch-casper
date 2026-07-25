@@ -350,6 +350,7 @@ export async function probeCsprClickAppId(fetchImpl: typeof fetch = fetch): Prom
     // but this probe only asks whether the registration exists, and the answer is the same.
     const res = await fetchImpl(csprClickApplicationUrl(appId), { credentials: "omit" });
     if (res.ok) return null;
+<<<<<<< HEAD
     let message = "";
     try {
       const body = (await res.json()) as { error?: { message?: string } };
@@ -364,6 +365,18 @@ export async function probeCsprClickAppId(fetchImpl: typeof fetch = fetch): Prom
     if (res.status !== 404 && !message.includes("application id")) return null;
     markCsprClickAppIdRejected(
       `CSPR.click rejected this site's app id (HTTP ${res.status}${message ? `: ${message}` : ""}). ` +
+=======
+    if (res.status !== 401 && res.status !== 403 && res.status !== 404) return null;
+    let detail = "";
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (typeof body?.error?.message === "string") detail = `: ${body.error.message}`;
+    } catch {
+      /* a bare status is still a definitive no */
+    }
+    markCsprClickAppIdRejected(
+      `CSPR.click rejected this site's app id (HTTP ${res.status}${detail}). ` +
+>>>>>>> origin/main
         `Real signing is off until a registered id is set — mint one at console.cspr.click and ` +
         `redeploy with NEXT_PUBLIC_CSPR_CLICK_APP_ID.`,
     );
