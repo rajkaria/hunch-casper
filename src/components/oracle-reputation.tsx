@@ -49,12 +49,12 @@ export function OracleReputation({
             <div className="text-xs uppercase tracking-wide text-muted">Reputation-staked oracle</div>
           </div>
           <div className="text-right">
-            <div className="text-2xl font-semibold">{pct}%</div>
+            <div className="num text-2xl font-semibold">{pct}%</div>
             <div className="text-[11px] text-muted">{rep.resolvedCount} resolutions</div>
           </div>
         </div>
-        <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-surface-2">
-          <div className="h-full rounded-full bg-up/70" style={{ width: `${Math.min(100, rep.accuracyBps / 100)}%` }} />
+        <div className="odds-track mt-4" style={{ height: "0.5rem" }}>
+          <div className="odds-fill" style={{ width: `${Math.min(100, rep.accuracyBps / 100)}%`, "--bar-color": "var(--up)" } as React.CSSProperties} />
         </div>
         <p className="mt-3 text-xs text-muted">
           Every resolution is scored on-chain. A wrong call costs bettors money — so this accuracy
@@ -71,7 +71,7 @@ export function OracleReputation({
         <span className="text-sm font-semibold text-up">{rep.name}</span>
       </div>
       <div className="text-right">
-        <div className="text-sm font-semibold">{pct}% accuracy</div>
+        <div className="num text-sm font-semibold">{pct}% accuracy</div>
         <div className="text-[11px] text-muted">{rep.resolvedCount} resolutions on-chain</div>
       </div>
     </div>

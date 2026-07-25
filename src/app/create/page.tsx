@@ -113,8 +113,9 @@ export default function CreateMarketPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-10 sm:px-6">
-      <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Create a market</h1>
+    <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-12 sm:px-6">
+      <span className="eyebrow text-accent">Mint your own</span>
+      <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-4xl">Create a market</h1>
       <p className="mt-2 text-muted">
         Ask a question, pin how it resolves, post a small refundable bond. The resolution rule is
         frozen as a hashed <span className="font-mono text-foreground">recipe</span> — anyone can
@@ -124,7 +125,7 @@ export default function CreateMarketPage() {
       <div className="mt-8 flex flex-col gap-4">
         <Field label="Your question">
           <input
-            className="w-full rounded-lg border border-surface-2 bg-surface px-3 py-2 text-sm"
+            className="input"
             placeholder="Will CSPR cross $0.10 by year end?"
             value={claim}
             onChange={(e) => setClaim(e.target.value)}
@@ -133,17 +134,17 @@ export default function CreateMarketPage() {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Resolution source">
-            <select className="w-full rounded-lg border border-surface-2 bg-surface px-3 py-2 text-sm" value={source} onChange={(e) => setSource(e.target.value as Source)}>
+            <select className="input" value={source} onChange={(e) => setSource(e.target.value as Source)}>
               {["coingecko", "cspr_cloud", "macro_feed", "drand", "internal"].map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
           </Field>
           <Field label="Metric">
-            <input className="w-full rounded-lg border border-surface-2 bg-surface px-3 py-2 text-sm font-mono" value={metric} onChange={(e) => setMetric(e.target.value)} />
+            <input className="input font-mono" value={metric} onChange={(e) => setMetric(e.target.value)} />
           </Field>
           <Field label="Method">
-            <select className="w-full rounded-lg border border-surface-2 bg-surface px-3 py-2 text-sm" value={method} onChange={(e) => setMethod(e.target.value as Method)}>
+            <select className="input" value={method} onChange={(e) => setMethod(e.target.value as Method)}>
               {["threshold", "direction", "nway_winner", "coin_flip", "agent_metric"].map((m) => (
                 <option key={m} value={m}>{m}</option>
               ))}
@@ -152,25 +153,25 @@ export default function CreateMarketPage() {
           {method === "threshold" && (
             <Field label="Target / comparator">
               <div className="flex gap-2">
-                <select className="rounded-lg border border-surface-2 bg-surface px-2 py-2 text-sm" value={comparator} onChange={(e) => setComparator(e.target.value as "gte" | "lte")}>
+                <select className="input w-auto" value={comparator} onChange={(e) => setComparator(e.target.value as "gte" | "lte")}>
                   <option value="gte">≥</option>
                   <option value="lte">≤</option>
                 </select>
-                <input className="w-full rounded-lg border border-surface-2 bg-surface px-3 py-2 text-sm font-mono" value={target} onChange={(e) => setTarget(e.target.value)} />
+                <input className="input font-mono" value={target} onChange={(e) => setTarget(e.target.value)} />
               </div>
             </Field>
           )}
           <Field label="Resolves at">
-            <input type="datetime-local" className="w-full rounded-lg border border-surface-2 bg-surface px-3 py-2 text-sm" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+            <input type="datetime-local" className="input" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
           </Field>
           <Field label="Oracle (approved, not you)">
-            <input className="w-full rounded-lg border border-surface-2 bg-surface px-3 py-2 text-sm font-mono" value={oracle} onChange={(e) => setOracle(e.target.value)} />
+            <input className="input font-mono" value={oracle} onChange={(e) => setOracle(e.target.value)} />
           </Field>
         </div>
 
         {!challenge && !created && (
           <button
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            className="btn btn-primary self-start disabled:opacity-50"
             disabled={busy || claim.trim().length === 0}
             onClick={requestChallenge}
           >
@@ -190,7 +191,7 @@ export default function CreateMarketPage() {
               <span className="text-muted">Refundable creation bond</span>
               <span className="font-semibold">{motesToCspr(challenge.bondMotes)} CSPR</span>
             </div>
-            <button className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={busy} onClick={payAndCreate}>
+            <button className="btn btn-primary disabled:opacity-50" disabled={busy} onClick={payAndCreate}>
               {busy ? "Creating…" : "Pay bond & create"}
             </button>
           </div>

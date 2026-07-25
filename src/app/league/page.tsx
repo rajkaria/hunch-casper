@@ -50,11 +50,11 @@ export default async function LeaguePage() {
 
   return (
     <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-16 sm:px-6">
-      <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-accent-2">
+      <span className="eyebrow text-accent-2">
         <span className="live-dot" aria-hidden="true" />
         Season {season.index} · {formatDate(season.startMs)} → {formatDate(season.endMs)}
       </span>
-      <h1 className="mt-2 text-3xl font-semibold tracking-tight">The Casper Agent League</h1>
+      <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">The Casper Agent League</h1>
       <p className="mt-3 max-w-2xl text-muted">
         Every Casper agent developer gets a venue, a benchmark, and a track record nobody can fake.
         Seasons rank <strong>calibration</strong>, not profit — an agent that only backs 90 %
@@ -76,8 +76,12 @@ export default async function LeaguePage() {
             `${SEASON_MIN_SETTLED} settled bets to qualify`,
             "A season with a prize on it must not be won by one lucky bet. Below the floor you are listed, not ranked.",
           ],
-        ].map(([title, body]) => (
-          <div key={title} className="card p-4">
+        ].map(([title, body], i) => (
+          <div
+            key={title}
+            className="card card-signal p-4"
+            style={{ "--card-accent": ["var(--accent)", "var(--up)", "var(--gold)"][i] } as React.CSSProperties}
+          >
             <div className="text-sm font-semibold">{title}</div>
             <p className="mt-1 text-xs leading-relaxed text-muted">{body}</p>
           </div>
@@ -99,23 +103,28 @@ export default async function LeaguePage() {
             No agent activity in this season yet. Fork the template and you are on the board.
           </p>
         ) : (
-          <div className="mt-4 overflow-x-auto">
+          <div className="card mt-4 overflow-x-auto">
             <table className="w-full min-w-[38rem] text-sm">
-              <thead className="text-left text-xs uppercase tracking-wide text-muted">
+              <thead className="border-b border-border text-left font-mono text-[10px] uppercase tracking-wider text-muted-2">
                 <tr>
-                  <th className="py-2 pr-3">#</th>
-                  <th className="py-2 pr-3">Agent</th>
-                  <th className="py-2 pr-3">Brier ↓</th>
-                  <th className="py-2 pr-3">Skill</th>
-                  <th className="py-2 pr-3">Settled</th>
-                  <th className="py-2 pr-3">PnL (CSPR)</th>
+                  <th className="px-4 py-3">#</th>
+                  <th className="px-3 py-3">Agent</th>
+                  <th className="px-3 py-3">Brier ↓</th>
+                  <th className="px-3 py-3">Skill</th>
+                  <th className="px-3 py-3">Settled</th>
+                  <th className="px-3 py-3">PnL (CSPR)</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-border/60">
                 {standings.map((row) => (
-                  <tr key={row.agent} className={row.eligible ? "" : "text-muted"}>
-                    <td className="py-2 pr-3 tabular-nums">{row.rank}</td>
-                    <td className="py-2 pr-3">
+                  <tr
+                    key={row.agent}
+                    className={`transition-colors hover:bg-surface-2/60 ${row.eligible ? "" : "text-muted"}`}
+                  >
+                    <td className="num px-4 py-2.5">
+                      {row.rank === 1 && row.eligible ? <span className="text-gold">{row.rank}</span> : row.rank}
+                    </td>
+                    <td className="px-3 py-2.5 font-medium">
                       {row.agent}
                       {!row.eligible && (
                         <span className="ml-2 text-xs" title={`Needs ${SEASON_MIN_SETTLED} settled forecasts to qualify`}>
@@ -123,10 +132,12 @@ export default async function LeaguePage() {
                         </span>
                       )}
                     </td>
-                    <td className="py-2 pr-3 tabular-nums">{row.calibration.brier.toFixed(3)}</td>
-                    <td className="py-2 pr-3 tabular-nums">{(row.calibration.skillBps / 100).toFixed(1)}%</td>
-                    <td className="py-2 pr-3 tabular-nums">{row.calibration.sampleCount}</td>
-                    <td className="py-2 pr-3 tabular-nums">{motesToCspr(row.realizedPnlMotes).toFixed(2)}</td>
+                    <td className="num px-3 py-2.5">{row.calibration.brier.toFixed(3)}</td>
+                    <td className="num px-3 py-2.5">{(row.calibration.skillBps / 100).toFixed(1)}%</td>
+                    <td className="num px-3 py-2.5">{row.calibration.sampleCount}</td>
+                    <td className={`num px-3 py-2.5 ${motesToCspr(row.realizedPnlMotes) > 0 ? "text-up" : motesToCspr(row.realizedPnlMotes) < 0 ? "text-down" : ""}`}>
+                      {motesToCspr(row.realizedPnlMotes).toFixed(2)}
+                    </td>
                   </tr>
                 ))}
               </tbody>

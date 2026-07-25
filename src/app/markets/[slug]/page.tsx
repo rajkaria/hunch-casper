@@ -12,11 +12,11 @@ import { RelatedMarkets } from "@/components/related-markets";
 import { OracleReputation } from "@/components/oracle-reputation";
 import { EvidenceViewer } from "@/components/evidence-viewer";
 
-const CATEGORY_META: Record<MarketCategory, { label: string; className: string }> = {
-  "casper-native": { label: "Casper-native", className: "text-accent" },
-  "provably-fair": { label: "Provably fair", className: "text-gold" },
-  rwa: { label: "RWA", className: "text-up" },
-  meta: { label: "Meta", className: "text-accent-2" },
+const CATEGORY_META: Record<MarketCategory, { label: string; className: string; color: string }> = {
+  "casper-native": { label: "Casper-native", className: "text-accent", color: "var(--accent)" },
+  "provably-fair": { label: "Provably fair", className: "text-gold", color: "var(--gold)" },
+  rwa: { label: "RWA", className: "text-up", color: "var(--up)" },
+  meta: { label: "Meta", className: "text-accent-2", color: "var(--accent-2)" },
 };
 
 function formatCspr(motes: string): string {
@@ -32,8 +32,8 @@ function formatDeadline(iso: string): string {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="card p-4">
-      <div className="text-[11px] uppercase tracking-wide text-muted">{label}</div>
-      <div className="mt-1 text-lg font-semibold">{value}</div>
+      <div className="font-mono text-[10px] uppercase tracking-wider text-muted-2">{label}</div>
+      <div className="num mt-1 text-lg font-semibold">{value}</div>
     </div>
   );
 }
@@ -47,11 +47,11 @@ export default function MarketDetailPage() {
   if (loading) {
     return (
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6">
-        <div className="h-6 w-40 animate-pulse rounded bg-surface-2/60" />
-        <div className="mt-6 h-8 w-2/3 animate-pulse rounded bg-surface-2/60" />
+        <div className="skeleton h-6 w-40" />
+        <div className="mt-6 h-8 w-2/3 skeleton" />
         <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="card h-20 animate-pulse bg-surface-2/40" />
+            <div key={i} className="skeleton h-20 rounded-2xl" />
           ))}
         </div>
       </main>
@@ -85,11 +85,11 @@ export default function MarketDetailPage() {
       </nav>
 
       <div className="mb-6 flex flex-col gap-3">
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide">
+        <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider">
           <span className={`font-semibold ${cat.className}`}>{cat.label}</span>
           <span className="chip px-2 py-0.5 text-muted">{market.network}</span>
         </div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{market.title}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-4xl">{market.title}</h1>
         {market.subtitle && <p className="text-muted">{market.subtitle}</p>}
       </div>
 
@@ -102,9 +102,12 @@ export default function MarketDetailPage() {
       </div>
 
       {/* Total-betted block (kept directly under the stat strip, mirroring Hunch's UI rule) */}
-      <div className="mt-3 card flex items-center justify-between p-4">
+      <div
+        className="card card-signal mt-3 flex items-center justify-between p-4"
+        style={{ "--card-accent": cat.color } as React.CSSProperties}
+      >
         <span className="text-sm text-muted">Total betted so far</span>
-        <span className="text-lg font-semibold">{motesToCspr(market.totalStakedMotes).toLocaleString()} CSPR</span>
+        <span className="num text-lg font-semibold">{motesToCspr(market.totalStakedMotes).toLocaleString()} CSPR</span>
       </div>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
@@ -121,14 +124,17 @@ export default function MarketDetailPage() {
                 <div key={o.outcomeKey} className="flex flex-col gap-1">
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-foreground">{outcome?.label ?? o.outcomeKey}</span>
-                    <span className="font-mono text-muted">
+                    <span className="num text-muted">
                       {formatProbability(o.impliedProbability)} · {o.payoutMultiple.toFixed(2)}×
                     </span>
                   </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-surface-2">
+                  <div className="odds-track" style={{ height: "0.5rem" }}>
                     <div
-                      className="h-full rounded-full bg-accent/70"
-                      style={{ width: `${Math.round(o.impliedProbability * 100)}%` }}
+                      className="odds-fill"
+                      style={{
+                        width: `${Math.round(o.impliedProbability * 100)}%`,
+                        "--bar-color": cat.color,
+                      } as React.CSSProperties}
                     />
                   </div>
                 </div>

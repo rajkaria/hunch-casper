@@ -3,11 +3,11 @@ import type { Market, MarketCategory } from "@/core/types";
 import { motesToCspr } from "@/core/types";
 import { computeOdds, formatProbability } from "@/core/parimutuel-odds";
 
-const CATEGORY_META: Record<MarketCategory, { label: string; className: string }> = {
-  "casper-native": { label: "Casper-native", className: "text-accent" },
-  "provably-fair": { label: "Provably fair", className: "text-gold" },
-  rwa: { label: "RWA", className: "text-up" },
-  meta: { label: "Meta", className: "text-accent-2" },
+const CATEGORY_META: Record<MarketCategory, { label: string; className: string; color: string }> = {
+  "casper-native": { label: "Casper-native", className: "text-accent", color: "var(--accent)" },
+  "provably-fair": { label: "Provably fair", className: "text-gold", color: "var(--gold)" },
+  rwa: { label: "RWA", className: "text-up", color: "var(--up)" },
+  meta: { label: "Meta", className: "text-accent-2", color: "var(--accent-2)" },
 };
 
 function formatCspr(motes: string): string {
@@ -21,9 +21,10 @@ export function MarketCard({ market }: { market: Market }) {
   return (
     <Link
       href={`/markets/${market.slug}`}
-      className="card group flex flex-col gap-4 p-5 transition-colors hover:border-accent/50"
+      className="card card-hover card-signal group flex flex-col gap-4 p-5"
+      style={{ "--card-accent": cat.color } as React.CSSProperties}
     >
-      <div className="flex items-center justify-between text-[11px] uppercase tracking-wide">
+      <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider">
         <span className={`font-semibold ${cat.className}`}>{cat.label}</span>
         <span className="chip px-2 py-0.5 text-muted">{market.network}</span>
       </div>
@@ -37,12 +38,15 @@ export function MarketCard({ market }: { market: Market }) {
             <div key={o.outcomeKey} className="flex flex-col gap-1">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-foreground">{outcome?.label ?? o.outcomeKey}</span>
-                <span className="font-mono text-muted">{formatProbability(o.impliedProbability)}</span>
+                <span className="num text-muted">{formatProbability(o.impliedProbability)}</span>
               </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
+              <div className="odds-track">
                 <div
-                  className="h-full rounded-full bg-accent/70"
-                  style={{ width: `${Math.round(o.impliedProbability * 100)}%` }}
+                  className="odds-fill"
+                  style={{
+                    width: `${Math.round(o.impliedProbability * 100)}%`,
+                    "--bar-color": cat.color,
+                  } as React.CSSProperties}
                 />
               </div>
             </div>
@@ -51,8 +55,13 @@ export function MarketCard({ market }: { market: Market }) {
       </div>
 
       <div className="flex items-center justify-between border-t border-border pt-3 text-xs text-muted">
-        <span>{formatCspr(market.totalStakedMotes)} CSPR staked</span>
-        <span className="transition-colors group-hover:text-accent">Trade →</span>
+        <span className="num">{formatCspr(market.totalStakedMotes)} CSPR staked</span>
+        <span className="font-semibold transition-colors group-hover:text-accent">
+          Trade{" "}
+          <span aria-hidden="true" className="inline-block transition-transform duration-300 group-hover:translate-x-0.5">
+            →
+          </span>
+        </span>
       </div>
     </Link>
   );

@@ -15,7 +15,7 @@ export function WalletButton() {
         type="button"
         onClick={connect}
         aria-busy={busy}
-        className="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+        className="btn btn-primary px-3.5 py-1.5 text-xs"
       >
         {busy ? "Connecting…" : "Connect wallet"}
       </button>

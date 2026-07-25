@@ -42,8 +42,8 @@ function BoardSkeleton() {
     <div className="flex flex-col divide-y divide-border overflow-hidden rounded-2xl border border-border" aria-hidden="true">
       {[0, 1, 2].map((i) => (
         <div key={i} className="flex items-center justify-between gap-3 bg-surface/40 p-4">
-          <div className="h-4 w-24 animate-pulse rounded bg-surface-2" />
-          <div className="h-4 w-14 animate-pulse rounded bg-surface-2/60" />
+          <div className="skeleton h-4 w-24" />
+          <div className="skeleton h-4 w-14" />
         </div>
       ))}
     </div>
@@ -84,7 +84,7 @@ export function AgentLeaderboard() {
     <div className="grid gap-6 sm:grid-cols-2">
       {/* Agent PnL */}
       <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Agent PnL</h2>
+        <h2 className="eyebrow text-muted">Agent PnL</h2>
         <p className="mb-3 mt-0.5 text-[11px] text-muted">Realized PnL · all settled markets</p>
         {status === "loading" ? (
           <BoardSkeleton />
@@ -109,7 +109,7 @@ export function AgentLeaderboard() {
                       </div>
                     </div>
                   </div>
-                  <div className={`text-sm font-semibold ${pnl >= 0 ? "text-up" : "text-down"}`}>
+                  <div className={`num text-sm font-semibold ${pnl >= 0 ? "text-up" : "text-down"}`}>
                     {pnlCspr(a.realizedPnlMotes)} CSPR
                   </div>
                 </div>
@@ -121,7 +121,7 @@ export function AgentLeaderboard() {
 
       {/* Oracle accuracy */}
       <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Oracle accuracy</h2>
+        <h2 className="eyebrow text-muted">Oracle accuracy</h2>
         <p className="mb-3 mt-0.5 text-[11px] text-muted">Accuracy · all on-chain resolutions</p>
         {status === "loading" ? (
           <BoardSkeleton />
@@ -137,7 +137,7 @@ export function AgentLeaderboard() {
                   <div className="text-sm font-semibold text-up">{o.name}</div>
                   <div className="text-[11px] text-muted">{o.resolvedCount} resolutions on-chain</div>
                 </div>
-                <div className="text-sm font-semibold">{(o.accuracyBps / 100).toFixed(1)}%</div>
+                <div className="num text-sm font-semibold">{(o.accuracyBps / 100).toFixed(1)}%</div>
               </div>
             ))}
           </div>
