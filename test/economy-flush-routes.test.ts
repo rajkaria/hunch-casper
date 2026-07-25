@@ -24,6 +24,7 @@ vi.mock("@/adapters/persist/economy-state", async (importOriginal) => {
 import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
 import { POST as createPOST } from "@/app/api/markets/create/route";
 import { POST as betPOST } from "@/app/api/agent/v1/bet/route";
+import { POST as humanBetPOST } from "@/app/api/chain/bet/route";
 import { __resetLedger } from "@/adapters/mock/settlement-ledger";
 import { __resetCreatedMarkets } from "@/adapters/mock/market-source";
 import { __resetActivity } from "@/adapters/mock/activity-log";
@@ -118,6 +119,40 @@ describe("economy flush discipline on mutating routes", () => {
     expect(hydrate).toHaveBeenCalled();
     expect(persist).toHaveBeenCalled();
     expect(hydrate.mock.invocationCallOrder[0]).toBeLessThan(persist.mock.invocationCallOrder[0]);
+  });
+
+  // The human rail is the same money path as the agent one, and it has a second reason to flush
+  // synchronously: the market page refetches its pools the instant this response lands. A
+  // fire-and-forget persist lets that refetch hit a sibling instance and render the bet as gone.
+  it("human bet route hydrates before betting and awaits the flush after placing", async () => {
+    const res = await humanBetPOST(
+      req("http://localhost/api/chain/bet", {
+        network: "testnet",
+        marketId: "testnet:coin-flip-5m",
+        outcomeKey: "heads",
+        amountMotes: "1000000000",
+        bettor: "01human",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ indexed: true });
+    expect(hydrate).toHaveBeenCalled();
+    expect(persist).toHaveBeenCalled();
+    expect(hydrate.mock.invocationCallOrder[0]).toBeLessThan(persist.mock.invocationCallOrder[0]);
+  });
+
+  it("human bet route awaits no flush when the bet is rejected before it is recorded", async () => {
+    const res = await humanBetPOST(
+      req("http://localhost/api/chain/bet", {
+        network: "testnet",
+        marketId: "testnet:no-such-market",
+        outcomeKey: "heads",
+        amountMotes: "1000000000",
+        bettor: "01human",
+      }),
+    );
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(persist).not.toHaveBeenCalled();
   });
 });
 

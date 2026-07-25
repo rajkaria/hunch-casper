@@ -16,6 +16,7 @@ import { createContainer } from "@/lib/container";
 import { betTicketSecret, verifyBetTicket } from "@/lib/bet-ticket";
 import { isCasperNetwork } from "@/config/network";
 import { isSimulated } from "@/config/chain-mode";
+import { persistEconomyState } from "@/adapters/persist/economy-state";
 
 export async function POST(req: Request): Promise<Response> {
   let body: Record<string, unknown>;
@@ -67,6 +68,9 @@ export async function POST(req: Request): Promise<Response> {
   // failure must NOT be reported as a chain failure.
   try {
     const updated = await container.store.recordBet({ marketId, bettor, outcomeKey, amountMotes });
+    // Same flush discipline as the operator-signed route: await the write before responding, so
+    // the pools the page refetches a moment later already include this bet on every instance.
+    await persistEconomyState();
     return NextResponse.json({
       deployHash: res.deployHash,
       explorerUrl: res.explorerUrl,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { CasperNetwork } from "@/config/network";
 import type { Market } from "@/core/types";
 
@@ -50,10 +50,28 @@ export function useMarkets(network: CasperNetwork): MarketsState {
   };
 }
 
+/** The pool fields a mutating route hands back — authoritative, straight from the write. */
+export interface PoolUpdate {
+  totalStakedMotes?: string;
+  poolByOutcomeMotes?: Record<string, string>;
+}
+
 interface MarketState {
   market: Market | null;
   loading: boolean;
   error: string | null;
+  /**
+   * Refetch this market from the read model. `fresh` forces the route past its warm-instance
+   * hydrate TTL — use it right after a write, where a stale read would look like the write
+   * failed. Never flips `loading`: a background refresh must not blank the page out.
+   */
+  refresh: (fresh?: boolean) => void;
+  /**
+   * Merge the pools a write already returned into the rendered market, with no round trip. This is
+   * not optimism — the numbers come from the server's post-write read model — so the odds bars and
+   * the total-betted block move the instant a bet lands, and the refetch behind it only confirms.
+   */
+  applyPools: (update: PoolUpdate) => void;
 }
 
 interface MarketData {
@@ -65,11 +83,16 @@ interface MarketData {
 /** Fetch a single market from the read model (`GET /api/markets/[slug]`). */
 export function useMarket(network: CasperNetwork, slug: string): MarketState {
   const [data, setData] = useState<MarketData | null>(null);
+  // Bumped by `refresh()`. `fresh` rides alongside rather than in the counter so a refetch can ask
+  // for a KV-fresh read without that becoming part of the effect's identity.
+  const [reload, setReload] = useState({ n: 0, fresh: false });
   const key = `${network}:${slug}`;
 
   useEffect(() => {
     const ctrl = new AbortController();
-    fetch(`/api/markets/${slug}?network=${network}`, { signal: ctrl.signal })
+    const query = `network=${network}${reload.fresh ? "&fresh=1" : ""}`;
+    // `no-store`: a refetch that the browser answers from its own HTTP cache is not a refresh.
+    fetch(`/api/markets/${slug}?${query}`, { signal: ctrl.signal, cache: "no-store" })
       .then(async (res) => {
         if (res.status === 404) return { market: null };
         if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "failed to load market");
@@ -81,12 +104,32 @@ export function useMarket(network: CasperNetwork, slug: string): MarketState {
         setData({ key: `${network}:${slug}`, market: null, error: err instanceof Error ? err.message : "failed to load market" });
       });
     return () => ctrl.abort();
-  }, [network, slug]);
+  }, [network, slug, reload]);
+
+  const refresh = useCallback((fresh = false) => {
+    setReload((r) => ({ n: r.n + 1, fresh }));
+  }, []);
+
+  const applyPools = useCallback((update: PoolUpdate) => {
+    setData((prev) => {
+      if (!prev?.market) return prev;
+      return {
+        ...prev,
+        market: {
+          ...prev.market,
+          totalStakedMotes: update.totalStakedMotes ?? prev.market.totalStakedMotes,
+          poolByOutcomeMotes: update.poolByOutcomeMotes ?? prev.market.poolByOutcomeMotes,
+        },
+      };
+    });
+  }, []);
 
   const loading = data === null || data.key !== key;
   return {
     market: loading ? null : data!.market,
     loading,
     error: loading ? null : data!.error,
+    refresh,
+    applyPools,
   };
 }

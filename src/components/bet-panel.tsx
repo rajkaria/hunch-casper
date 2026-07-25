@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { Market } from "@/core/types";
+import type { CasperNetwork } from "@/config/network";
 import { csprToMotes, motesToCspr } from "@/core/types";
 import { previewPayoutMotes } from "@/core/market-payout";
 import { exceedsBetCap, maxBetCspr } from "@/config/network";
@@ -12,9 +13,50 @@ interface ChainResult {
   deployHash: string;
   explorerUrl: string;
   simulated?: boolean;
+  /** Present when the chain took the bet but the off-chain read model refused it (see the routes). */
+  indexed?: boolean;
+  /** Post-write pools, straight from the store — what the page renders without waiting for a refetch. */
+  totalStakedMotes?: string;
+  poolByOutcomeMotes?: Record<string, string>;
 }
 
-function ResultLine({ label, result }: { label: string; result: ChainResult }) {
+/** "cspr.live" / "testnet.cspr.live" — the explorer named, so the link says where it goes. */
+function explorerHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "the block explorer";
+  }
+}
+
+function CopyHash({ hash }: { hash: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void navigator.clipboard?.writeText(hash).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+      className="shrink-0 text-[10px] uppercase tracking-wide text-muted transition-colors hover:text-foreground"
+      aria-label="Copy transaction hash"
+    >
+      {copied ? "copied" : "copy"}
+    </button>
+  );
+}
+
+function ResultLine({
+  label,
+  result,
+  network,
+}: {
+  label: string;
+  result: ChainResult;
+  network: CasperNetwork;
+}) {
   return (
     <div className="mt-3 rounded-lg border border-border bg-surface-2 p-3 text-xs">
       <div className="mb-1 flex items-center gap-2">
@@ -22,17 +64,39 @@ function ResultLine({ label, result }: { label: string; result: ChainResult }) {
         {result.simulated ? (
           <span className="chip px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted">simulated</span>
         ) : (
-          <span className="chip border-up/50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-up">live</span>
+          <span className="chip border-up/50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-up">
+            live · {network}
+          </span>
         )}
       </div>
-      <a
-        href={result.explorerUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block truncate font-mono text-muted underline decoration-border underline-offset-2 hover:text-accent"
-      >
-        {result.deployHash}
-      </a>
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1 truncate font-mono text-muted">{result.deployHash}</span>
+        <CopyHash hash={result.deployHash} />
+      </div>
+      {result.simulated ? (
+        // A simulated hash is not on the live explorer — say so rather than link a judge to a
+        // "transaction not found" page. Same rule the activity feed follows.
+        <p className="mt-2 text-[11px] text-muted">
+          Simulated chain — this hash is not on {explorerHost(result.explorerUrl)}.
+        </p>
+      ) : (
+        <a
+          href={result.explorerUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1 font-medium text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+        >
+          View the {network} transaction on {explorerHost(result.explorerUrl)}
+          <span aria-hidden="true">↗</span>
+        </a>
+      )}
+      {result.indexed === false && (
+        // The chain holds the escrow but the boards do not know about it — never let the pools
+        // silently disagree with the money.
+        <p className="mt-2 text-[11px] text-gold">
+          On chain, but not yet reflected in the pools — the boards will catch up from chain state.
+        </p>
+      )}
     </div>
   );
 }
@@ -57,7 +121,19 @@ function ResultLine({ label, result }: { label: string; result: ChainResult }) {
  */
 const SHOW_DEMO_RESOLVE = process.env.NEXT_PUBLIC_SHOW_DEMO_RESOLVE === "true";
 
-export function BetPanel({ market }: { market: Market }) {
+export function BetPanel({
+  market,
+  onChainUpdate,
+}: {
+  market: Market;
+  /**
+   * Fired once the chain accepts a write from this panel (a bet, or an operator resolve), with the
+   * route's response. The page uses it to move the pools/odds immediately — a bet response carries
+   * the post-write read model — and to refetch behind that. Without it a visitor sees their own
+   * stake missing from the board they just moved.
+   */
+  onChainUpdate?: (result: ChainResult) => void;
+}) {
   const { account, connected, connect, connectError, signAndSend, signingDisabledReason } = useWallet();
   const [outcomeKey, setOutcomeKey] = useState(market.outcomes[0]?.key ?? "");
   const [amount, setAmount] = useState("1");
@@ -120,6 +196,7 @@ export function BetPanel({ market }: { market: Market }) {
       const self = await betWithWallet(amountMotes, account.publicKey);
       if (self !== null) {
         setBetResult(self as ChainResult);
+        onChainUpdate?.(self as ChainResult);
         return;
       }
       const res = await fetch("/api/chain/bet", {
@@ -136,6 +213,7 @@ export function BetPanel({ market }: { market: Market }) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "bet failed");
       setBetResult(json);
+      onChainUpdate?.(json as ChainResult);
     } catch (err) {
       setBetError(err instanceof Error ? err.message : "bet failed");
     } finally {
@@ -161,6 +239,8 @@ export function BetPanel({ market }: { market: Market }) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "resolve failed");
       setResolveResult(json);
+      // No pools in a resolve response — the page reads this purely as "refetch, the market moved".
+      onChainUpdate?.(json as ChainResult);
     } catch (err) {
       setResolveError(err instanceof Error ? err.message : "resolve failed");
     } finally {
@@ -274,7 +354,7 @@ export function BetPanel({ market }: { market: Market }) {
         </p>
       )}
       {betError && <p className="mt-2 text-xs text-down">{betError}</p>}
-      {betResult && <ResultLine label="Bet submitted" result={betResult} />}
+      {betResult && <ResultLine label="Bet submitted" result={betResult} network={market.network} />}
 
       {!SHOW_DEMO_RESOLVE && (
         <p className="mt-4 border-t border-border pt-4 text-[11px] text-muted">
@@ -320,7 +400,9 @@ export function BetPanel({ market }: { market: Market }) {
           </button>
         </div>
         {resolveError && <p className="mt-2 text-xs text-down">{resolveError}</p>}
-        {resolveResult && <ResultLine label="Resolution submitted" result={resolveResult} />}
+        {resolveResult && (
+          <ResultLine label="Resolution submitted" result={resolveResult} network={market.network} />
+        )}
       </div>
       )}
     </div>

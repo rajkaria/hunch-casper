@@ -478,6 +478,22 @@ export function rehydrateEconomyState(fetchImpl?: typeof fetch): Promise<void> {
 }
 
 /**
+ * A read that must not be served from a stale warm view: re-read KV now, ignoring the TTL, UNLESS
+ * this instance is holding an unflushed mutation of its own (in which case memory is already ahead
+ * of KV and a forced replace could drop it — see `rehydrateEconomyState`; when a write is in flight
+ * we await it instead, so the caller still reads a settled view).
+ *
+ * The case that needs it: a visitor places a bet, the route flushes it to KV, and the immediate
+ * refetch lands on a DIFFERENT instance that hydrated up to `HYDRATE_TTL_MS` ago. Without this the
+ * refetch renders pre-bet pools — a "refresh" that shows the bet vanishing.
+ */
+export function refreshEconomyState(fetchImpl?: typeof fetch): Promise<void> {
+  if (writer) return writer.then(() => {}); // a flush is in flight; its own memory is the freshest
+  if (dirty) return Promise.resolve(); // unflushed local mutation — never replace it with KV
+  return rehydrateEconomyState(fetchImpl);
+}
+
+/**
  * Liveness probe for the operator health surface: is the configured KV endpoint actually
  * reachable and authorized *right now*? Distinct from `persistenceConfigured()` (which only
  * reads env) because the classic ops failure is a token that was rotated in the KV dashboard

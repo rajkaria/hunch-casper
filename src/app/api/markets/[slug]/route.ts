@@ -3,11 +3,16 @@
  *
  * Backs the market detail page. Same store as the list route, so the detail page's odds and
  * total-betted block reflect whatever the store knows (seed pools now; live pools after S5).
+ *
+ * `?fresh=1` forces a KV re-read before answering, bypassing the warm-instance hydrate TTL. The
+ * detail page sends it on the refetch it fires right after a bet lands, where being up to 30s
+ * behind would render the bet as having disappeared.
  */
 
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { DEFAULT_NETWORK, isCasperNetwork } from "@/config/network";
+import { refreshEconomyState } from "@/adapters/persist/economy-state";
 
 export async function GET(
   req: Request,
@@ -21,6 +26,7 @@ export async function GET(
     return NextResponse.json({ error: "network must be 'testnet' or 'mainnet'" }, { status: 400 });
   }
 
+  if (url.searchParams.get("fresh") === "1") await refreshEconomyState();
   const container = createContainer(network);
   const market = await container.store.get(slug, network);
   if (!market) {
