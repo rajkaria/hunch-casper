@@ -254,7 +254,14 @@ up the `?click=connect` marker on the way back so the round trip finishes on its
    green lie.
 2. `vercel env add NEXT_PUBLIC_TESTNET_CSPR_CLICK_APP_ID production` (and
    `NEXT_PUBLIC_MAINNET_CSPR_CLICK_APP_ID` if you have it). `NEXT_PUBLIC_CSPR_CLICK_APP_ID` still
-   works as a single shared fallback.
+   works as a single shared fallback — but **remove it once a network-specific id is set, and never
+   leave a placeholder in it or in the mainnet var.** It falls back for *both* networks, so a stale
+   value there is not dormant: on 2026-07-26 prod held a never-issued id in the shared var beside a
+   correct testnet id, the SDK booted on the good id, and the client probe asked about the stale one
+   — a wrong-id verdict that demoted every visitor to the demo wallet with a green `/api/health`
+   (server-side resolution was network-aware, the connector's was not). Both are network-aware now;
+   the shipped value is verifiable from the browser bundle:
+   `curl -s https://<domain>/ | grep -o '__CSPR_CLICK_APP_ID__=[^;]*'`.
 3. In the console, whitelist what the wallet actually calls — REST `/accounts/**` and `/rates/**`;
    RPC `account_put_deploy`, `account_put_transaction`, `info_get_deploy`, `info_get_transaction`,
    `query_balance`. Leave the rest off; server-side chain reads use `CSPR_CLOUD_API_KEY`, not this.
@@ -266,7 +273,10 @@ up the `?click=connect` marker on the way back so the round trip finishes on its
    carries `walletConnect: {projectId}` — found live 2026-07-26: with a valid app id and no
    project id, a desktop without an extension got "Could not establish a connection with the
    provider" instead of a QR. Unset, the app now simply does not offer WalletConnect and shows
-   the install prompt instead; the extension route is unaffected either way.
+   the install prompt instead; the extension route is unaffected either way. The shipped value is
+   verifiable from the browser bundle the same way the app id is:
+   `curl -s https://<domain>/ | grep -o '__CSPR_CLICK_WC_PROJECT_ID__=[^;]*'`. A project id has
+   been set on production since 2026-07-26 and the pairing route is verified live (§7).
 5. Redeploy. `NEXT_PUBLIC_*` vars bake at build time, so the currently-running build will not pick
    it up.
 6. Verify: `/api/health` → the `wallet` check reads **ok and "accepted by accounts.cspr.click"**
@@ -280,7 +290,12 @@ up the `?click=connect` marker on the way back so the round trip finishes on its
    a QR (scannable by Casper Wallet on a phone → "WalletConnect"), not a button that does nothing;
    without it you must get the install prompt — WalletConnect is deliberately not offered.
    With the SDK reporting nothing present at all you must get "Could not connect a wallet" and an
-   install link — never silence.
+   install link — never silence. Verified on prod 2026-07-26 in a profile with neither
+   `window.CasperWalletProvider` nor `window.ethereum`: `isProviderPresent` answered
+   `casper-wallet=false, metamask-snap=false, walletconnect=true`, the dialog rendered a 61-module
+   QR carrying a live `wc:` pairing URI, and the SDK loaded its
+   `verify.walletconnect.com/<projectId>` frame — the frame is the tell that the WalletConnect
+   client actually booted rather than the dialog merely being drawn.
 8. If Connect opens a `casperwallet.io/download` tab, the SDK read the device as mobile. Check
    `typeof window.CasperWalletProvider` — `"function"` means the extension is there and the
    disarm above should have run; `"undefined"` means it genuinely is not injected in that browser
