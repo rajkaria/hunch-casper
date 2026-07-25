@@ -6,6 +6,7 @@ export type {
   DeployResult,
   PlaceBetInput,
   ResolveMarketInput,
+  UnsignedBetTransaction,
 } from "./casper-chain";
 export type { WalletPort, AgentAccount, TransferInput, TransferResult } from "./wallet";
 export type {

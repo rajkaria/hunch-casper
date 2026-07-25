@@ -66,6 +66,7 @@ the browser. Everything in §2.3 is a secret.
 | `NEXT_PUBLIC_ONCHAIN_RECEIPTS` | — | JSON `[{label, hash, network}]` rendered as explorer links |
 | `NEXT_PUBLIC_SHOW_DEMO_RESOLVE` | off | Shows the manual operator resolve control |
 | `NEXT_PUBLIC_CSPR_CLICK_APP_ID` | to let humans bet | CSPR.click app id. Setting it is the ENTIRE activation — the app loads the bundle itself (§3b) |
+| `BET_TICKET_SECRET` | falls back to `CRON_SECRET`, then `CASPER_BETTOR_KEY` | HMAC key binding a prepared wallet-signed bet to its transaction hash (§3c). Server-only |
 
 `NEXT_PUBLIC_MAINNET_*` mirrors every testnet key.
 
@@ -195,6 +196,14 @@ already-connected extension gets redirected past all the same — the symptom be
 and a page that still says "Connect wallet". The same `||` is in the provider's own `IsPresent()`,
 which answers true on a mobile-looking UA whether or not a wallet exists anywhere.
 
+**And a fourth, for the visitor who has no wallet at all:** WalletConnect's `IsPresent()` is
+`return !0` — always true — so it silently won the provider race for every desktop visitor without
+an extension, and its desktop branch only emits a `ShowPairingQR` event for CSPR.click's React
+component library, which this app does not ship. Result: a Connect button that opened nothing,
+errored nothing, and rendered nothing. It is now counted as a transport only on mobile (where it
+deep-links `casperwallet://wc?uri=…` into the app and works); on desktop the connect reports
+`no-wallet` and the UI offers an install link.
+
 `wallet-connector.ts` therefore treats `typeof window.CasperWalletProvider === "function"` as the
 only evidence a wallet is installed, and disarms `shouldRedirectToInAppBrowser` for exactly one
 `connect()` call when it is. When no extension is injected the handoff is left alone — on a real
@@ -231,6 +240,39 @@ the labelled demo account.
 
 An app id is a **public identifier** — it is inlined into the browser bundle by design and is not a
 secret. The CSPR.cloud API key (§2) is the opposite: server-only, never `NEXT_PUBLIC_`.
+
+### 3c. Who actually signs a human bet
+
+Two paths, chosen by whether the visitor has a wallet that can sign:
+
+| | signs | funds the stake + gas | `self.env().caller()` |
+|---|---|---|---|
+| `POST /api/chain/bet` | operator (`CASPER_BETTOR_KEY`) | operator | the operator |
+| `POST /api/chain/bet/prepare` → wallet → `/confirm` | the visitor | the visitor | the visitor |
+
+The second is the real one, and it is what a connected Casper Wallet gets. The server builds the
+*same* Odra proxy-session transaction `placeBet` builds — same plan, same envelope, same gas — but
+with the visitor's public key as initiator, and hands it back **unsigned**. Their wallet signs and
+submits it via `csprclick.send()`; `/confirm` then waits for execution and indexes it.
+
+The panel states which path ran ("you sign and fund this bet from your own account" vs "escrowed by
+the operator on your behalf"), because the difference decides who can `claim`.
+
+**Why `/confirm` needs a ticket.** Its naive form — "here is a hash and here is what it was worth" —
+is a free-money endpoint for the read model: post any executed transaction's hash with a 10,000 CSPR
+stake attached and the boards would show a bet nobody made. Confirming the hash executed does not
+help; *some* transaction executed. So `prepare` mints an HMAC over exactly what it built (including
+the transaction hash, which is known before signing because approvals are appended to the payload,
+not part of it), and `/confirm` reads the bet's terms only from that ticket. See `lib/bet-ticket.ts`.
+
+`BET_TICKET_SECRET` is the variable to set. Nothing breaks if you do not: it falls back to
+`CRON_SECRET`, then `CASPER_BETTOR_KEY`, both server-only and both already present in real mode. With
+none of them the prepare route returns 500 rather than mint a ticket anyone could forge.
+
+Fallback is deliberate and narrow. A deployment that cannot offer wallet signing at all — the
+simulated chain, or a demo account with no key — answers **501** on `prepare`, and the panel quietly
+uses the operator-signed route. A **declined signature is never retried** that way: falling back
+there would place a bet the visitor had just refused, with someone else's money.
 
 With no app id set, no third-party script is served to anyone.
 

@@ -1,7 +1,12 @@
 "use client";
 
-import { useCallback, useSyncExternalStore } from "react";
-import { DEMO_ACCOUNT, activeConnector, type WalletConnector } from "@/lib/wallet-connector";
+import { useCallback, useState, useSyncExternalStore } from "react";
+import {
+  DEMO_ACCOUNT,
+  activeConnector,
+  type SendTransactionOutcome,
+  type WalletConnector,
+} from "@/lib/wallet-connector";
 
 /**
  * The connected human wallet, shared across the app via a tiny SSR-safe external store — the same
@@ -81,30 +86,56 @@ export interface WalletContextValue {
   disconnect: () => void;
   /** Which connector is live — `"csprclick"` when a real wallet can sign, `"demo"` otherwise. */
   connectorId: WalletConnector["id"];
+  /**
+   * Why the last connect attempt did not produce an account — `null` after a success, and `null`
+   * for a plain cancellation, which needs no explanation. Set for the case that does: a browser
+   * with no wallet in it at all, where the button otherwise looked broken.
+   */
+  connectError: string | null;
+  /**
+   * Sign and submit a prepared transaction with the connected wallet, or `null` when this
+   * connector has no key of its own (the demo account). `null` is the caller's signal to use the
+   * operator-signed route — it is a capability answer, not a failure.
+   */
+  signAndSend:
+    | ((transactionJson: string, publicKey: string) => Promise<SendTransactionOutcome>)
+    | null;
 }
 
 export function useWallet(): WalletContextValue {
   const account = useSyncExternalStore(subscribe, readWallet, serverSnapshot);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const connect = useCallback(() => {
     const connector = activeConnector();
-    void connector.connect().then((connected) => {
-      if (!connected) return; // cancelled or failed sign-in leaves the app disconnected
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(connected));
-      emit();
+    void connector.connect().then((outcome) => {
+      if (outcome.ok) {
+        setConnectError(null);
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(outcome.account));
+        emit();
+        return;
+      }
+      // A cancelled connect is the visitor's own decision, freshly made. Telling them about it
+      // reads as an error message for having changed their mind.
+      setConnectError(outcome.reason === "cancelled" ? null : outcome.message);
     });
   }, []);
   const disconnect = useCallback(() => {
     // Clear locally first: the session must end even if the SDK's own disconnect fails.
     window.localStorage.removeItem(STORAGE_KEY);
+    setConnectError(null);
     emit();
     void activeConnector().disconnect();
   }, []);
+  const connector = typeof window === "undefined" ? null : activeConnector();
+  const send = connector?.sendTransaction;
   return {
     account,
     connected: account !== null,
     connect,
     disconnect,
-    connectorId: typeof window === "undefined" ? "demo" : activeConnector().id,
+    connectorId: connector?.id ?? "demo",
+    connectError,
+    signAndSend: send ? (json, publicKey) => send.call(connector, json, publicKey) : null,
   };
 }
 

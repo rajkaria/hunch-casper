@@ -96,7 +96,7 @@ describe("connect behaviour", () => {
         throw new Error("user cancelled");
       },
     });
-    await expect(csprClickConnector.connect()).resolves.toBeNull();
+    await expect(csprClickConnector.connect()).resolves.toMatchObject({ ok: false });
   });
 
   it("reads the account from getActiveAccount when signIn resolves nothing", async () => {
@@ -104,7 +104,8 @@ describe("connect behaviour", () => {
       signIn: async () => undefined,
       getActiveAccount: () => ({ public_key: "01deadbeef", name: "Ledger" }),
     });
-    expect((await csprClickConnector.connect())?.publicKey).toBe("01deadbeef");
+    const outcome = await csprClickConnector.connect();
+    expect(outcome.ok && outcome.account.publicKey).toBe("01deadbeef");
   });
 
   it("the demo account is obviously fake, never a plausible key", () => {
@@ -115,6 +116,9 @@ describe("connect behaviour", () => {
 
   it("the demo connector is always available so betting works with zero credentials", async () => {
     expect(demoConnector.available()).toBe(true);
-    expect(await demoConnector.connect()).toEqual(DEMO_ACCOUNT);
+    expect(await demoConnector.connect()).toEqual({ ok: true, account: DEMO_ACCOUNT });
+    // And it has no key of its own, which is what sends the bet path to the operator-signed route
+    // instead of pretending the placeholder can sign.
+    expect(demoConnector.sendTransaction).toBeUndefined();
   });
 });

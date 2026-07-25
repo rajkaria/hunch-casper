@@ -31,7 +31,7 @@ export function WalletResume() {
     // The SDK script is `afterInteractive`, so it is usually not there yet. Connecting before it
     // loads would resolve `activeConnector()` to the demo wallet and sign the visitor in as the
     // placeholder — the one outcome worse than not resuming.
-    void whenCsprClickReady().then((ready) => {
+    void whenCsprClickReady().then((ready: boolean) => {
       if (ready) connect();
     });
   }, [connected, connect]);

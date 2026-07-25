@@ -24,14 +24,40 @@ export interface WalletAccountLike {
   label: string;
 }
 
+/**
+ * Why connecting returns a reason and not just `null`.
+ *
+ * Every failure used to collapse to `null`, and the button's response to `null` was to do
+ * nothing — visually identical to a click that did not register. Three quite different things
+ * were hiding behind that: the visitor closed the wallet popup, the visitor has no wallet in this
+ * browser at all, and the wallet errored. Only the first is fine to swallow.
+ */
+export type ConnectOutcome =
+  | { ok: true; account: WalletAccountLike }
+  /** The visitor declined or closed the wallet. Say nothing; they know what they did. */
+  | { ok: false; reason: "cancelled"; message: string }
+  /** No wallet transport exists in this browser. The one case that needs an install prompt. */
+  | { ok: false; reason: "no-wallet"; message: string }
+  | { ok: false; reason: "failed"; message: string };
+
 export interface WalletConnector {
   /** Stable id for diagnostics and the honesty pill. */
   readonly id: "demo" | "csprclick";
   /** Whether this connector can actually run right now (SDK present, app id configured). */
   available(): boolean;
-  connect(): Promise<WalletAccountLike | null>;
+  connect(): Promise<ConnectOutcome>;
   disconnect(): Promise<void>;
+  /**
+   * Sign and submit a prepared transaction with the connected wallet. Absent on the demo
+   * connector — a placeholder account has no key, which is exactly why the bet path falls back to
+   * the operator-signed route rather than pretending.
+   */
+  sendTransaction?(transactionJson: string, publicKey: string): Promise<SendTransactionOutcome>;
 }
+
+export type SendTransactionOutcome =
+  | { ok: true; transactionHash: string }
+  | { ok: false; reason: "cancelled" | "failed"; message: string };
 
 /**
  * The demo account. Deliberately not a valid fundable key and deliberately obvious: bets from it
@@ -46,7 +72,7 @@ export const DEMO_ACCOUNT: WalletAccountLike = {
 export const demoConnector: WalletConnector = {
   id: "demo",
   available: () => true,
-  connect: async () => DEMO_ACCOUNT,
+  connect: async () => ({ ok: true, account: DEMO_ACCOUNT }),
   disconnect: async () => {},
 };
 
@@ -78,6 +104,20 @@ export interface CsprClickLike {
    * Typed here only so it can be disarmed — see `disarmInAppBrowserRedirect`.
    */
   shouldRedirectToInAppBrowser?: (provider: string) => boolean;
+  /**
+   * Sign a transaction with the connected wallet and submit it. `send(json, publicKey)` in the
+   * SDK, which requires `getActiveAccount().public_key === publicKey` and resolves
+   * `{cancelled, error, deployHash, transactionHash}` — it never throws for a declined signature.
+   */
+  send?: (
+    transactionJson: string,
+    publicKey: string,
+  ) => Promise<{
+    cancelled?: boolean;
+    error?: string | null;
+    deployHash?: string | null;
+    transactionHash?: string | null;
+  }>;
 }
 
 const CASPER_WALLET = "casper-wallet";
@@ -120,6 +160,60 @@ export function casperWalletInjected(): boolean {
   return typeof window !== "undefined" && typeof window.CasperWalletProvider === "function";
 }
 
+/**
+ * Whether this browser can complete the WalletConnect flow *as this app has built it*.
+ *
+ * WalletConnect's `IsPresent()` in the SDK is `return !0` — always true, for everyone — so it
+ * silently won its way to the front of the queue for every desktop visitor without an extension.
+ * Its connect path then splits:
+ *
+ *     const {isIOS,isAndroid}=E();
+ *     if((isIOS||isAndroid) && _()!==CASPER_WALLET)
+ *       setTimeout(()=>{ window.location.href = "casperwallet://wc?uri=" + encodeURIComponent(uri) },300)
+ *     else triggerCustomEvent(PROVIDER_STATUS_UPDATE, {status: ShowPairingQR, pairingUri: uri})
+ *
+ * On mobile it deep-links into the Casper Wallet app and works. On desktop it emits an event
+ * asking the *host app* to render a pairing QR — CSPR.click's React component library draws that
+ * one, and this app does not ship it. So the desktop branch was a button that fired an event into
+ * the void: no popup, no error, no QR, nothing. Treating "always present" as present is what made
+ * a missing wallet look like a broken app.
+ */
+export function walletConnectUsable(
+  userAgent: string = typeof navigator === "undefined" ? "" : navigator.userAgent,
+): boolean {
+  return /iPad|iPhone|iPod|android/i.test(userAgent);
+}
+
+/**
+ * What `connect()` will actually do, decided before anything is opened.
+ *
+ * Split out from `connect()` so the "why is there no wallet" answer is a pure function of the
+ * environment and can be asserted without a browser.
+ */
+export type WalletTransport =
+  | { provider: string }
+  /** Nothing usable is here. The one case that earns an install prompt. */
+  | { provider: null; reason: "no-wallet"; message: string }
+  /**
+   * The SDK cannot answer — it has no `isProviderPresent` at all. Absence of evidence, so the
+   * caller falls through to `signIn()` rather than telling a visitor with a working wallet that
+   * they do not have one.
+   */
+  | { provider: null; reason: "undetectable" };
+
+const NO_WALLET_MESSAGE =
+  "No Casper wallet found in this browser. Install the Casper Wallet extension to bet with your own account.";
+
+export function detectWalletTransport(
+  sdk: CsprClickLike,
+  order: readonly string[] = CONNECT_ORDER,
+): WalletTransport {
+  if (!sdk.isProviderPresent) return { provider: null, reason: "undetectable" };
+  const provider = firstAvailableProvider(sdk, order);
+  if (provider !== null) return { provider };
+  return { provider: null, reason: "no-wallet", message: NO_WALLET_MESSAGE };
+}
+
 /** Configured app id, from the bootstrap script or the public env. */
 export function csprClickAppId(): string | null {
   const fromEnv = process.env.NEXT_PUBLIC_CSPR_CLICK_APP_ID;
@@ -153,6 +247,10 @@ export function firstAvailableProvider(
 ): string | null {
   if (!sdk.isProviderPresent) return null;
   for (const provider of order) {
+    // `walletconnect` reports itself present unconditionally, so its own answer carries no
+    // information; what decides it is whether this browser can finish the flow. See
+    // `walletConnectUsable`.
+    if (provider === "walletconnect" && !walletConnectUsable()) continue;
     try {
       if (sdk.isProviderPresent(provider)) return provider;
     } catch {
@@ -347,12 +445,16 @@ export const csprClickConnector: WalletConnector = {
    * straight to the extension. Our UI is the picker. `signIn()` stays as a last resort so a future
    * SDK that fixes the hosted page still works without a change here.
    */
-  async connect(): Promise<WalletAccountLike | null> {
+  async connect(): Promise<ConnectOutcome> {
     const sdk = csprClick();
-    if (!sdk) return null;
+    if (!sdk) return { ok: false, reason: "failed", message: "CSPR.click is not loaded" };
     try {
-      const provider = firstAvailableProvider(sdk);
-      if (provider && sdk.connect) {
+      const transport = detectWalletTransport(sdk);
+      if (transport.provider === null && transport.reason === "no-wallet") {
+        return { ok: false, reason: "no-wallet", message: transport.message };
+      }
+      const provider = transport.provider;
+      if (provider !== null && sdk.connect) {
         // Only when the extension is demonstrably in `window` — a real phone with no wallet keeps
         // the SDK's handoff, which is the correct route there. See `disarmInAppBrowserRedirect`.
         const viaExtension = provider === CASPER_WALLET && casperWalletInjected();
@@ -366,16 +468,31 @@ export const csprClickConnector: WalletConnector = {
         // `connect` resolves without the account on most paths — and on the already-connected path
         // it resolves *before* the account exists at all. That race is the extension's; the other
         // providers hand back an account or nothing, so there is nothing there to wait for.
-        return await accountAfterConnect(sdk, provider, result, {
+        const account = await accountAfterConnect(sdk, provider, result, {
           attempts: viaExtension ? undefined : 1,
         });
+        return account
+          ? { ok: true, account }
+          : // The wallet was there and we got nothing back: the popup was closed, or the request
+            // was declined. Not an error to shout about.
+            { ok: false, reason: "cancelled", message: "Wallet connection was not completed" };
       }
-      if (!sdk.signIn) return null;
+      if (!sdk.signIn) {
+        return { ok: false, reason: "no-wallet", message: NO_WALLET_MESSAGE };
+      }
       const result = await sdk.signIn();
       // Some versions resolve the account; others resolve nothing and expose it separately.
-      return accountFromCsprClick(result) ?? accountFromCsprClick(sdk.getActiveAccount?.());
-    } catch {
-      return null; // a cancelled or failed sign-in leaves the app disconnected, not broken
+      const account =
+        accountFromCsprClick(result) ?? accountFromCsprClick(sdk.getActiveAccount?.());
+      return account
+        ? { ok: true, account }
+        : { ok: false, reason: "cancelled", message: "Wallet sign-in was not completed" };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: "failed",
+        message: err instanceof Error ? err.message : "Wallet connection failed",
+      };
     }
   },
   async disconnect(): Promise<void> {
@@ -383,6 +500,36 @@ export const csprClickConnector: WalletConnector = {
       await csprClick()?.disconnect?.();
     } catch {
       /* the local session is cleared by the caller regardless */
+    }
+  },
+  /**
+   * Sign and submit through the connected wallet. `send()` never throws for a declined signature
+   * — it resolves `{cancelled:true}` — so a cancel is reported as a cancel and NEVER retried
+   * against the operator-signed route. Falling back there would place a bet the visitor had just
+   * refused to sign, with someone else's money.
+   */
+  async sendTransaction(transactionJson: string, publicKey: string): Promise<SendTransactionOutcome> {
+    const sdk = csprClick();
+    if (!sdk?.send) {
+      return { ok: false, reason: "failed", message: "This wallet cannot sign transactions" };
+    }
+    try {
+      const res = await sdk.send(transactionJson, publicKey);
+      if (res?.cancelled) {
+        return { ok: false, reason: "cancelled", message: "Signature declined in the wallet" };
+      }
+      if (res?.error) return { ok: false, reason: "failed", message: res.error };
+      const hash = res?.transactionHash ?? res?.deployHash;
+      if (typeof hash !== "string" || hash.length === 0) {
+        return { ok: false, reason: "failed", message: "The wallet returned no transaction hash" };
+      }
+      return { ok: true, transactionHash: hash };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: "failed",
+        message: err instanceof Error ? err.message : "Signing failed",
+      };
     }
   },
 };

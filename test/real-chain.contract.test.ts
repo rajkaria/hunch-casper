@@ -66,3 +66,73 @@ describe("realChainOptionsFromEnv", () => {
     }
   });
 });
+
+/**
+ * The unsigned bet — the self-custodial path.
+ *
+ * Building needs no key and no node, so the thing that actually matters can be asserted offline:
+ * the transaction is initiated by the VISITOR (not the operator), and its hash is already known,
+ * which is what lets `prepare` bind a ticket to it before any signature exists.
+ */
+describe("buildBetTransaction", () => {
+  const BETTOR = "0186cd3a2b2c8bf1a8bcf1e6b0c1e0e5b2ef9f43d20a6a2b8a6a3f0c1d2e3f4a5b";
+
+  const chain = createRealChain("testnet", {
+    bettorKey: "0".repeat(64),
+    marketPackageHash: `hash-${"0".repeat(64)}`,
+    // The real proxy wasm: the transaction carries these bytes, so a placeholder would not be the
+    // transaction the wallet is asked to sign.
+    proxyWasmPath: "src/adapters/casper/resources/proxy_caller_with_return.wasm",
+  });
+
+  it("names the bettor as initiator — not the operator key", async () => {
+    const unsigned = await chain.buildBetTransaction!({
+      marketId: "will-it-rain",
+      outcomeKey: "yes",
+      amountMotes: "1000000000",
+      bettor: BETTOR,
+    });
+    const json = JSON.parse(unsigned.transactionJson);
+    expect(json.payload.initiator_addr.PublicKey).toBe(BETTOR);
+    expect(json.payload.chain_name).toBe("casper-test");
+    // Unsigned is the whole point: the wallet appends the approval.
+    expect(json.approvals).toEqual([]);
+  });
+
+  it("knows the hash before the wallet signs, because approvals are not part of the payload", async () => {
+    const unsigned = await chain.buildBetTransaction!({
+      marketId: "will-it-rain",
+      outcomeKey: "yes",
+      amountMotes: "1000000000",
+      bettor: BETTOR,
+    });
+    expect(unsigned.transactionHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.parse(unsigned.transactionJson).hash).toBe(unsigned.transactionHash);
+  });
+
+  it("carries the stake through the Odra proxy envelope, with amount === attached_value", async () => {
+    // The money invariant. A direct package call would attach ZERO — a silent money bug — so the
+    // wallet-signed path must use the same envelope the operator-signed one does.
+    const unsigned = await chain.buildBetTransaction!({
+      marketId: "will-it-rain",
+      outcomeKey: "yes",
+      amountMotes: "2500000000",
+      bettor: BETTOR,
+    });
+    const args = JSON.parse(unsigned.transactionJson).payload.fields.args.Named as Array<
+      [string, { bytes: string; cl_type: string }]
+    >;
+    const named = Object.fromEntries(args.map(([name, value]) => [name, value]));
+    expect(Object.keys(named).sort()).toEqual([
+      "amount",
+      "args",
+      "attached_value",
+      "entry_point",
+      "package_hash",
+    ]);
+    expect(named.amount.bytes).toBe(named.attached_value.bytes);
+    expect(named.entry_point.cl_type).toBe("String");
+    // Gas is the visitor's to pay, so the UI is told what it is.
+    expect(unsigned.gasMotes).toMatch(/^\d+$/);
+  });
+});
