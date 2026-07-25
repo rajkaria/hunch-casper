@@ -55,8 +55,8 @@ node-RPC block height — subtitles name the source), the MCP server, and the pa
 the contract's `claim()` exactly — 5 parity vectors + 300 property runs). **Simulated, and
 labelled:** mock-mode transaction hashes carry a `simulated` chip and never link to the explorer
 (only real txs get an `on-chain` chip), the cold-start demo seed populates boards through the real
-payout engine, LLM narrations are advisory flavor, and the header wallet is a mock with an honest
-`demo` pill — the CSPR.click drop-in is the first roadmap item in [`VISION.md`](../VISION.md).
+payout engine, LLM narrations are advisory flavor, and the demo wallet — still there, still wearing
+its `demo` pill — is what a visitor gets on a deployment where CSPR.click is not configured.
 
 ## Tech stack & the Casper toolkit
 
@@ -79,8 +79,11 @@ tests. Every Casper toolkit item is load-bearing:
   324 CSPR install), `AgentRegistry` (bonded third-party identity), `DisputePanel` (optimistic
   resolution), `ResolutionHook` (oracle-as-a-service), `LmsrMarket` (continuous liquidity), and
   `CopyBetting` (mirrored-fee split). All covered on OdraVM in CI.
-- **CSPR.click** — honestly: not integrated yet. The header wallet is a mock with a `demo` pill;
-  the CSPR.click drop-in is the first post-hackathon integration ([`VISION.md`](../VISION.md)).
+- **CSPR.click** — integrated and armed on testnet. The SDK loads from upstream's own CDN with the
+  bootstrap it actually requires, sign-in drives `connect(providerKey)` (their `signin.html` is a
+  404), the visitor's own wallet signs and submits the bet, and a browser with no extension gets a
+  WalletConnect pairing QR instead of a button that does nothing. With no app id configured the app
+  falls back to the labelled demo wallet, deliberately and visibly.
 - **drand Beacon** — the public randomness The Flip's resolver binds to: provably fair by
   construction, no house edge.
 
@@ -123,10 +126,11 @@ Blocked on the operator (nobody else can do these):
 
 - [ ] **Demo video** recorded (< 3 min, shot list in [`DEMO_SCRIPT.md`](./DEMO_SCRIPT.md)), uploaded
       (YouTube unlisted), and linked in `README.md` + this file
-- [ ] **CSPR.click app id** registered → `NEXT_PUBLIC_CSPR_CLICK_APP_ID` on the Vercel project, then
-      **redeploy** (a `NEXT_PUBLIC_*` value is baked at build time). Runbook: [`OPS.md`](./OPS.md)
-      §3b. Until this lands the header wallet is the labelled demo one and **no human can place a
-      real bet** — the single hardest blocker on the judge experience.
+- [ ] **One human signature.** CSPR.click is registered, live on testnet and reported armed by
+      `/api/health`; humans sign their own bets and a visitor with no extension gets a WalletConnect
+      pairing QR. What no one has done is approve a real signature in the Casper Wallet extension
+      against the live deployment — every layer is tested, but that last click needs a human with
+      the extension and a funded testnet account. Runbook: [`OPS.md`](./OPS.md) §3b.
 - [ ] **League prize pool** funded → `CASPER_LEAGUE_PRIZE_MOTES`. Until then `/league` says, truthfully
       but unattractively, that no prize pool is funded.
 - [ ] Submission form fields filled (title, one-liner, links, video, track)
