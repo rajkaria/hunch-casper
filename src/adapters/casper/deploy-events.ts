@@ -289,6 +289,13 @@ export function createDeployEvents(network: CasperNetwork, opts: DeployEventsOpt
     return Array.isArray(list) ? list : [];
   }
 
+  /**
+   * Pages of RAW rows. Raw is load-bearing: the previous version paginated on the *decoded* count,
+   * so a page holding a single reverted or unmapped row looked short and ended the walk. The vault's
+   * first page decoded to 60 of 100 rows, so page two was never requested and production reported
+   * 54 bets and 175k CSPR staked against an actual 98 and 613k. Only the API's own page size can
+   * say whether a page was the last one.
+   */
   async function fetchRawContract(hash: string, limit: number): Promise<unknown[]> {
     const out: unknown[] = [];
     for (let page = 1; page <= maxPages && out.length < limit; page++) {

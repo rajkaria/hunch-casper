@@ -257,6 +257,27 @@ describe("createDeployEvents — multiplexing", () => {
     expect(fetchImpl.mock.calls).toHaveLength(1);
   });
 
+  it("keeps paginating through a page that is FULL but only partly decodable", async () => {
+    // Production's actual failure: the vault's first page is 100 rows, of which 60 decoded. Ending
+    // the walk on the decoded count made a full page look like the last one, so page two was never
+    // requested — 54 bets and 175k CSPR staked reported against an actual 98 and 613k.
+    const partlyDecodable = [
+      ...Array.from({ length: 60 }, (_, i) => ({ ...BET, deploy_hash: `p1-${i}` })),
+      ...Array.from({ length: 40 }, (_, i) => ({ ...REVERTED, deploy_hash: `p1-bad-${i}` })),
+    ];
+    const fetchImpl = vi.fn(async (url: string) => {
+      const page = url.includes("page=2") ? [{ ...BET, deploy_hash: "p2-0" }] : partlyDecodable;
+      return { ok: true, json: async () => ({ data: page }) } as unknown as Response;
+    });
+    const port = createDeployEvents("testnet", {
+      contractHashes: ["hash-v2vault"],
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const events = await port.fetch({ limit: 1_000 });
+    expect(fetchImpl.mock.calls.some((c) => (c[0] as string).includes("page=2"))).toBe(true);
+    expect(events).toHaveLength(61);
+  });
+
   it("honours fromBlockHeight", async () => {
     const port = createDeployEvents("testnet", {
       contractHashes: ["hash-v1package"],
