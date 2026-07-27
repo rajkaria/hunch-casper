@@ -267,7 +267,13 @@ function mergeSettlement(local: SettlementSnapshot, remote: SettlementSnapshot):
     const other = byId.get(marketId);
     byId.set(marketId, other ? pickLedgerEntry(entry, other) : entry);
   }
-  return { entries: [...byId.entries()] };
+  return {
+    entries: [...byId.entries()],
+    // Union, like the oracle's resolution keys: a bet's at-most-once key must outlive the single
+    // instance that first saw the transaction execute, or a confirm poll answered by a sibling
+    // would record the same escrow a second time.
+    recordedBets: [...new Set([...(remote.recordedBets ?? []), ...(local.recordedBets ?? [])])],
+  };
 }
 
 function mergeOracle(local: OracleSnapshot, remote: OracleSnapshot): OracleSnapshot {

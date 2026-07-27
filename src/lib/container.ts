@@ -19,6 +19,7 @@ import type {
   OraclePort,
   PaymentPort,
   PlaceBetInput,
+  TransactionStatus,
   UnsignedBetTransaction,
   ResolveMarketInput,
 } from "@/ports";
@@ -89,6 +90,11 @@ function createLazyRealChain(
     async placeBet(input: PlaceBetInput): Promise<DeployResult> {
       return (await load()).placeBet(input);
     },
+    async submitBet(input: PlaceBetInput): Promise<DeployResult> {
+      const chain = await load();
+      if (!chain.submitBet) throw new Error("this chain cannot submit without confirming");
+      return chain.submitBet(input);
+    },
     async buildBetTransaction(input: PlaceBetInput): Promise<UnsignedBetTransaction> {
       const chain = await load();
       // Never optional on the real adapter — but the port declares it optional for the mock, so
@@ -100,6 +106,11 @@ function createLazyRealChain(
       const chain = await load();
       if (!chain.confirmTransaction) throw new Error("this chain cannot confirm transactions");
       return chain.confirmTransaction(transactionHash);
+    },
+    async checkTransaction(transactionHash: string): Promise<TransactionStatus> {
+      const chain = await load();
+      if (!chain.checkTransaction) throw new Error("this chain cannot check transactions");
+      return chain.checkTransaction(transactionHash);
     },
     async createMarket(input: CreateMarketInput): Promise<DeployResult> {
       return (await load()).createMarket(input);

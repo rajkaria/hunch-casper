@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createRealChain, realChainOptionsFromEnv, CasperConfigError } from "@/adapters/casper/real-chain";
 import { runCasperChainContract } from "./contract/casper-chain.shared";
+import type { ExecutionOutcome } from "@/adapters/casper/confirm";
 
 // The real adapter constructs safely without a funded key (keys are only read when a tx is
 // actually submitted), so it can run the credential-free subset of the SAME contract the mock
@@ -134,5 +135,44 @@ describe("buildBetTransaction", () => {
     expect(named.entry_point.cl_type).toBe("String");
     // Gas is the visitor's to pay, so the UI is told what it is.
     expect(unsigned.gasMotes).toMatch(/^\d+$/);
+  });
+});
+
+/**
+ * `checkTransaction` — the non-blocking confirmation seam.
+ *
+ * It exists so the visitor sees their transaction hash the moment a node has it, instead of after
+ * the 8-16s the chain takes to execute. Every assertion here is that making it non-blocking did
+ * NOT weaken what "confirmed" means: only an execution result the chain actually reports counts.
+ */
+describe("checkTransaction", () => {
+  const HASH = "ab".repeat(32);
+  const chainWith = (outcome: ExecutionOutcome) =>
+    createRealChain("testnet", {
+      bettorKey: "0".repeat(64),
+      marketPackageHash: `hash-${"0".repeat(64)}`,
+      proxyWasmPath: "/dev/null",
+      confirmImpl: async () => outcome,
+    });
+
+  it("answers pending without waiting for the transaction to execute", async () => {
+    expect(await chainWith({ state: "pending" }).checkTransaction!(HASH)).toEqual({ status: "pending" });
+  });
+
+  it("reports a confirmed execution with an explorer link to follow", async () => {
+    const state = await chainWith({ state: "success" }).checkTransaction!(HASH);
+    expect(state.status).toBe("confirmed");
+    if (state.status !== "confirmed") throw new Error("unreachable");
+    expect(state.result.deployHash).toBe(HASH);
+    expect(state.result.explorerUrl).toContain(HASH);
+  });
+
+  it("reports a revert as reverted, carrying the chain's own message — never as confirmed", async () => {
+    // The whole reason confirmation exists: a reverted escrow is not a bet, and indexing one puts
+    // money on the boards that no vault is holding.
+    expect(await chainWith({ state: "failure", error: "User error: 19" }).checkTransaction!(HASH)).toEqual({
+      status: "reverted",
+      error: "User error: 19",
+    });
   });
 });

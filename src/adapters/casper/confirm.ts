@@ -24,8 +24,16 @@ import { getNetworkConfig } from "@/config/network";
 
 /** How long to wait for execution before giving up. Casper testnet blocks land in ~16s. */
 export const DEFAULT_CONFIRM_TIMEOUT_MS = 150_000;
-/** Gap between confirmation polls. */
-export const DEFAULT_CONFIRM_INTERVAL_MS = 4_000;
+/**
+ * Gap between confirmation polls.
+ *
+ * Measured on testnet 2026-07-27: blocks land every 8.0s and `execution_info` becomes readable
+ * roughly 8-16s after submission — a transaction is typically included in the very next block. At
+ * a 4s interval up to half a block time of the visitor's wait was pure poll granularity, spent
+ * after the chain already had the answer. 2s costs a handful of extra reads against a node that
+ * answers in ~1s and halves that dead time.
+ */
+export const DEFAULT_CONFIRM_INTERVAL_MS = 2_000;
 /** Per-request timeout on a single confirmation poll. */
 const RPC_TIMEOUT_MS = 5_000;
 
@@ -96,6 +104,15 @@ export interface AwaitExecutionOptions {
   intervalMs?: number;
   /** Injectable clock; defaults to `Date.now`. */
   nowImpl?: () => number;
+  /**
+   * Whether to follow a pending 2.0 lookup with the legacy `info_get_deploy` one. Defaults to
+   * `true`, which is right for a caller that may be looking at a hash it did not build.
+   *
+   * `false` for a hash we know is a Casper 2.0 TransactionV1 (everything this app submits). The
+   * fallback can never answer for one, so on a polled confirmation it is an extra round trip per
+   * cycle — paid on every poll, while the visitor waits.
+   */
+  deployFallback?: boolean;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -136,6 +153,7 @@ export async function readExecution(
   const tx = await rpc(cfg.nodeRpcUrl, "info_get_transaction", { transaction_hash: { Version1: hash } }, fetchImpl);
   const fromTx = readExecutionOutcome(tx);
   if (fromTx.state !== "pending") return fromTx;
+  if (opts.deployFallback === false) return fromTx;
   const deploy = await rpc(cfg.nodeRpcUrl, "info_get_deploy", { deploy_hash: hash }, fetchImpl);
   return readExecutionOutcome(deploy);
 }

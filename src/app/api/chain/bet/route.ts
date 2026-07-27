@@ -4,11 +4,26 @@
  * The server picks the adapter (mock today; real Casper when the container is in real mode),
  * so this route is byte-identical whether it settles a pseudo hash or a live testnet deploy.
  * It is the S2 "place a bet end-to-end from the UI" seam.
+ *
+ * The operator-signed path: the operator's key pays, and the caller's public key is a label on the
+ * stake. The visitor's own wallet takes the money path instead wherever it can sign — see
+ * `/api/chain/bet/prepare`.
+ *
+ * ## Two answers, depending on what the adapter can do
+ *
+ * On an adapter that can submit without waiting (`submitBet` — the real chain), this responds the
+ * moment a node accepts the transaction, with the hash and a ticket, and the client polls
+ * `/api/chain/bet/confirm` for the outcome. Nothing is indexed here: a queued transaction can still
+ * revert, and the pools may only move on a confirmed execution.
+ *
+ * On an adapter whose submit is already instantaneous (the mock), `placeBet` confirms inline and
+ * the bet is indexed in this same request, exactly as before — there is no wait to spare anyone.
  */
 
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { validateBetRequest } from "@/lib/bet-request";
+import { betTicketSecret, signBetTicket } from "@/lib/bet-ticket";
 import { isSimulated } from "@/config/chain-mode";
 import { persistEconomyState } from "@/adapters/persist/economy-state";
 
@@ -28,12 +43,58 @@ export async function POST(req: Request): Promise<Response> {
   }
   const { network, market, outcomeKey, amountMotes, bettor } = validated.request;
   const container = createContainer(network);
+  const input = { marketId: market.id, outcomeKey, amountMotes, bettor };
 
+  // ── Fast path: submit now, confirm later ──────────────────────────────────────────────────────
+  // Only when the client can actually follow up. A ticket is what makes that follow-up safe (the
+  // terms are read from the MAC, never from the caller), so no secret means no split — fall through
+  // to the blocking path rather than hand out an unpollable hash.
+  const secret = betTicketSecret();
+  if (container.chain.submitBet && container.chain.checkTransaction && secret) {
+    let res;
+    try {
+      res = await container.chain.submitBet(input);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "chain submission failed";
+      return NextResponse.json({ error: message }, { status: 502 });
+    }
+    const ticket = signBetTicket(
+      {
+        network,
+        marketId: market.id,
+        outcomeKey,
+        amountMotes,
+        bettor,
+        transactionHash: res.deployHash,
+        issuedAtMs: Date.now(),
+        custody: "operator",
+      },
+      secret,
+    );
+    return NextResponse.json(
+      {
+        deployHash: res.deployHash,
+        explorerUrl: res.explorerUrl,
+        network,
+        marketId: market.id,
+        outcomeKey,
+        amountMotes,
+        // Submitted, not executed — so NOT indexed, and the pools have not moved. The client polls
+        // `confirm` with this ticket and updates when the chain has actually taken it.
+        status: "pending",
+        ticket,
+        simulated: isSimulated(),
+      },
+      { headers: { "cache-control": "no-store" } },
+    );
+  }
+
+  // ── Blocking path: this adapter's submit already includes confirmation ────────────────────────
   // Phase 1 — submit the escrow to the chain (the money authority). A failure here means no
   // value moved, so it is the only case that returns 502.
   let res;
   try {
-    res = await container.chain.placeBet({ marketId: market.id, outcomeKey, amountMotes, bettor });
+    res = await container.chain.placeBet(input);
   } catch (err) {
     const message = err instanceof Error ? err.message : "chain submission failed";
     return NextResponse.json({ error: message }, { status: 502 });
@@ -45,7 +106,17 @@ export async function POST(req: Request): Promise<Response> {
   // (`indexed: false` + the deploy hash) so it can be reconciled from chain state — closing the
   // orphaned-settlement class the S5 review flagged.
   try {
-    const updated = await container.store.recordBet({ marketId: market.id, bettor, outcomeKey, amountMotes });
+    // No `dedupeKey` here, deliberately. This path indexes exactly once per request — there is no
+    // poll to race — and the hash it would key on is not an identifier of a submission on every
+    // adapter: the mock derives a DETERMINISTIC pseudo hash from the bet's terms, so keying on it
+    // would read a visitor's second identical 1 CSPR bet as a replay of their first and silently
+    // drop it. At-most-once belongs to the polled path, which has real transaction hashes.
+    const updated = await container.store.recordBet({
+      marketId: market.id,
+      bettor,
+      outcomeKey,
+      amountMotes,
+    });
     // AWAIT the flush the store fired: a serverless instance can freeze the moment this response
     // is sent, and the page refetches pools immediately afterwards — a fire-and-forget persist
     // would let that refetch land on a sibling instance and render the bet as never placed.
@@ -57,6 +128,7 @@ export async function POST(req: Request): Promise<Response> {
       marketId: market.id,
       outcomeKey,
       amountMotes,
+      status: "confirmed",
       indexed: true,
       totalStakedMotes: updated.totalStakedMotes,
       poolByOutcomeMotes: updated.poolByOutcomeMotes,
@@ -71,6 +143,7 @@ export async function POST(req: Request): Promise<Response> {
       marketId: market.id,
       outcomeKey,
       amountMotes,
+      status: "confirmed",
       indexed: false,
       indexError: message,
       simulated: isSimulated(),

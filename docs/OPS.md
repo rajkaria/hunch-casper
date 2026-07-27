@@ -321,10 +321,29 @@ Two paths, chosen by whether the visitor has a wallet that can sign:
 The second is the real one, and it is what a connected Casper Wallet gets. The server builds the
 *same* Odra proxy-session transaction `placeBet` builds — same plan, same envelope, same gas — but
 with the visitor's public key as initiator, and hands it back **unsigned**. Their wallet signs and
-submits it via `csprclick.send()`; `/confirm` then waits for execution and indexes it.
+submits it via `csprclick.send()`; `/confirm` then indexes it once the chain reports it executed.
 
 The panel states which path ran ("you sign and fund this bet from your own account" vs "escrowed by
 the operator on your behalf"), because the difference decides who can `claim`.
+
+**Confirmation is polled, not awaited.** Casper takes ~8-16s to execute a transaction (testnet
+blocks land every 8s), and both routes used to block for it — up to 150s — before answering. The
+panel rendered nothing for the whole of that, even though the transaction hash is final and known
+before the wallet ever signs. Now each route answers as soon as a node accepts the transaction,
+with the hash and a ticket, and the browser polls `/confirm` (~2.5s) until it reports `confirmed`
+or `reverted`. The receipt — hash, copy button, explorer link, `confirming` chip — is on screen
+from the first moment; the pools move only on a confirmed execution, exactly as before.
+
+Two consequences worth knowing when reading the code:
+
+- **Indexing is at-most-once on the transaction hash.** Several polls observe the same success, so
+  `recordBet` takes a `dedupeKey` and the key set is persisted and unioned across instances (like
+  the oracle's resolution keys). Only the polled path passes one — `POST /api/chain/bet` on an
+  adapter that confirms inline indexes once per request by construction, and the mock's deploy
+  hash is deterministic in the bet's *terms*, so keying on it there would swallow a genuine repeat
+  bet.
+- **The client is what drives a wallet-signed bet into the read model.** The bet button stays shut
+  while one is confirming, so a second bet cannot abandon the first mid-poll.
 
 **Why `/confirm` needs a ticket.** Its naive form — "here is a hash and here is what it was worth" —
 is a free-money endpoint for the read model: post any executed transaction's hash with a 10,000 CSPR

@@ -61,6 +61,25 @@ describe("POST /api/chain/bet", () => {
     expect(json.poolByOutcomeMotes.yes).toBe("1700000000000");
   });
 
+  it("counts a repeated identical bet as a SECOND bet, not a replay of the first", async () => {
+    // Regression. When at-most-once indexing landed for the polled confirmation path, this route
+    // keyed on the deploy hash too — and the mock's hash is DETERMINISTIC in the bet's terms, so
+    // the same visitor staking the same 1 CSPR on the same outcome twice produced the same key and
+    // the second stake vanished from the pools. A hash that identifies terms is not a transaction
+    // id, and this route has no poll to guard against in the first place.
+    const body = {
+      network: "testnet",
+      marketId: "testnet:btc-150k-aug",
+      outcomeKey: "yes",
+      amountMotes: "1000000000", // 1 CSPR, twice
+      bettor: "agent:momentum",
+    };
+    await post(betPOST, BET_URL, body);
+    const second = await (await post(betPOST, BET_URL, body)).json();
+    // seed yes=700 CSPR + 1 + 1.
+    expect(second.poolByOutcomeMotes.yes).toBe("702000000000");
+  });
+
   it("rejects a bet on an unknown market or a bad outcome", async () => {
     const unknown = await post(betPOST, BET_URL, {
       network: "testnet",

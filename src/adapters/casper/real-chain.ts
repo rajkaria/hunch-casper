@@ -53,6 +53,7 @@ import type {
   DeployResult,
   PlaceBetInput,
   ResolveMarketInput,
+  TransactionStatus,
   UnsignedBetTransaction,
 } from "@/ports/casper-chain";
 import type { CasperNetwork } from "@/config/network";
@@ -68,7 +69,12 @@ import {
   type CasperCallPlan,
   type MarketCallTarget,
 } from "./deploy-plan";
-import { awaitExecution, type AwaitExecutionOptions, type ExecutionOutcome } from "./confirm";
+import {
+  awaitExecution,
+  readExecution,
+  type AwaitExecutionOptions,
+  type ExecutionOutcome,
+} from "./confirm";
 
 /** Thrown when the real adapter is selected but its credentials/addresses are not configured. */
 export class CasperConfigError extends Error {
@@ -268,7 +274,10 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
   async function confirm(hash: string): Promise<DeployResult> {
     const outcome = opts.confirmImpl
       ? await opts.confirmImpl(hash)
-      : await awaitExecution(network, hash, opts.confirmOptions);
+      : // `deployFallback: false` — every transaction this adapter builds is a Casper 2.0
+        // TransactionV1, so `info_get_deploy` cannot answer for one. Asking it on every poll spent
+        // a round trip per cycle to learn nothing, with the caller waiting on each.
+        await awaitExecution(network, hash, { deployFallback: false, ...opts.confirmOptions });
     if (outcome.state === "failure") {
       throw new CasperSubmitError(`transaction ${hash} reverted on chain: ${outcome.error}`, hash);
     }
@@ -328,6 +337,25 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
     },
 
     /**
+     * The same escrow, handed back the moment a node accepts it. Identical plan, identical
+     * envelope, identical key — the ONLY difference from `placeBet` is that it does not wait for
+     * execution, so the caller can show a hash now and confirm it separately.
+     */
+    async submitBet(input: PlaceBetInput): Promise<DeployResult> {
+      const key = loadKey(opts.bettorKey);
+      const target = targetFor(input.marketId);
+      const plan = buildBetPlan(input, {
+        marketContract: target.contract,
+        vaultMarketId: target.vaultMarketId,
+      });
+      const tx = buildPayable(plan, key.publicKey);
+      tx.sign(key);
+      const res = await rpc.putTransaction(tx);
+      const hash = res.transactionHash.toHex();
+      return { deployHash: hash, explorerUrl: explorerTransactionUrl(network, hash) };
+    },
+
+    /**
      * The same bet, built for the visitor's own key and left unsigned.
      *
      * Identical plan, identical proxy envelope, identical gas — the ONLY difference from
@@ -355,6 +383,29 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
     /** Confirm a transaction a visitor's wallet submitted. Same semantics as our own submits. */
     async confirmTransaction(transactionHash: string): Promise<DeployResult> {
       return confirm(transactionHash);
+    },
+
+    /**
+     * One read of what the chain says about a transaction — no waiting, no polling. The route that
+     * indexes a wallet-signed bet calls this on each poll from the browser, so the visitor holds a
+     * receipt with a working explorer link for the 8-16s the chain takes, instead of a spinner.
+     */
+    async checkTransaction(transactionHash: string): Promise<TransactionStatus> {
+      const outcome = opts.confirmImpl
+        ? await opts.confirmImpl(transactionHash)
+        : await readExecution(network, transactionHash, {
+            deployFallback: false,
+            ...opts.confirmOptions,
+          });
+      if (outcome.state === "failure") return { status: "reverted", error: outcome.error };
+      if (outcome.state === "pending") return { status: "pending" };
+      return {
+        status: "confirmed",
+        result: {
+          deployHash: transactionHash,
+          explorerUrl: explorerTransactionUrl(network, transactionHash),
+        },
+      };
     },
 
     /**

@@ -85,6 +85,7 @@ export async function POST(req: Request): Promise<Response> {
       bettor,
       transactionHash: unsigned.transactionHash,
       issuedAtMs: Date.now(),
+      custody: "self",
     },
     secret,
   );
@@ -93,6 +94,10 @@ export async function POST(req: Request): Promise<Response> {
     {
       transactionJson: unsigned.transactionJson,
       transactionHash: unsigned.transactionHash,
+      // The hash is final before the wallet signs, so its explorer link is too. Handing it back
+      // here is what lets the panel render a receipt the instant the wallet submits, rather than
+      // holding it until the transaction executes 8-16s later.
+      explorerUrl: container.chain.explorerUrlForDeploy(unsigned.transactionHash),
       gasMotes: unsigned.gasMotes,
       ticket,
       network,

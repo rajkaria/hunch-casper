@@ -95,6 +95,22 @@ describe("readExecution", () => {
     }) as unknown as typeof fetch;
     expect(await readExecution("testnet", "ab".repeat(32), { fetchImpl })).toEqual({ state: "pending" });
   });
+
+  it("skips the deploy lookup when the caller knows it built a 2.0 transaction", async () => {
+    // Every transaction this app builds is a Casper 2.0 TransactionV1, so `info_get_deploy` can
+    // never answer for one — it is a round trip per poll spent to learn nothing, and the visitor
+    // waits it out. The fallback stays on by default for callers that may be handling deploys.
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body)).method);
+      return new Response(JSON.stringify({ error: { code: -32001, message: "not found" } }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    expect(
+      await readExecution("testnet", "ab".repeat(32), { fetchImpl, deployFallback: false }),
+    ).toEqual({ state: "pending" });
+    expect(calls).toEqual(["info_get_transaction"]);
+  });
 });
 
 describe("awaitExecution", () => {

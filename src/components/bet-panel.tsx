@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Market } from "@/core/types";
 import type { CasperNetwork } from "@/config/network";
@@ -9,16 +9,47 @@ import { previewPayoutMotes } from "@/core/market-payout";
 import { exceedsBetCap, maxBetCspr } from "@/config/network";
 import { isDemoAccount, useWallet } from "@/components/wallet-context";
 
+/**
+ * How far along a submitted bet is.
+ *
+ * `pending` is a real, showable state, not an absence of one: a node has the transaction and the
+ * hash is final, but Casper takes 8-16s to execute it. The receipt appears here — hash, copy
+ * button, explorer link — instead of after, which is the whole point. `confirmed` is the only
+ * state in which the pools may move.
+ */
+type BetStatus = "pending" | "confirmed" | "reverted";
+
 interface ChainResult {
   deployHash: string;
   explorerUrl: string;
   simulated?: boolean;
+  /** Absent on a resolve response, which has no lifecycle to show — read as `confirmed`. */
+  status?: BetStatus;
+  /** The ticket to poll `/api/chain/bet/confirm` with. Present while a bet is still pending. */
+  ticket?: string;
+  /** Why the chain refused it, when `status === "reverted"`. */
+  error?: string;
   /** Present when the chain took the bet but the off-chain read model refused it (see the routes). */
   indexed?: boolean;
   /** Post-write pools, straight from the store — what the page renders without waiting for a refetch. */
   totalStakedMotes?: string;
   poolByOutcomeMotes?: Record<string, string>;
 }
+
+/**
+ * How often the browser asks the chain whether a submitted bet has executed.
+ *
+ * Each poll is one cheap RPC read behind our own route. Testnet blocks land every 8s, so 2.5s
+ * keeps the confirmation visible within a second or so of the chain having it without hammering
+ * the node.
+ */
+const POLL_INTERVAL_MS = 2_500;
+/**
+ * When to stop asking and let the visitor take it to the explorer themselves. Generous: the point
+ * is never to claim a bet happened, and a transaction still unexecuted after this is a chain
+ * problem the receipt's link answers better than a spinner would.
+ */
+const POLL_TIMEOUT_MS = 180_000;
 
 /** "cspr.live" / "testnet.cspr.live" — the explorer named, so the link says where it goes. */
 function explorerHost(url: string): string {
@@ -57,12 +88,28 @@ function ResultLine({
   result: ChainResult;
   network: CasperNetwork;
 }) {
+  const status = result.status ?? "confirmed";
+  const pending = status === "pending";
+  const reverted = status === "reverted";
   return (
     <div className="mt-3 rounded-lg border border-border bg-surface-2 p-3 text-xs">
       <div className="mb-1 flex items-center gap-2">
-        <span className="font-semibold text-up">{label}</span>
+        <span className={`font-semibold ${reverted ? "text-down" : pending ? "text-gold" : "text-up"}`}>
+          {reverted ? "Bet rejected on chain" : pending ? "Submitted to the chain" : label}
+        </span>
         {result.simulated ? (
           <span className="chip px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted">simulated</span>
+        ) : reverted ? (
+          <span className="chip border-down/50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-down">
+            reverted · {network}
+          </span>
+        ) : pending ? (
+          // The honest label for the 8-16s a Casper transaction takes to execute. The visitor holds
+          // a real hash they can follow to the explorer for the whole of it.
+          <span className="chip border-gold/50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gold">
+            <span className="mr-1 inline-block animate-pulse">●</span>
+            confirming · {network}
+          </span>
         ) : (
           <span className="chip border-up/50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-up">
             live · {network}
@@ -89,6 +136,19 @@ function ResultLine({
           View the {network} transaction on {explorerHost(result.explorerUrl)}
           <span aria-hidden="true">↗</span>
         </a>
+      )}
+      {pending && (
+        <p className="mt-2 text-[11px] text-muted">
+          Your wallet has sent it and the hash above is final. Casper takes a few seconds to execute
+          it — the pools move here the moment it lands.
+        </p>
+      )}
+      {reverted && (
+        // No value moved, so nothing is on the boards. Say what the chain said rather than leaving
+        // a receipt that looks placed.
+        <p className="mt-2 text-[11px] text-down">
+          {result.error ?? "The chain refused this transaction."} No stake was escrowed.
+        </p>
       )}
       {result.indexed === false && (
         // The chain holds the escrow but the boards do not know about it — never let the pools
@@ -156,7 +216,7 @@ export function BetPanel({
    * against the operator's key would place a bet the visitor just refused, with someone else's
    * money.
    */
-  async function betWithWallet(amountMotes: string, bettor: string): Promise<unknown | null> {
+  async function betWithWallet(amountMotes: string, bettor: string): Promise<ChainResult | null> {
     // A stale demo account can outlive a page load — it is in localStorage, and the SDK loads
     // after it is read. Its key is not a signable one, so this is a fallback case, not an error.
     if (!signAndSend || isDemoAccount(account)) return null;
@@ -173,14 +233,16 @@ export function BetPanel({
     const sent = await signAndSend(prep.transactionJson, bettor);
     if (!sent.ok) throw new Error(sent.message);
 
-    const confirmed = await fetch("/api/chain/bet/confirm", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ticket: prep.ticket }),
-    });
-    const json = await confirmed.json();
-    if (!confirmed.ok) throw new Error(json.error ?? "the bet was submitted but could not be confirmed");
-    return json;
+    // Done — as far as this function is concerned. The chain has the transaction and the hash is
+    // final, so the receipt goes up NOW and the confirmation effect below carries it to a verdict.
+    // Waiting here for execution is what used to leave the panel blank for 15-25 seconds while
+    // holding a hash it could have shown from the first moment.
+    return {
+      deployHash: prep.transactionHash,
+      explorerUrl: prep.explorerUrl,
+      status: "pending",
+      ticket: prep.ticket,
+    };
   }
 
   async function placeBet() {
@@ -195,9 +257,8 @@ export function BetPanel({
       const amountMotes = csprToMotes(Number(amount));
       const self = await betWithWallet(amountMotes, account.publicKey);
       if (self !== null) {
-        setBetResult(self as ChainResult);
-        onChainUpdate?.(self as ChainResult);
-        return;
+        setBetResult(self);
+        return; // pools stay put until the chain confirms — see the poller
       }
       const res = await fetch("/api/chain/bet", {
         method: "POST",
@@ -210,16 +271,98 @@ export function BetPanel({
           bettor: account.publicKey,
         }),
       });
-      const json = await res.json();
+      const json = (await res.json()) as ChainResult & { error?: string };
       if (!res.ok) throw new Error(json.error ?? "bet failed");
       setBetResult(json);
-      onChainUpdate?.(json as ChainResult);
+      // A route that confirmed inline (the simulated chain) already holds the post-write pools.
+      // A pending one has moved nothing yet, and the poller reports it when it does.
+      if ((json.status ?? "confirmed") === "confirmed") onChainUpdate?.(json);
     } catch (err) {
       setBetError(err instanceof Error ? err.message : "bet failed");
     } finally {
       setBetting(false);
     }
   }
+
+  /**
+   * Drive a submitted bet to a verdict.
+   *
+   * Keyed on the transaction hash, so placing a second bet supersedes the first one's poll rather
+   * than racing it. Every terminal answer is the SERVER'S — this only asks; it never decides that
+   * a bet landed, and it never moves the pools itself: the confirmed response carries the store's
+   * own post-write read model, exactly as the inline path did.
+   */
+  const pendingHash = betResult?.status === "pending" ? betResult.deployHash : null;
+  const pendingTicket = betResult?.status === "pending" ? betResult.ticket : undefined;
+  /** A bet is submitted and this panel is still the thing chasing its verdict. */
+  const confirming = pendingHash !== null && pendingTicket !== undefined;
+  // Held in a ref, not a dependency: a caller that passes an inline arrow would otherwise change
+  // identity on every render and restart the poll loop from zero, forever.
+  const onChainUpdateRef = useRef(onChainUpdate);
+  useEffect(() => {
+    onChainUpdateRef.current = onChainUpdate;
+  }, [onChainUpdate]);
+
+  useEffect(() => {
+    if (!pendingHash || !pendingTicket) return;
+    let stopped = false;
+    const ctrl = new AbortController();
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+    /**
+     * Stop chasing this transaction, keeping the receipt exactly as honest as it was: still
+     * unconfirmed, hash and explorer link intact. Dropping the ticket is what disarms this effect
+     * AND releases the bet button — a panel that gave up but stayed locked would strand the
+     * visitor on a page that can no longer do anything.
+     */
+    const disarm = () => setBetResult((prev) => (prev ? { ...prev, ticket: undefined } : prev));
+
+    const poll = async (): Promise<void> => {
+      while (!stopped) {
+        try {
+          const res = await fetch("/api/chain/bet/confirm", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ticket: pendingTicket }),
+            signal: ctrl.signal,
+            cache: "no-store",
+          });
+          const json = (await res.json()) as ChainResult & { error?: string };
+          if (stopped) return;
+          if (!res.ok) {
+            setBetError(json.error ?? "the bet was submitted but could not be confirmed");
+            disarm();
+            return;
+          }
+          if (json.status !== "pending") {
+            // Terminal. Keep the ticket off the result so this effect does not re-arm.
+            setBetResult({ ...json, ticket: undefined });
+            if (json.status === "confirmed") onChainUpdateRef.current?.(json);
+            return;
+          }
+        } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          // A dropped poll is not a failed bet — the transaction is on the chain either way. Keep
+          // asking until the window closes; the receipt on screen stays valid throughout.
+        }
+        if (Date.now() >= deadline) {
+          setBetError(
+            "This transaction has not executed yet — it is on the chain, so follow the link above " +
+              "to see where it got to.",
+          );
+          disarm();
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      }
+    };
+    void poll();
+
+    return () => {
+      stopped = true;
+      ctrl.abort();
+    };
+  }, [pendingHash, pendingTicket]);
 
   async function resolve() {
     setResolving(true);
@@ -295,10 +438,14 @@ export function BetPanel({
         <button
           type="button"
           onClick={placeBet}
-          disabled={betting || (connected && (!amountValid || !outcomeKey || overCap))}
+          // Held shut while a bet is confirming, not because the panel is busy — it is not — but
+          // because this client is the only thing polling that transaction into the read model.
+          // Starting a second bet would abandon the first: escrowed on chain, absent from the
+          // boards. It is a few seconds, and the receipt below says exactly what is happening.
+          disabled={betting || confirming || (connected && (!amountValid || !outcomeKey || overCap))}
           className="btn btn-primary px-5 py-2 disabled:opacity-40"
         >
-          {betting ? "Placing…" : connected ? "Place bet" : "Connect wallet"}
+          {betting ? "Placing…" : confirming ? "Confirming…" : connected ? "Place bet" : "Connect wallet"}
         </button>
       </div>
 

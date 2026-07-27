@@ -69,12 +69,37 @@ export interface UnsignedBetTransaction {
   gasMotes: string;
 }
 
+/**
+ * What the chain says about a transaction right now — the answer to a single poll.
+ *
+ * `pending` deliberately covers "not executed yet", "no node has heard of it" and "we could not
+ * ask": all three mean the caller may not act as though it happened. Only `confirmed` may move
+ * money on the boards.
+ */
+export type TransactionStatus =
+  | { status: "pending" }
+  | { status: "confirmed"; result: DeployResult }
+  | { status: "reverted"; error: string };
+
 export interface CasperChainPort {
   readonly network: CasperNetwork;
   /** Current block height — a cheap liveness probe. */
   getBlockHeight(): Promise<number>;
-  /** Escrow a stake into the parimutuel vault. Returns the on-chain deploy. */
+  /** Escrow a stake into the parimutuel vault. Returns the on-chain deploy, once it has executed. */
   placeBet(input: PlaceBetInput): Promise<DeployResult>;
+  /**
+   * The same escrow, submitted but NOT waited for: the hash the moment a node accepts it.
+   *
+   * `placeBet` only answers once the transaction has executed, which on testnet is 8-16s during
+   * which the caller holds nothing to show. This hands the hash straight back so a receipt can be
+   * rendered, and leaves confirmation to `checkTransaction`. The caller MUST NOT treat the result
+   * as a placed bet — a queued transaction can still revert, and indexing one that did is exactly
+   * the bug `confirm.ts` exists to prevent.
+   *
+   * Optional: an adapter whose submits are instantaneous (the mock) has nothing to gain and does
+   * not implement it, so the caller uses `placeBet` and pays a wait that costs nothing.
+   */
+  submitBet?(input: PlaceBetInput): Promise<DeployResult>;
   /**
    * Build the bet transaction with the BETTOR as initiator and hand it back unsigned, so their
    * wallet signs and their account pays — the difference between a bet the user authorised and a
@@ -89,6 +114,18 @@ export interface CasperChainPort {
    * confirmation semantics as `placeBet`: a revert is a failure, not a bet.
    */
   confirmTransaction?(transactionHash: string): Promise<DeployResult>;
+  /**
+   * Ask ONCE what the chain currently says about a transaction, without waiting for it.
+   *
+   * The non-blocking half of `confirmTransaction`, and the one a browser should drive: execution
+   * takes 8-16s on testnet, and a request that blocks for it holds the receipt — the hash the
+   * visitor wants to see and follow to the explorer — hostage for the whole wait. The caller polls
+   * this instead and shows the transaction from the moment the chain has it.
+   *
+   * Same rule as everything else here: only an execution result the chain actually reports counts
+   * as confirmed. Anything unreadable — unknown hash, RPC outage — is `pending`, never success.
+   */
+  checkTransaction?(transactionHash: string): Promise<TransactionStatus>;
   /** Post a resolution and trigger settlement. */
   resolveMarket(input: ResolveMarketInput): Promise<DeployResult>;
   /** Open a market inside the v2 vault. Rejects when no v2 vault is configured. */
