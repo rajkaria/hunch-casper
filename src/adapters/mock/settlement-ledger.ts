@@ -29,6 +29,18 @@ export interface LedgerEntry {
 const ledger = new Map<string, LedgerEntry>();
 
 /**
+ * At-most-once keys for bets already recorded — on-chain transaction hashes.
+ *
+ * Confirmation became a poll rather than a single blocking wait (the visitor should see their
+ * transaction hash the moment the chain has it, not 15-20s later when it executes), which means the
+ * same executed transaction is observed by more than one request. Without this set each observation
+ * would add the stake again and the boards would claim money the vault never received. Persisted
+ * and unioned across instances exactly like the oracle's resolution keys — an idempotence key that
+ * only one lambda remembers does not prevent anything.
+ */
+const recordedBets = new Set<string>();
+
+/**
  * The catalogue's seed pools are **house launch liquidity**, not a display fiction: a market
  * opens with the house staked on every outcome so it is never a dead 0/0 book, and the house
  * then wins or loses exactly like any other participant. We model that as one clearly-labelled
@@ -139,9 +151,20 @@ export function ledgerGet(marketId: string): Market | null {
   return cloneMarket(ensureEntry(marketId).market);
 }
 
+/** Whether this bet's at-most-once key has already been recorded on this instance. */
+export function ledgerHasRecordedBet(dedupeKey: string): boolean {
+  return recordedBets.has(dedupeKey);
+}
+
 /** Record an escrowed bet: grow the outcome pool, the total, and the bettor's stake. */
 export function ledgerRecordBet(input: RecordBetInput): Market {
   const entry = ensureEntry(input.marketId);
+  // At-most-once, BEFORE the status check: a market that locked between the bet and a late-arriving
+  // replay must not turn an already-counted bet into a "betting is closed" error. The stake is on
+  // the boards; the caller is asking about a bet that already succeeded.
+  if (input.dedupeKey !== undefined && recordedBets.has(input.dedupeKey)) {
+    return cloneMarket(entry.market);
+  }
   const status = effectiveStatus(entry.market);
   if (status !== "open") {
     throw new Error(`market ${input.marketId} is ${status} — betting is closed`);
@@ -159,6 +182,10 @@ export function ledgerRecordBet(input: RecordBetInput): Market {
 
   const byOutcome = (entry.stakes[input.bettor] ??= {});
   byOutcome[input.outcomeKey] = (BigInt(byOutcome[input.outcomeKey] ?? "0") + amount).toString();
+
+  // Marked only after the bet is fully applied: a key burnt by a throw above would make a retry of
+  // a bet that never landed silently succeed.
+  if (input.dedupeKey !== undefined) recordedBets.add(input.dedupeKey);
 
   return cloneMarket(entry.market);
 }
@@ -220,20 +247,29 @@ export function ledgerSettledEntries(network?: "testnet" | "mainnet"): SettledEn
 /** Test-only: clear all in-process settlement state so cases don't contaminate each other. */
 export function __resetLedger(): void {
   ledger.clear();
+  recordedBets.clear();
 }
 
 /** JSON-safe snapshot of the FULL settlement state (Map → array of entries) for KV persistence. */
 export interface SettlementSnapshot {
   entries: [string, LedgerEntry][];
+  /** At-most-once keys of bets already recorded. Optional: absent in envelopes written before
+   * confirmation became a poll, which simply start the set empty. */
+  recordedBets?: string[];
 }
 
 /** Export the full ledger, deep-cloned so later mutations never leak into a captured snapshot. */
 export function exportSettlementState(): SettlementSnapshot {
-  return { entries: structuredClone(Array.from(ledger.entries())) };
+  return {
+    entries: structuredClone(Array.from(ledger.entries())),
+    recordedBets: [...recordedBets],
+  };
 }
 
 /** Restore a snapshot, REPLACING (not merging) current state. Idempotent. */
 export function importSettlementState(snapshot: SettlementSnapshot): void {
   ledger.clear();
   for (const [marketId, entry] of structuredClone(snapshot.entries)) ledger.set(marketId, entry);
+  recordedBets.clear();
+  for (const key of snapshot.recordedBets ?? []) recordedBets.add(key);
 }

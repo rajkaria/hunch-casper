@@ -22,6 +22,16 @@ export interface RecordBetInput {
   bettor: string;
   outcomeKey: string;
   amountMotes: string;
+  /**
+   * An at-most-once key for this bet — the on-chain transaction hash, where there is one.
+   *
+   * Confirmation is polled, not awaited in one call: the client asks `/api/chain/bet/confirm`
+   * repeatedly until the transaction executes, so two polls can both observe the same success, and
+   * a retried request can arrive after the first already landed. One transaction is one bet, so a
+   * repeat of a key already recorded is a no-op rather than a second stake on the boards. Omitted
+   * for bets that have no transaction of their own (house seed liquidity).
+   */
+  dedupeKey?: string;
 }
 
 /** The off-chain mirror of a market's settlement — computed by the pure payout engine. */

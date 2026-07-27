@@ -31,6 +31,14 @@ export interface BetTicketClaims {
   transactionHash: string;
   /** Epoch ms the ticket was minted. Tickets are short-lived; see `BET_TICKET_TTL_MS`. */
   issuedAtMs: number;
+  /**
+   * Who signed the transaction this ticket covers. Both bet routes now mint a ticket and let the
+   * client poll `confirm` for the result, so the receipt has to know which it is: `"self"` is the
+   * visitor's own wallet and their own money, `"operator"` is the operator's key escrowing on
+   * their behalf. Absent on tickets minted before the operator path used them — read as `"self"`,
+   * which is what only `prepare` used to issue.
+   */
+  custody?: "self" | "operator";
 }
 
 /**

@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createMockMarketStore } from "@/adapters/mock/mock-market-store";
-import { __resetLedger } from "@/adapters/mock/settlement-ledger";
+import {
+  __resetLedger,
+  exportSettlementState,
+  importSettlementState,
+} from "@/adapters/mock/settlement-ledger";
 
 const store = createMockMarketStore();
 const BTC = "testnet:btc-150k-aug"; // seed: yes 700 CSPR, no 2300 CSPR, deadline 2026-08-01
@@ -33,6 +37,62 @@ describe("settlement store — recording bets", () => {
     await expect(
       store.recordBet({ marketId: "testnet:nope", bettor: "x", outcomeKey: "yes", amountMotes: "1" }),
     ).rejects.toThrow(/unknown market/);
+  });
+
+  it("records a dedupeKey'd bet exactly once, however many times it is replayed", async () => {
+    // The client polls `/api/chain/bet/confirm` until the transaction executes, so two polls can
+    // both observe the same success. One transaction is one bet: without this the pools would
+    // double-count a stake the chain only ever escrowed once.
+    const first = await store.recordBet({
+      marketId: BTC,
+      bettor: "alice",
+      outcomeKey: "yes",
+      amountMotes: "300000000000",
+      dedupeKey: "tx-abc",
+    });
+    expect(first.poolByOutcomeMotes.yes).toBe("1000000000000");
+
+    const replay = await store.recordBet({
+      marketId: BTC,
+      bettor: "alice",
+      outcomeKey: "yes",
+      amountMotes: "300000000000",
+      dedupeKey: "tx-abc",
+    });
+    expect(replay.poolByOutcomeMotes.yes).toBe("1000000000000");
+    expect(replay.totalStakedMotes).toBe("3300000000000");
+
+    // A DIFFERENT transaction is a different bet, even with identical terms.
+    const second = await store.recordBet({
+      marketId: BTC,
+      bettor: "alice",
+      outcomeKey: "yes",
+      amountMotes: "300000000000",
+      dedupeKey: "tx-def",
+    });
+    expect(second.poolByOutcomeMotes.yes).toBe("1300000000000");
+  });
+
+  it("keeps deduping across a snapshot round trip — instances must agree on 'already recorded'", async () => {
+    await store.recordBet({
+      marketId: BTC,
+      bettor: "alice",
+      outcomeKey: "yes",
+      amountMotes: "300000000000",
+      dedupeKey: "tx-abc",
+    });
+    const snapshot = exportSettlementState();
+    __resetLedger();
+    importSettlementState(snapshot);
+
+    const replay = await store.recordBet({
+      marketId: BTC,
+      bettor: "alice",
+      outcomeKey: "yes",
+      amountMotes: "300000000000",
+      dedupeKey: "tx-abc",
+    });
+    expect(replay.poolByOutcomeMotes.yes).toBe("1000000000000");
   });
 });
 
