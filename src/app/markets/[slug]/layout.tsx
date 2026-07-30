@@ -13,23 +13,45 @@
  */
 
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { findDefinition } from "@/adapters/mock/market-source";
+import { hydrateEconomyState } from "@/adapters/persist/economy-state";
 import { siteBaseUrl, marketUrl } from "@/config/site";
+
+/** Route params arrive still percent-encoded; malformed escapes fall through unchanged. */
+function decodeSlug(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
 
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
-  const { slug } = await params;
+  const { slug: rawSlug } = await params;
+  // Two fixes with one cause — every round/created market page carried the generic "Market" title:
+  //   1. the param is still percent-encoded (a round slug arrives as `cspr-hourly-updown%2320658`),
+  //      so the catalogue lookup needs the decoded form;
+  //   2. created/round markets live in the KV snapshot, not the static catalogue — hydrate first
+  //      (a fast no-op when persistence is unconfigured), exactly as the market API routes do.
+  const slug = decodeSlug(rawSlug);
+  await hydrateEconomyState();
   const definition = findDefinition(slug);
+  // No such market on either network → a real 404, not a soft-404 shell page with "Market" as its
+  // title. The definition set is the store's own source, so this cannot 404 a page that renders.
+  if (!definition) notFound();
   const base = siteBaseUrl();
-  const pageUrl = marketUrl(slug);
+  // Built from the RAW (still-encoded) segment: a decoded `#` would read as a URL fragment.
+  const pageUrl = marketUrl(rawSlug);
   const oembedUrl = `${base}/api/oembed?url=${encodeURIComponent(pageUrl)}&format=json`;
 
-  const title = definition?.title ?? "Market";
+  const title = definition.title;
   const description =
-    definition?.subtitle ??
+    definition.subtitle ??
     "A prediction market on Casper, settled by pure parimutuel contract math.";
 
   return {

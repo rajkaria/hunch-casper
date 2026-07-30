@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import { generateMetadata } from "@/app/markets/[slug]/layout";
 import { GET as oembed } from "@/app/api/oembed/route";
 import { MARKET_DEFINITIONS } from "@/core/catalogue";
+import { __resetCreatedMarkets, addCreatedMarket } from "@/adapters/mock/market-source";
 
 const SLUG = MARKET_DEFINITIONS[0].slug;
 
@@ -61,14 +62,34 @@ describe("oEmbed discovery", () => {
     expect(meta.openGraph?.title).toBe(MARKET_DEFINITIONS[0].title);
   });
 
-  it("degrades to a generic title for an unknown slug rather than throwing", async () => {
-    await expect(metaFor("no-such-market")).resolves.toBeDefined();
-    expect((await metaFor("no-such-market")).title).toBe("Market");
+  it("404s an unknown slug instead of serving a soft-404 shell titled 'Market'", async () => {
+    // `notFound()` throws Next's control-flow error; the framework renders the real 404 from it.
+    await expect(metaFor("no-such-market")).rejects.toThrow(/404|NOT_FOUND/);
+  });
+
+  it("resolves a round market's title from its percent-encoded slug", async () => {
+    // Round slugs carry '#' and arrive still percent-encoded (`cspr-hourly-updown%2320658`).
+    // Before decode+hydrate landed, every round page unfurled as the generic "Market".
+    const base = MARKET_DEFINITIONS.find((d) => d.slug === "cspr-hourly-updown")!;
+    addCreatedMarket({ ...base, slug: "cspr-hourly-updown#20658", title: "CSPR up or down today? · round 20658" });
+    try {
+      const meta = await metaFor("cspr-hourly-updown%2320658");
+      expect(meta.title).toBe("CSPR up or down today? · round 20658");
+      // The canonical URL keeps the ENCODED segment — a decoded '#' would read as a fragment.
+      expect(String(meta.alternates?.canonical)).toContain("/markets/cspr-hourly-updown%2320658");
+    } finally {
+      __resetCreatedMarkets();
+    }
   });
 
   it("percent-encodes a slug so a crafted one cannot break out of the query", async () => {
-    const href = oembedHref(await metaFor("a b&c=d"));
-    expect(href).not.toContain("&c=d&");
-    expect(new URL(href).searchParams.get("url")).toContain("a b&c=d");
+    addCreatedMarket({ ...MARKET_DEFINITIONS[0], slug: "a b&c=d", title: "crafted" });
+    try {
+      const href = oembedHref(await metaFor("a b&c=d"));
+      expect(href).not.toContain("&c=d&");
+      expect(new URL(href).searchParams.get("url")).toContain("a b&c=d");
+    } finally {
+      __resetCreatedMarkets();
+    }
   });
 });

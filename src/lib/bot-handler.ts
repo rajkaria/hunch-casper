@@ -130,7 +130,8 @@ async function renderMarketList(container: Container, limit: number): Promise<st
 async function renderOdds(container: Container, slug: string): Promise<string> {
   const market = await container.store.get(slug, container.network);
   if (!market) return `no market \`${slug}\` on ${container.network}. try \`markets\` to see what's open.`;
-  const odds = computeOdds(market);
+  // Fee-inclusive, matching the market page — the bot must quote the multiple settlement pays.
+  const odds = computeOdds(market, market.feeBps);
   const rows = odds.map((o) => {
     const outcome = market.outcomes.find((x) => x.key === o.outcomeKey);
     const label = outcome ? outcome.label : o.outcomeKey;

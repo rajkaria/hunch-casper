@@ -21,7 +21,7 @@ export function marketMayHaveEvidence(status: MarketStatus): boolean {
   return status === "resolved" || status === "void";
 }
 
-interface EvidenceResponse {
+export interface EvidenceResponse {
   link: { recipeHash: string; bundleHash: string; uri: string; resolvedAtIso: string };
   bundle: {
     winningOutcomeKey: string | null;
@@ -30,6 +30,65 @@ interface EvidenceResponse {
     reasoning: string;
   };
   verification: { ok: boolean; recipeHashMatches: boolean; bundleHashMatches: boolean; outcomeMatches: boolean } | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Accept a payload only when it is actually an evidence bundle; anything else is "no evidence".
+ *
+ * This guard is load-bearing, not defensive garnish. A round slug carries a `#`
+ * (`cspr-hourly-updown#20658`), and interpolated raw into the fetch URL the browser truncated it
+ * at the fragment — the request went to `/api/markets/cspr-hourly-updown`, a DIFFERENT endpoint
+ * that happily answered `200 {market}`. The old code then dereferenced `data.link.recipeHash` on
+ * a shape with no `link`, and that TypeError crash-looped the entire round page. The fetch now
+ * encodes the slug, and this parse makes the render's assumptions checked rather than assumed:
+ * an unexpected shape settles to the no-evidence state instead of taking the page down.
+ */
+export function parseEvidenceResponse(json: unknown): EvidenceResponse | null {
+  if (!isRecord(json)) return null;
+  const link = json.link;
+  const bundle = json.bundle;
+  if (!isRecord(link) || typeof link.recipeHash !== "string" || typeof link.bundleHash !== "string") {
+    return null;
+  }
+  if (!isRecord(bundle)) return null;
+  const verification = json.verification;
+  return {
+    link: {
+      recipeHash: link.recipeHash,
+      bundleHash: link.bundleHash,
+      uri: typeof link.uri === "string" ? link.uri : "",
+      resolvedAtIso: typeof link.resolvedAtIso === "string" ? link.resolvedAtIso : "",
+    },
+    bundle: {
+      winningOutcomeKey:
+        typeof bundle.winningOutcomeKey === "string" ? bundle.winningOutcomeKey : null,
+      sources: Array.isArray(bundle.sources)
+        ? bundle.sources.filter(
+            (s): s is EvidenceResponse["bundle"]["sources"][number] =>
+              isRecord(s) && typeof s.source === "string" && typeof s.metric === "string",
+          )
+        : [],
+      snapshot: isRecord(bundle.snapshot)
+        ? Object.fromEntries(
+            Object.entries(bundle.snapshot).filter((e): e is [string, string] => typeof e[1] === "string"),
+          )
+        : {},
+      reasoning: typeof bundle.reasoning === "string" ? bundle.reasoning : "",
+    },
+    verification:
+      isRecord(verification) && typeof verification.ok === "boolean"
+        ? {
+            ok: verification.ok,
+            recipeHashMatches: verification.recipeHashMatches === true,
+            bundleHashMatches: verification.bundleHashMatches === true,
+            outcomeMatches: verification.outcomeMatches === true,
+          }
+        : null,
+  };
 }
 
 export function EvidenceViewer({
@@ -49,14 +108,17 @@ export function EvidenceViewer({
   useEffect(() => {
     if (!settled) return;
     let live = true;
-    fetch(`/api/markets/${slug}/evidence?network=${network}`)
+    // The slug MUST be encoded: a round slug's `#` would otherwise truncate the URL at the
+    // fragment and send this probe to the market endpoint instead (see parseEvidenceResponse).
+    fetch(`/api/markets/${encodeURIComponent(slug)}/evidence?network=${encodeURIComponent(network)}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((json) => {
+      .then((json: unknown) => {
         if (!live) return;
-        if (!json) {
+        const parsed = parseEvidenceResponse(json);
+        if (!parsed) {
           setState("none");
         } else {
-          setData(json);
+          setData(parsed);
           setState("ready");
         }
       })

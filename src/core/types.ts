@@ -111,7 +111,11 @@ export interface OutcomeOdds {
   outcomeKey: string;
   /** Implied probability in [0, 1], derived from pool share. */
   impliedProbability: number;
-  /** Gross payout multiple on a winning unit stake. */
+  /**
+   * Payout multiple on a winning unit stake. Fee-inclusive when the market's `feeBps` was passed
+   * to `computeOdds` (the settlement number — fee off the losing pool only); gross `total / pool`
+   * when it was not.
+   */
   payoutMultiple: number;
 }
 

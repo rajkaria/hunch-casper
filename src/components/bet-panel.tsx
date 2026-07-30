@@ -16,8 +16,13 @@ import { isDemoAccount, useWallet } from "@/components/wallet-context";
  * hash is final, but Casper takes 8-16s to execute it. The receipt appears here — hash, copy
  * button, explorer link — instead of after, which is the whole point. `confirmed` is the only
  * state in which the pools may move.
+ *
+ * `unconfirmed` is CLIENT-assigned, never sent by the server: the poll window closed (or the
+ * confirm route errored) without a verdict, so this page stopped watching. It is terminal here —
+ * without it the receipt kept pulsing "confirming" forever under the timeout message — but says
+ * nothing about the transaction itself, which the explorer link answers.
  */
-type BetStatus = "pending" | "confirmed" | "reverted";
+type BetStatus = "pending" | "confirmed" | "reverted" | "unconfirmed";
 
 interface ChainResult {
   deployHash: string;
@@ -50,6 +55,26 @@ const POLL_INTERVAL_MS = 2_500;
  * problem the receipt's link answers better than a spinner would.
  */
 const POLL_TIMEOUT_MS = 180_000;
+
+/**
+ * The largest stake the panel will even price: 1 billion CSPR, comfortably past every real bet
+ * (total CSPR supply is ~13B) and comfortably inside what the motes math can hold.
+ */
+export const MAX_STAKE_CSPR = 1_000_000_000;
+
+/**
+ * Parse the stake input to a bettable CSPR amount, or `null`.
+ *
+ * The upper bound is load-bearing, not taste: `Number.isFinite(1e300)` is true, but
+ * `csprToMotes(1e300)` rounds to `Infinity` and `BigInt(Infinity)` THROWS — a RangeError from a
+ * text field that crashed the page. Anything a wallet could never fund is invalid input, same as
+ * a negative number.
+ */
+export function parseStakeCspr(raw: string): number | null {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0 || value > MAX_STAKE_CSPR) return null;
+  return value;
+}
 
 /** "cspr.live" / "testnet.cspr.live" — the explorer named, so the link says where it goes. */
 function explorerHost(url: string): string {
@@ -91,11 +116,22 @@ function ResultLine({
   const status = result.status ?? "confirmed";
   const pending = status === "pending";
   const reverted = status === "reverted";
+  const unconfirmed = status === "unconfirmed";
   return (
     <div className="mt-3 rounded-lg border border-border bg-surface-2 p-3 text-xs">
       <div className="mb-1 flex items-center gap-2">
-        <span className={`font-semibold ${reverted ? "text-down" : pending ? "text-gold" : "text-up"}`}>
-          {reverted ? "Bet rejected on chain" : pending ? "Submitted to the chain" : label}
+        <span
+          className={`font-semibold ${
+            reverted ? "text-down" : pending || unconfirmed ? "text-gold" : "text-up"
+          }`}
+        >
+          {reverted
+            ? "Bet rejected on chain"
+            : pending
+              ? "Submitted to the chain"
+              : unconfirmed
+                ? "Submitted — not confirmed here"
+                : label}
         </span>
         {result.simulated ? (
           <span className="chip px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted">simulated</span>
@@ -109,6 +145,12 @@ function ResultLine({
           <span className="chip border-gold/50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gold">
             <span className="mr-1 inline-block animate-pulse">●</span>
             confirming · {network}
+          </span>
+        ) : unconfirmed ? (
+          // Deliberately NOT the pulsing "confirming" chip: this page has stopped watching, and a
+          // pulse that never resolves would claim otherwise.
+          <span className="chip border-gold/50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-gold">
+            unconfirmed · {network}
           </span>
         ) : (
           <span className="chip border-up/50 px-2 py-0.5 text-[10px] uppercase tracking-wide text-up">
@@ -141,6 +183,12 @@ function ResultLine({
         <p className="mt-2 text-[11px] text-muted">
           Your wallet has sent it and the hash above is final. Casper takes a few seconds to execute
           it — the pools move here the moment it lands.
+        </p>
+      )}
+      {unconfirmed && (
+        <p className="mt-2 text-[11px] text-muted">
+          Unconfirmed — check the explorer. This page stopped watching, but the transaction is on
+          the chain and the link above shows exactly where it got to.
         </p>
       )}
       {reverted && (
@@ -250,11 +298,15 @@ export function BetPanel({
       connect();
       return;
     }
+    // The button is disabled for invalid input, but this function must not be one stale render
+    // away from `BigInt(Infinity)` — parse again and refuse, never crash.
+    const stakeCspr = parseStakeCspr(amount);
+    if (stakeCspr === null) return;
     setBetting(true);
     setBetError(null);
     setBetResult(null);
     try {
-      const amountMotes = csprToMotes(Number(amount));
+      const amountMotes = csprToMotes(stakeCspr);
       const self = await betWithWallet(amountMotes, account.publicKey);
       if (self !== null) {
         setBetResult(self);
@@ -310,12 +362,16 @@ export function BetPanel({
     const deadline = Date.now() + POLL_TIMEOUT_MS;
 
     /**
-     * Stop chasing this transaction, keeping the receipt exactly as honest as it was: still
-     * unconfirmed, hash and explorer link intact. Dropping the ticket is what disarms this effect
+     * Stop chasing this transaction: hash and explorer link stay intact, but the status flips to
+     * the terminal `unconfirmed` — a receipt that kept saying "confirming" with nothing confirming
+     * it pulsed forever under the timeout message. Dropping the ticket is what disarms this effect
      * AND releases the bet button — a panel that gave up but stayed locked would strand the
      * visitor on a page that can no longer do anything.
      */
-    const disarm = () => setBetResult((prev) => (prev ? { ...prev, ticket: undefined } : prev));
+    const giveUp = () =>
+      setBetResult((prev) =>
+        prev && prev.status === "pending" ? { ...prev, status: "unconfirmed", ticket: undefined } : prev,
+      );
 
     const poll = async (): Promise<void> => {
       while (!stopped) {
@@ -331,7 +387,7 @@ export function BetPanel({
           if (stopped) return;
           if (!res.ok) {
             setBetError(json.error ?? "the bet was submitted but could not be confirmed");
-            disarm();
+            giveUp();
             return;
           }
           if (json.status !== "pending") {
@@ -350,7 +406,7 @@ export function BetPanel({
             "This transaction has not executed yet — it is on the chain, so follow the link above " +
               "to see where it got to.",
           );
-          disarm();
+          giveUp();
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
@@ -391,13 +447,65 @@ export function BetPanel({
     }
   }
 
-  const amountValid = Number(amount) > 0 && Number.isFinite(Number(amount));
+  // The status gate — AFTER every hook (status can flip open→resolved under a live page, and
+  // hooks must keep their order), BEFORE anything that looks bettable. A resolved market used to
+  // render the same armed form as an open one: stake input, payout preview, live CTA — and the
+  // only thing standing between a visitor and a bet on a 10-day-settled market was a server 409.
+  if (market.status !== "open") {
+    const winner =
+      market.outcomes.find((o) => o.key === market.resolvedOutcomeKey)?.label ??
+      market.resolvedOutcomeKey;
+    return (
+      <div className="card p-5">
+        <h3 className="text-sm font-semibold">Betting closed</h3>
+        {market.status === "resolved" && (
+          <p className="mt-2 text-xs text-muted">
+            This market is settled — <span className="font-semibold text-up">{winner ?? "the winning outcome"}</span>{" "}
+            won. Winning stakes were paid from the pool; no further bets.
+          </p>
+        )}
+        {market.status === "void" && (
+          <p className="mt-2 text-xs text-muted">
+            This market was voided and every stake refunded in full. No further bets.
+          </p>
+        )}
+        {market.status === "locked" && (
+          <>
+            <p className="mt-2 text-xs text-muted">
+              This market is locked and awaiting resolution — the deadline has passed, so no
+              further bets can enter the pool.
+            </p>
+            <p className="mt-3 border-t border-border pt-3 text-[11px] text-muted">
+              Resolution is the autonomous <span className="text-foreground">Arbiter</span>’s job —
+              it posts the winning outcome on-chain with its reputation staked. Watch it on the{" "}
+              <Link href="/agents" className="underline decoration-border underline-offset-2 hover:text-accent">
+                swarm dashboard
+              </Link>
+              .
+            </p>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  const stakeCspr = parseStakeCspr(amount);
+  const amountValid = stakeCspr !== null;
   const betCap = maxBetCspr(market.network);
-  const overCap = amountValid && exceedsBetCap(market.network, Number(amount));
-  const previewCspr =
-    amountValid && outcomeKey
-      ? motesToCspr(previewPayoutMotes(market.poolByOutcomeMotes, outcomeKey, csprToMotes(Number(amount)), market.feeBps))
-      : 0;
+  const overCap = stakeCspr !== null && exceedsBetCap(market.network, stakeCspr);
+  // Belt over the braces above: parseStakeCspr already bounds what reaches the motes math, but a
+  // preview must NEVER be able to take the page down — a broken preview is a missing line, not a
+  // crash loop.
+  let previewCspr = 0;
+  if (stakeCspr !== null && outcomeKey) {
+    try {
+      previewCspr = motesToCspr(
+        previewPayoutMotes(market.poolByOutcomeMotes, outcomeKey, csprToMotes(stakeCspr), market.feeBps),
+      );
+    } catch {
+      previewCspr = 0;
+    }
+  }
 
   return (
     <div className="card p-5">

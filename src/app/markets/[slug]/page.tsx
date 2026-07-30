@@ -5,7 +5,7 @@ import { useCallback } from "react";
 import { useParams } from "next/navigation";
 import { useNetwork } from "@/components/network-context";
 import { useMarket } from "@/components/use-markets";
-import type { MarketCategory } from "@/core/types";
+import type { Market, MarketCategory } from "@/core/types";
 import { motesToCspr } from "@/core/types";
 import { computeOdds, formatProbability } from "@/core/parimutuel-odds";
 import { BetPanel } from "@/components/bet-panel";
@@ -35,6 +35,59 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="card p-4">
       <div className="font-mono text-[10px] uppercase tracking-wider text-muted-2">{label}</div>
       <div className="num mt-1 text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
+
+/**
+ * The banner that keeps a settled or locked market from masquerading as an open one. Without it
+ * the detail page rendered no status at all: a market resolved days ago looked identical to a live
+ * one and invited bets whose only refusal was a cryptic server 409.
+ */
+function MarketStatusBanner({ market }: { market: Market }) {
+  if (market.status === "open") return null;
+
+  if (market.status === "resolved") {
+    const winner =
+      market.outcomes.find((o) => o.key === market.resolvedOutcomeKey)?.label ??
+      market.resolvedOutcomeKey ??
+      "the winning outcome";
+    return (
+      <div className="card mb-6 flex flex-wrap items-center gap-3 border-up/40 p-4" role="status">
+        <span className="chip border-up/50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-up">
+          resolved
+        </span>
+        <p className="text-sm text-foreground">
+          This market is settled — <span className="font-semibold text-up">{winner}</span> won.
+          Betting is closed; winning stakes were paid from the pool.
+        </p>
+      </div>
+    );
+  }
+
+  if (market.status === "void") {
+    return (
+      <div className="card mb-6 flex flex-wrap items-center gap-3 border-gold/40 p-4" role="status">
+        <span className="chip border-gold/50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-gold">
+          void
+        </span>
+        <p className="text-sm text-foreground">
+          This market was voided — every stake was refunded in full. Betting is closed.
+        </p>
+      </div>
+    );
+  }
+
+  // locked: past its deadline, awaiting the oracle.
+  return (
+    <div className="card mb-6 flex flex-wrap items-center gap-3 border-gold/40 p-4" role="status">
+      <span className="chip border-gold/50 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-gold">
+        locked
+      </span>
+      <p className="text-sm text-foreground">
+        This market is locked and awaiting resolution — no further bets. The Arbiter posts the
+        winning outcome on-chain once the deciding data is in.
+      </p>
     </div>
   );
 }
@@ -86,7 +139,9 @@ export default function MarketDetailPage() {
   }
 
   const cat = CATEGORY_META[market.category];
-  const odds = computeOdds(market);
+  // Fee-inclusive: the multiplier beside an outcome must be the number the bet panel's payout
+  // preview (and settlement) actually pays, not the gross pool ratio 2 fee-points above it.
+  const odds = computeOdds(market, market.feeBps);
 
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-10 sm:px-6">
@@ -106,6 +161,9 @@ export default function MarketDetailPage() {
         <h1 className="text-2xl font-semibold tracking-tight sm:text-4xl">{market.title}</h1>
         {market.subtitle && <p className="text-muted">{market.subtitle}</p>}
       </div>
+
+      {/* Settled/locked state — said before anything that looks bettable. */}
+      <MarketStatusBanner market={market} />
 
       {/* Stat strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

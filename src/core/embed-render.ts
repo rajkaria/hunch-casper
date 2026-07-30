@@ -43,7 +43,9 @@ function formatCspr(motes: string): string {
 
 /** Render the full embed document for a market. */
 export function renderEmbed(market: Market, links: EmbedLinks): string {
-  const odds = computeOdds(market);
+  // Fee-inclusive, matching the market page: the embed must not promise a gross multiple the vault
+  // never pays.
+  const odds = computeOdds(market, market.feeBps);
   const title = escapeHtml(market.title);
   const statusLabel = market.status === "open" ? "" : ` · ${escapeHtml(market.status)}`;
   const pool = formatCspr(market.totalStakedMotes);
