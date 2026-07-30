@@ -67,6 +67,16 @@ import {
   type BreakerSnapshot,
 } from "@/agent/bet-breaker";
 import {
+  exportResolutionEvidence,
+  importResolutionEvidence,
+  type ResolutionEvidenceLink,
+} from "@/adapters/mock/resolution-evidence-ledger";
+import {
+  exportEvidenceBundles,
+  importEvidenceBundles,
+} from "@/adapters/mock/mock-evidence-store";
+import type { EvidenceBundle } from "@/core/evidence-bundle";
+import {
   exportQuarantine,
   exportReleasedMarkets,
   importQuarantine,
@@ -98,6 +108,11 @@ interface EconomyEnvelope {
   breaker?: BreakerSnapshot;
   /** Optional: absent in envelopes written before market quarantine existed. */
   quarantine?: QuarantinedMarket[];
+  /** Resolution evidence: market→bundle pointers and the content-addressed bundle bodies.
+   * Optional: absent in envelopes written before evidence rode the envelope — without these, the
+   * Arbiter's evidence lived only in the resolving instance's memory and every audit read 404'd. */
+  evidenceLinks?: ResolutionEvidenceLink[];
+  evidenceBundles?: [string, EvidenceBundle][];
   /** Release tombstones (`[slug, releasedAt]`) so a merge can tell "released" from "never
    * quarantined". Optional: absent in envelopes written before merge-on-persist. */
   quarantineReleased?: [string, number][];
@@ -138,6 +153,8 @@ function currentEnvelope(): EconomyEnvelope {
     breaker: exportBreakerState(),
     quarantine: exportQuarantine(),
     quarantineReleased: exportReleasedMarkets(),
+    evidenceLinks: exportResolutionEvidence(),
+    evidenceBundles: exportEvidenceBundles(),
   };
 }
 
@@ -216,6 +233,9 @@ export function applyEconomyState(json: string): boolean {
     if (parsed.breaker) importBreakerState(parsed.breaker);
     if (Array.isArray(parsed.quarantine)) importQuarantine(parsed.quarantine);
     importReleasedMarkets(Array.isArray(parsed.quarantineReleased) ? parsed.quarantineReleased : []);
+    // Optional: envelopes written before evidence rode the envelope simply have none to restore.
+    if (Array.isArray(parsed.evidenceLinks)) importResolutionEvidence(parsed.evidenceLinks);
+    if (Array.isArray(parsed.evidenceBundles)) importEvidenceBundles(parsed.evidenceBundles);
   } catch {
     return false;
   }
@@ -378,7 +398,26 @@ export function mergeEconomyEnvelopes(local: EconomyEnvelope, remote: EconomyEnv
     breaker: mergeBreaker(local.breaker, remote.breaker),
     quarantine: quarantine.active,
     quarantineReleased: quarantine.released,
+    evidenceLinks: mergeEvidenceLinks(local.evidenceLinks ?? [], remote.evidenceLinks ?? []),
+    // Content-addressed: identical hash means identical body, so union by hash is exact.
+    evidenceBundles: [
+      ...new Map([...(remote.evidenceBundles ?? []), ...(local.evidenceBundles ?? [])]).entries(),
+    ],
   };
+}
+
+/** Union by market; on a collision the newer resolution's pointer wins (a re-resolution replaces
+ * its evidence, and resolvedAtIso is ISO so string order is time order). */
+function mergeEvidenceLinks(
+  local: ResolutionEvidenceLink[],
+  remote: ResolutionEvidenceLink[],
+): ResolutionEvidenceLink[] {
+  const byMarket = new Map<string, ResolutionEvidenceLink>();
+  for (const link of [...remote, ...local]) {
+    const existing = byMarket.get(link.marketId);
+    if (!existing || existing.resolvedAtIso <= link.resolvedAtIso) byMarket.set(link.marketId, link);
+  }
+  return [...byMarket.values()];
 }
 
 // ── KV transport ────────────────────────────────────────────────────────────────────────────────

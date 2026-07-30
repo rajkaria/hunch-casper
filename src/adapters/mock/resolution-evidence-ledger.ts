@@ -28,3 +28,18 @@ export function resolutionEvidenceFor(marketId: string): ResolutionEvidenceLink 
 export function __resetResolutionEvidence(): void {
   ledger.clear();
 }
+
+/** Snapshot for the KV envelope. Without it, evidence lived only in the resolving instance's
+ * memory — every "replay-verified" pill 404'd the moment another lambda served the read. */
+export function exportResolutionEvidence(): ResolutionEvidenceLink[] {
+  return [...ledger.values()];
+}
+
+/** Restore from the KV envelope: union — a link this instance recorded is kept unless the
+ * envelope carries a newer resolution for the same market. */
+export function importResolutionEvidence(links: ResolutionEvidenceLink[]): void {
+  for (const link of links) {
+    const existing = ledger.get(link.marketId);
+    if (!existing || existing.resolvedAtIso <= link.resolvedAtIso) ledger.set(link.marketId, link);
+  }
+}

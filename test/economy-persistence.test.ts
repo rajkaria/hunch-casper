@@ -50,6 +50,12 @@ import {
   __resetCreatedMarkets,
 } from "@/adapters/mock/market-source";
 import { ensureDemoSeed, __resetDemoSeed } from "@/adapters/mock/demo-seed";
+import {
+  recordResolutionEvidence,
+  resolutionEvidenceFor,
+  __resetResolutionEvidence,
+} from "@/adapters/mock/resolution-evidence-ledger";
+import { __resetEvidenceStore } from "@/adapters/mock/mock-evidence-store";
 import { csprToMotes } from "@/core/types";
 import type { MarketDefinition } from "@/core/catalogue";
 
@@ -89,6 +95,8 @@ function resetAllState(): void {
   __resetCreatedMarkets();
   __resetDemoSeed();
   __resetQuarantine();
+  __resetResolutionEvidence();
+  __resetEvidenceStore();
   // Zero the breaker WITHOUT resetBreaker(): that would stamp clearedAt=now, which is exactly the
   // merge signal several tests below need to control precisely.
   importBreakerState({ consecutiveFailures: 0, lastFailure: null, trippedAt: null });
@@ -229,6 +237,25 @@ describe("serializeEconomyState / applyEconomyState round-trip", () => {
     const again = oracleRecordResolution("arbiter", MARKET_ID, false);
     expect(again.resolved).toBe(arbiterBefore.resolved);
     expect(again.accurate).toBe(arbiterBefore.accurate);
+  });
+
+  it("round-trips resolution evidence — the audit surface must survive the resolving instance", () => {
+    // Evidence used to live only in the resolving lambda's memory: every resolved market's
+    // "replay-verified" pill 404'd the moment another instance served the read.
+    const link = {
+      marketId: "testnet:the-flip#7",
+      recipeHash: "aa".repeat(32),
+      bundleHash: "bb".repeat(32),
+      uri: "cas:" + "bb".repeat(32),
+      resolvedAtIso: "2026-07-30T00:00:00.000Z",
+    };
+    recordResolutionEvidence(link);
+    const json = serializeEconomyState();
+    resetAllState();
+    expect(resolutionEvidenceFor(link.marketId)).toBeNull();
+
+    expect(applyEconomyState(json)).toBe(true);
+    expect(resolutionEvidenceFor(link.marketId)).toEqual(link);
   });
 
   it("marks the demo seed as done, so a hydrated instance never double-seeds", () => {

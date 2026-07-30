@@ -16,11 +16,23 @@ import { resolutionEvidenceFor } from "@/adapters/mock/resolution-evidence-ledge
 import { findDefinition } from "@/adapters/mock/market-source";
 import { recipeFromBinding } from "@/core/resolution-recipe";
 import { verifyResolution } from "@/core/resolution-replay";
+import { hydrateEconomyState } from "@/adapters/persist/economy-state";
 
 export async function GET(req: Request, ctx: { params: Promise<{ slug: string }> }): Promise<Response> {
-  const { slug } = await ctx.params;
+  const { slug: rawSlug } = await ctx.params;
+  // Next hands the segment over still percent-encoded; round slugs carry '#', so an undecoded
+  // param would build a marketId no ledger has. Malformed encodings fall back to the raw string.
+  let slug = rawSlug;
+  try {
+    slug = decodeURIComponent(rawSlug);
+  } catch {
+    /* keep raw */
+  }
   const netParam = new URL(req.url).searchParams.get("network");
   const network = isCasperNetwork(netParam) ? netParam : DEFAULT_NETWORK;
+  // Evidence is written by whichever instance resolved the market — without hydrating, any other
+  // lambda answers 404 for evidence that exists.
+  await hydrateEconomyState();
   const container = createContainer(network);
 
   const marketId = `${network}:${slug}`;

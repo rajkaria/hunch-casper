@@ -32,3 +32,15 @@ export function createMockEvidenceStore(): EvidenceStorePort {
 export function __resetEvidenceStore(): void {
   store.clear();
 }
+
+/** Snapshot for the KV envelope — content-addressed, so entries are trivially unionable. */
+export function exportEvidenceBundles(): [string, EvidenceBundle][] {
+  return [...store.entries()];
+}
+
+/** Restore from the KV envelope. Union by hash: content addressing makes collisions identical. */
+export function importEvidenceBundles(entries: [string, EvidenceBundle][]): void {
+  for (const [hash, bundle] of entries) {
+    if (!store.has(hash)) store.set(hash, bundle);
+  }
+}

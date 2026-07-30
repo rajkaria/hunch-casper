@@ -125,17 +125,18 @@ export class HunchCasperClient {
 
   /** Fetch one market by slug. */
   async getMarket(slug: string): Promise<Market | null> {
-    const res = await this.fetchImpl(this.url(`/api/markets/${slug}?network=${this.network}`));
+    // Round slugs carry '#'; raw interpolation would truncate the URL at the fragment.
+    const res = await this.fetchImpl(this.url(`/api/markets/${encodeURIComponent(slug)}?network=${this.network}`));
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`getMarket failed: ${res.status}`);
     return ((await res.json()) as { market: Market }).market;
   }
 
-  /** Pool-implied odds for a market. */
+  /** Pool-implied odds for a market. Multiples are fee-inclusive — the number settlement pays. */
   async getOdds(slug: string): Promise<OutcomeOdds[]> {
     const market = await this.getMarket(slug);
     if (!market) throw new Error(`no market '${slug}'`);
-    return computeOdds(market);
+    return computeOdds(market, market.feeBps);
   }
 
   /** An oracle's reputation (default the Arbiter). */
