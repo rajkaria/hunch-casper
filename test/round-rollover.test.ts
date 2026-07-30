@@ -65,23 +65,30 @@ describe("round rollover", () => {
     expect(opened.some((a) => a.marketId.includes("btc-150k-aug"))).toBe(false);
   });
 
-  it("calls the chain in real mode, and labels the round non-simulated", async () => {
+  it("calls the chain in real mode for CURRENT rounds; past-round backfills are mirror-only and labelled simulated", async () => {
     vi.stubEnv("CASPER_CHAIN_MODE", "real");
     vi.stubEnv("CASPER_ORACLE_ACCOUNT", "account-hash-deadbeef");
     const { container, created } = fakeContainer();
     const opened = await rollMaturedRounds(container);
-    expect(created.length).toBe(opened.length);
-    expect(opened.every((a) => a.simulated === false)).toBe(true);
+    // Only the current round of each recurring market is a paid chain create — a past round's
+    // deadline has gone, so creating it would revert (and re-revert every tick, burning gas).
+    const chainCreated = opened.filter((a) => a.simulated === false);
+    expect(created.length).toBe(chainCreated.length);
+    expect(chainCreated.length).toBeGreaterThan(0);
+    // The backfilled past rounds registered too, mirror-only, honestly labelled.
+    expect(opened.length).toBeGreaterThan(chainCreated.length);
     vi.unstubAllEnvs();
   });
 
-  it("refuses to open a round in real mode with no oracle account configured", async () => {
+  it("refuses to open a CURRENT round in real mode with no oracle account configured", async () => {
     vi.stubEnv("CASPER_CHAIN_MODE", "real");
     vi.stubEnv("CASPER_ORACLE_ACCOUNT", "");
     const { container, created } = fakeContainer();
-    // An unresolvable round is worse than no round: the vault binds an approved, non-creator
-    // oracle to every market, and nothing else may resolve it.
-    expect(await rollMaturedRounds(container)).toEqual([]);
+    // An unresolvable bettable round is worse than no round: the vault binds an approved,
+    // non-creator oracle to every market. Past-round mirror backfills involve no chain create and
+    // may still register (the sweep + quarantine bound their cost).
+    const opened = await rollMaturedRounds(container);
+    expect(opened.every((a) => a.simulated === true)).toBe(true);
     expect(created).toEqual([]);
     vi.unstubAllEnvs();
   });
