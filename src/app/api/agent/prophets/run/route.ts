@@ -10,11 +10,14 @@ import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { runProphetFleet } from "@/agent/prophet";
 import { nextRoundSeq } from "@/adapters/mock/activity-log";
+import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
 import { isCasperNetwork } from "@/config/network";
 import { chainMode } from "@/config/chain-mode";
 
 function authorized(req: Request): boolean {
-  const secret = process.env.PROPHETS_CRON_SECRET;
+  // Per-route secret when configured; CRON_SECRET otherwise, so the documented tick credential
+  // also drives this runner instead of a permanently-401 route nobody can diagnose.
+  const secret = process.env.PROPHETS_CRON_SECRET || process.env.CRON_SECRET;
   if (chainMode() !== "real" && !secret) return true;
   if (!secret) return false;
   return req.headers.get("x-cron-secret") === secret;
@@ -32,9 +35,14 @@ export async function POST(req: Request): Promise<Response> {
     /* body optional */
   }
 
+  // Hydrate BEFORE reading the round counter: a cold instance's counter is 0, and seq 0 pins
+  // every round to the same market and the same Prophet (the frozen-seq defect the tick fixed).
+  await hydrateEconomyState();
   const network = isCasperNetwork(body.network) ? body.network : "testnet";
   const seq = typeof body.seq === "number" ? body.seq : nextRoundSeq();
 
   const actions = await runProphetFleet(createContainer(network), seq);
+  // Real stakes are escrowed by now — await the flush so a freezing instance can't drop them.
+  await persistEconomyState();
   return NextResponse.json({ round: seq, placed: actions.length, actions });
 }

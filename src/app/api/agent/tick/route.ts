@@ -55,6 +55,7 @@ async function tick(network: CasperNetwork, seq: number, resolveSlugs?: string[]
     round: report.seq,
     placed: report.prophetActions.length,
     resolved: report.arbiterActions.length,
+    rolled: report.rolloverActions.length,
     prophetActions: report.prophetActions,
     arbiterActions: report.arbiterActions,
     leaderboard: report.leaderboard,

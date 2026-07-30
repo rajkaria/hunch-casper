@@ -51,7 +51,9 @@ async function pickSignal(
 }
 
 function authorized(req: Request): boolean {
-  const secret = process.env.GENESIS_CRON_SECRET;
+  // Per-route secret when configured; CRON_SECRET otherwise, so the documented tick credential
+  // also drives this runner instead of a permanently-401 route nobody can diagnose.
+  const secret = process.env.GENESIS_CRON_SECRET || process.env.CRON_SECRET;
   if (chainMode() !== "real" && !secret) return true; // open in the credential-free demo
   if (!secret) return false;
   return req.headers.get("x-cron-secret") === secret;
@@ -61,6 +63,11 @@ export async function POST(req: Request): Promise<Response> {
   if (!authorized(req)) {
     return NextResponse.json({ error: "unauthorized: Genesis is gated by x-cron-secret" }, { status: 401 });
   }
+
+  // Hydrate FIRST: the abuse cap and the slug sequence below both read the created-markets list,
+  // and a cold instance's empty list re-mints seq 0 — which collides with the persisted
+  // `genesis-…-0` and 500s every cold-instance run once one Genesis market exists.
+  await hydrateEconomyState();
 
   // Demo-surface abuse guards (not security — real mode is cron-secret-gated above): the open
   // mock-mode trigger gets a catalogue cap + 20s cooldown so a griefer can't spam markets into
@@ -112,10 +119,9 @@ export async function POST(req: Request): Promise<Response> {
   };
 
   try {
-    // Create on top of the persisted economy and await the flush before responding — a genesis
-    // market can be a REAL on-chain create, and a serverless freeze after a fire-and-forget
-    // persist is how a market the chain has vanishes from the app (no-ops when KV is off).
-    await hydrateEconomyState();
+    // Await the flush before responding — a genesis market can be a REAL on-chain create, and a
+    // serverless freeze after a fire-and-forget persist is how a market the chain has vanishes
+    // from the app (no-ops when KV is off). Hydration happened before the cap/seq reads above.
     const market = await runGenesis(createContainer(network), trigger);
     await persistEconomyState();
     return NextResponse.json({ created: market });

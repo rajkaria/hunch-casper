@@ -12,11 +12,14 @@
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { resolveMarket, runArbiterSweep } from "@/agent/arbiter";
+import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
 import { isCasperNetwork } from "@/config/network";
 import { chainMode } from "@/config/chain-mode";
 
 function authorized(req: Request): boolean {
-  const secret = process.env.ARBITER_CRON_SECRET;
+  // Per-route secret when configured; CRON_SECRET otherwise, so the documented tick credential
+  // also drives this runner instead of a permanently-401 route nobody can diagnose.
+  const secret = process.env.ARBITER_CRON_SECRET || process.env.CRON_SECRET;
   if (chainMode() !== "real" && !secret) return true; // open in the credential-free demo
   if (!secret) return false;
   return req.headers.get("x-cron-secret") === secret;
@@ -34,6 +37,9 @@ export async function POST(req: Request): Promise<Response> {
     /* body optional */
   }
 
+  // Hydrate before settling: a cold instance must resolve on top of the persisted ledger, not
+  // its seed.
+  await hydrateEconomyState();
   const network = isCasperNetwork(body.network) ? body.network : "testnet";
   const container = createContainer(network);
 
@@ -54,9 +60,12 @@ export async function POST(req: Request): Promise<Response> {
         { status: 200 },
       );
     }
+    // Money moved on chain — await the flush so a freezing instance can't lose the settlement.
+    await persistEconomyState();
     return NextResponse.json({ resolved: 1, actions: [action] });
   }
 
   const actions = await runArbiterSweep(container);
+  await persistEconomyState();
   return NextResponse.json({ resolved: actions.length, actions });
 }

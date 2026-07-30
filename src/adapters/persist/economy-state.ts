@@ -752,5 +752,7 @@ export function __resetPersistenceForTests(): void {
 // only module that may import all of them) keeps the import graph acyclic. Loading any consumer of
 // this module (the mock store, the read routes, the tick) arms persistence for the whole instance.
 setEconomyPersistHook(() => {
-  void persistEconomyState();
+  // Swallow rejections explicitly: the hook is fire-and-forget, and an unhandled rejection here
+  // would take down the lambda that just completed a perfectly good mutation.
+  persistEconomyState().catch(() => {});
 });
