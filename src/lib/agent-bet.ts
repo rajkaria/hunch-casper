@@ -22,8 +22,9 @@
  *      whose `verify` is a nonce-match only — the operator acknowledges verification isn't trustless.
  *
  * Neither configured → fail closed (503). This keeps any mock-vs-real mismatch explicit and
- * safe-by-default rather than a silent operator-funded gap. (Persisting `consumedPayments` across
- * cold starts remains follow-up work for a long-lived real deployment.)
+ * safe-by-default rather than a silent operator-funded gap. Spent payments are recorded in the
+ * ledger's persisted dedupe set (see `paymentDedupeKey`), so a proof stays burnt across cold
+ * starts and instances.
  */
 
 import type { Container } from "@/lib/container";
@@ -32,6 +33,7 @@ import { previewPayoutMotes } from "@/core/market-payout";
 import { exceedsBetCap, isCasperNetwork, maxBetCspr } from "@/config/network";
 import { chainMode } from "@/config/chain-mode";
 import { motesToCspr } from "@/core/types";
+import { ledgerHasRecordedBet } from "@/adapters/mock/settlement-ledger";
 
 /**
  * Payments spent on a placed bet — one payment settles exactly one bet. Keyed by the proof's
@@ -39,10 +41,20 @@ import { motesToCspr } from "@/core/types";
  * stable and may be paid many times, but each *payment* is one-time. Re-presenting the same proof
  * is the replay we reject; a fresh payment for the same bet (new deployHash) is legitimate. The
  * nonce is still bound to the payer + params (see mock-payment) so a proof can't be redirected to
- * another bettor. In-process for the mock/demo; the real adapter enforces one-time use via the
- * on-chain transfer being unspent + a persisted set.
+ * another bettor.
+ *
+ * This Set is the in-process fast path only. The durable, cross-instance record is the ledger's
+ * persisted `recordedBets` dedupe set (keyed `x402:<deployHash>` via `recordBet`'s `dedupeKey`),
+ * which rides the KV envelope and is unioned across instances — without it, replaying one paid
+ * proof against N cold lambdas escrowed N operator-funded bets.
  */
 const consumedPayments = new Set<string>();
+
+/** The ledger dedupe key one x402 payment burns. Namespaced so it can never collide with the
+ * bet-transaction keys (`network:txHash`) the wallet confirm path records. */
+function paymentDedupeKey(deployHash: string): string {
+  return `x402:${deployHash}`;
+}
 
 /** Test-only: clear the spent-payment registry. */
 export function __resetConsumedNonces(): void {
@@ -173,7 +185,7 @@ export async function agentBet(container: Container, input: AgentBetInput): Prom
   if (!paymentProof.deployHash) {
     return { status: "error", error: "x402 proof must reference a settlement (deployHash)", code: 402 };
   }
-  if (consumedPayments.has(paymentProof.deployHash)) {
+  if (consumedPayments.has(paymentProof.deployHash) || ledgerHasRecordedBet(paymentDedupeKey(paymentProof.deployHash))) {
     return { status: "error", error: "x402 payment already spent", code: 402 };
   }
 
@@ -186,7 +198,13 @@ export async function agentBet(container: Container, input: AgentBetInput): Prom
   // Money moved on-chain — burn this payment so the same proof can't mint a second bet.
   consumedPayments.add(paymentProof.deployHash);
   try {
-    const updated = await container.store.recordBet({ marketId: market.id, bettor, outcomeKey, amountMotes });
+    const updated = await container.store.recordBet({
+      marketId: market.id,
+      bettor,
+      outcomeKey,
+      amountMotes,
+      dedupeKey: paymentDedupeKey(paymentProof.deployHash),
+    });
     return {
       status: "placed",
       deployHash: res.deployHash,

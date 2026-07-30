@@ -65,6 +65,16 @@ describe("x402 REST bet (/api/agent/v1/bet)", () => {
     expect((await post(BET, proof)).status).toBe(402); // replay rejected
   });
 
+  it("rejects a replayed proof even on a fresh instance — the burn survives in the ledger's persisted dedupe set", async () => {
+    const nonce = (await (await post(BET)).json()).accepts[0].nonce;
+    const proof = { scheme: "casper-x402", deployHash: "tx-cold-start", nonce };
+    expect((await post(BET, proof)).status).toBe(200);
+    // A cold lambda has an empty in-process spent set; only the ledger dedupe key stands between
+    // one paid transfer and N operator-funded escrows. Simulate it by clearing the process set.
+    __resetConsumedNonces();
+    expect((await post(BET, proof)).status).toBe(402);
+  });
+
   it("rejects a proof minted for a different payer", async () => {
     const nonce = (await (await post({ ...BET, bettor: "agent:alice" })).json()).accepts[0].nonce;
     const proof = { scheme: "casper-x402", deployHash: "tx", nonce };
