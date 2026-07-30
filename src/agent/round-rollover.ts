@@ -46,7 +46,16 @@ export function roundDefinitionFor(
  * Returns the actions appended for each round opened; an empty array simply means every recurring
  * market already has its current round.
  */
-export async function rollMaturedRounds(container: Container): Promise<AgentAction[]> {
+export async function rollMaturedRounds(
+  container: Container,
+  opts: {
+    /** False when the cadence planner has throttled market creation off: fresh rounds are real
+     * on-chain creates (gas + bond) from the treasury — the ungated version of this drained the
+     * operator purse to zero. The free mirror-only backfill of past rounds always runs. */
+    allowChainCreation?: boolean;
+  } = {},
+): Promise<AgentAction[]> {
+  const allowChainCreation = opts.allowChainCreation !== false;
   const nowMs = container.clock.now();
   const actions: AgentAction[] = [];
 
@@ -70,6 +79,9 @@ export async function rollMaturedRounds(container: Container): Promise<AgentActi
       const def = roundDefinitionFor(parent, round);
       if (findDefinition(def.slug)) continue; // this round already exists — idempotent by design
       const past = round.index < current.index;
+      // A fresh round is a real treasury spend; a throttled planner's word is law here. Past
+      // rounds fall through — their registration is mirror-only and free.
+      if (!past && !allowChainCreation && chainMode() === "real") continue;
 
       // Per-market isolation: one revert must not abort every other market's rollover, or a single
       // misconfigured market freezes the whole economy's cadence.

@@ -181,11 +181,19 @@ export async function runEconomyTick(
     }
   }
 
-  // 3. Roll every recurring market whose round just settled into a fresh one. Like resolution,
-  //    rollover is deliberately NOT throttled: a settled market with no successor is a dead
-  //    surface, and a catalogue that only shrinks is how the loop stopped closing in the first
-  //    place. It is idempotent, so a tick that changes nothing costs nothing.
-  const rolloverActions = await rollMaturedRounds(container);
+  // 3. Roll every recurring market whose round just settled into a fresh one. "Idempotent, so a
+  //    tick that changes nothing costs nothing" was only half true: a tick that DID roll paid a
+  //    real on-chain create (gas + bond, ~10 CSPR) per fresh round, at the catalogue's short
+  //    cadences that is hundreds of CSPR a day — and it ran ungated while the planner said
+  //    "market creation off". That leak, not bet gas, is what actually drained the operator
+  //    treasury to zero (twice). Rollover IS market creation, so it obeys the same gate. The
+  //    mirror-only backfill of past rounds stays free and ungated inside rollMaturedRounds;
+  //    resolution above remains never-throttled.
+  const allowChainCreation = cadence === null || cadence.allowMarketCreation;
+  if (!allowChainCreation) {
+    console.warn("[economy] round chain-creation skipped — market creation is throttled off:", cadence?.reason);
+  }
+  const rolloverActions = await rollMaturedRounds(container, { allowChainCreation });
 
   // 4. Snapshot the boards those actions just changed.
   const leaderboard = computeAgentLeaderboard(await container.store.settledEntries(container.network));
