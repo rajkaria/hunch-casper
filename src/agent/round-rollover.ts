@@ -69,11 +69,12 @@ export async function rollMaturedRounds(container: Container): Promise<AgentActi
     for (const round of rounds) {
       const def = roundDefinitionFor(parent, round);
       if (findDefinition(def.slug)) continue; // this round already exists — idempotent by design
+      const past = round.index < current.index;
 
       // Per-market isolation: one revert must not abort every other market's rollover, or a single
       // misconfigured market freezes the whole economy's cadence.
       let receipt: { deployHash: string; explorerUrl: string } | null = null;
-      if (chainMode() === "real") {
+      if (chainMode() === "real" && !past) {
         const oracle = oracleAccount();
         if (!oracle) {
           // The vault binds an approved, non-creator oracle to every market; there is no safe
@@ -96,20 +97,19 @@ export async function rollMaturedRounds(container: Container): Promise<AgentActi
             bondMotes: creationBondMotes(),
           });
         } catch (err) {
-          // MarketExists (User error: 11) is the backfill's proof, not a failure: the chain
-          // already holds this round — exactly the mirror-lost case — so register the mirror.
-          const message = err instanceof Error ? err.message : String(err);
-          if (!/User error:\s*11\b/.test(message)) {
-            console.warn(
-              "[rollover] could not open the round — skipped this tick, retrying next:",
-              JSON.stringify({ slug: def.slug, round: round.index }),
-              err,
-            );
-            continue;
-          }
-          console.warn("[rollover] chain already holds round — re-registering the lost mirror:", JSON.stringify(def.slug));
+          console.warn(
+            "[rollover] could not open the next round — skipped this tick, retrying next:",
+            JSON.stringify({ slug: def.slug, round: round.index }),
+            err,
+          );
+          continue;
         }
       }
+      // A PAST round is registered mirror-only, never created on chain: its deadline has passed,
+      // so a create would revert (and re-revert every tick, burning gas). If the chain already
+      // holds the round — the lost-mirror case this backfill exists for — the arbiter sweep now
+      // sees it and settles its escrow; if the chain never had it, the sweep's single resolve
+      // attempt reverts UnknownMarket and quarantine isolates it. Either way the cost is bounded.
 
       // Register the off-chain mirror only AFTER the chain accepted it, so a reverted create can
       // never leave a round that looks bettable but has no escrow behind it.
