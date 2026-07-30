@@ -244,12 +244,22 @@ async function publishEvidence(
  * `locked`) and that is not yet settled. This is the unattended path: a cron fires it and any
  * matured market settles automatically. Meta-markets (future weekly deadlines) are left for the
  * explicit weekly close (`resolveMarket` by slug) so Prophets can bet them until the window ends.
+ *
+ * `deadlineMs` (epoch) bounds the sweep: each resolution waits on chain confirmations (up to
+ * 150s each, several transactions), so an unbounded sweep with a few slow markets outlives the
+ * route's own `maxDuration` — and a platform kill is not a JS exception, so the caller's
+ * flush-on-error never runs and everything already resolved on chain is dropped from the mirror.
+ * Stopping early is safe: unresolved markets stay `locked` and the next sweep retries them.
  */
-export async function runArbiterSweep(container: Container): Promise<AgentAction[]> {
+export async function runArbiterSweep(container: Container, deadlineMs?: number): Promise<AgentAction[]> {
   const markets = await container.store.list({ network: container.network });
   const actions: AgentAction[] = [];
   for (const m of markets) {
     if (m.status !== "locked") continue; // only matured, still-open markets
+    if (deadlineMs !== undefined && Date.now() >= deadlineMs) {
+      console.warn(`[arbiter] sweep time budget exhausted — remaining locked markets retry next tick`);
+      break;
+    }
     // Per-market isolation: one market whose resolve fails (bad oracle key, revert, RPC outage)
     // must not abort the sweep — that would let a single broken market freeze every OTHER
     // market's settlement and kill the tick that carries the whole economy. No settlement is

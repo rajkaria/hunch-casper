@@ -40,7 +40,13 @@ function authorized(req: Request): boolean {
 async function tick(network: CasperNetwork, seq: number, resolveSlugs?: string[]): Promise<Response> {
   let report;
   try {
-    report = await runEconomyTick(createContainer(network), { seq, resolveSlugs });
+    // Budget: stop starting sweep resolutions 60s before maxDuration so the flush + response
+    // always run inside the platform's window. Unresolved markets retry next tick.
+    report = await runEconomyTick(createContainer(network), {
+      seq,
+      resolveSlugs,
+      deadlineMs: Date.now() + (maxDuration - 60) * 1000,
+    });
   } catch (err) {
     // A tick that dies mid-flight has usually already MOVED MONEY (bets escrowed, resolutions
     // posted). Flush whatever mutated before rethrowing, or the mirror loses real transactions.

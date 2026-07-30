@@ -127,6 +127,13 @@ export interface EconomyTickInput {
    * meta-markets, so their settlement against the freshly-updated boards is demoable on demand.
    */
   resolveSlugs?: string[];
+  /**
+   * Epoch ms after which the arbiter sweep must stop STARTING resolutions. Each resolution waits
+   * on chain confirmations, and a sweep that outlives the route's `maxDuration` is killed by the
+   * platform — not a JS exception, so the flush-on-error path never runs and settled money
+   * vanishes from the mirror. Unset → unbounded (tests, operator CLIs).
+   */
+  deadlineMs?: number;
 }
 
 /** Run one full turn of the economy against a container's ports and return the combined report. */
@@ -158,7 +165,7 @@ export async function runEconomyTick(
   //    closes run last so meta-markets settle against the boards this tick's resolutions produced.
   //    Resolution is NEVER throttled: it pays people what they are owed and refunds creation
   //    bonds. Withholding it to save gas would strand user money to protect the operator's.
-  const arbiterActions = await runArbiterSweep(container);
+  const arbiterActions = await runArbiterSweep(container, input.deadlineMs);
   for (const slug of input.resolveSlugs ?? []) {
     // Same per-market isolation as the sweep: an explicit close that reverts must not abort the
     // tick that carries every other market's bets and settlements. Nothing is stored for the

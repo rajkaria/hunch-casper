@@ -65,7 +65,9 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ resolved: 1, actions: [action] });
   }
 
-  const actions = await runArbiterSweep(container);
+  // Budget: stop starting resolutions 60s before the platform's 300s window so the flush +
+  // response always run. Whatever is left stays locked and the next sweep retries it.
+  const actions = await runArbiterSweep(container, Date.now() + 240_000);
   await persistEconomyState();
   return NextResponse.json({ resolved: actions.length, actions });
 }
