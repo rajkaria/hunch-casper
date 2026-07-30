@@ -98,7 +98,11 @@ export function SiteHeader() {
                 {item.label}
               </Link>
             ))}
-            <div className="mt-2 border-t border-border pt-3">
+            {/* Close the drawer when the wallet button inside it is used — otherwise the connect
+                dialog opened ON TOP of the still-open drawer, and dismissing the dialog dropped
+                the visitor back into a menu they were done with. Capture-phase, same as the nav
+                links' own onClick close. */}
+            <div className="mt-2 border-t border-border pt-3" onClickCapture={() => setOpen(false)}>
               <WalletButton />
             </div>
           </div>

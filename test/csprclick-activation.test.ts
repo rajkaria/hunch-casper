@@ -10,10 +10,13 @@
 import { describe, expect, it, afterEach, vi } from "vitest";
 import {
   activeConnector,
+  connectorForConnectAttempt,
   csprClickConnector,
   demoConnector,
   csprClickAppId,
   accountFromCsprClick,
+  markCsprClickAppIdRejected,
+  __resetCsprClickAppIdRejection,
   DEMO_ACCOUNT,
 } from "@/lib/wallet-connector";
 
@@ -86,6 +89,65 @@ describe("app id resolution", () => {
     vi.stubEnv("NEXT_PUBLIC_TESTNET_CSPR_CLICK_APP_ID", "");
     vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "");
     expect(csprClickAppId()).toBeNull();
+  });
+});
+
+/**
+ * The connect race: the CSPR.click script is `afterInteractive` and ~1.4MB, so for the first
+ * seconds of a page's life `window.csprclick` does not exist. A visitor who clicked Connect in
+ * that window used to be handed the demo account on a fully configured production deploy —
+ * `activeConnector()` answered before the bundle arrived. A user-initiated connect now resolves
+ * its connector through `connectorForConnectAttempt`, which waits for a configured SDK.
+ */
+describe("the connect race — clicking before the SDK bundle has loaded", () => {
+  afterEach(() => __resetCsprClickAppIdRejection());
+
+  it("waits for a configured SDK instead of resolving the demo connector", async () => {
+    // App id configured, bundle not yet arrived — then the bundle lands mid-wait.
+    w.window = { __CSPR_CLICK_APP_ID__: "app-123" };
+    let ticks = 0;
+    const wait = async (): Promise<void> => {
+      ticks += 1;
+      if (ticks === 2) w.window!.csprclick = { signIn: async () => null };
+    };
+    const connector = await connectorForConnectAttempt({ attempts: 10, wait });
+    expect(connector.id).toBe("csprclick");
+    expect(ticks).toBe(2); // stopped waiting the moment the SDK was usable
+  });
+
+  it("falls back to demo when the wait times out", async () => {
+    w.window = { __CSPR_CLICK_APP_ID__: "app-123" };
+    const connector = await connectorForConnectAttempt({ attempts: 3, wait: async () => {} });
+    expect(connector.id).toBe("demo");
+  });
+
+  it("does not wait at all when nothing is configured — demo is the honest answer immediately", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TESTNET_CSPR_CLICK_APP_ID", "");
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "");
+    let waited = 0;
+    const connector = await connectorForConnectAttempt({
+      attempts: 50,
+      wait: async () => {
+        waited += 1;
+      },
+    });
+    expect(connector.id).toBe("demo");
+    expect(waited).toBe(0);
+  });
+
+  it("does not wait on an app id CSPR.click has already rejected", async () => {
+    // A rejected id can never sign; waiting on it would only delay the labelled demo fallback.
+    w.window = { __CSPR_CLICK_APP_ID__: "app-123" };
+    markCsprClickAppIdRejected("wrong application id");
+    let waited = 0;
+    const connector = await connectorForConnectAttempt({
+      attempts: 50,
+      wait: async () => {
+        waited += 1;
+      },
+    });
+    expect(connector.id).toBe("demo");
+    expect(waited).toBe(0);
   });
 });
 

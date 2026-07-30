@@ -5,6 +5,7 @@ import {
   DEMO_ACCOUNT,
   activeConnector,
   casperWalletInjected,
+  connectorForConnectAttempt,
   csprClickAppIdRejection,
   probeCsprClickAppId,
   type SendTransactionOutcome,
@@ -48,15 +49,28 @@ const listeners = new Set<() => void>();
 let cachedRaw: string | null = null;
 let cachedAccount: WalletAccount | null = null;
 
+/**
+ * The in-memory session for browsers where localStorage is blocked (lockdown modes, sandboxed
+ * iframes, some in-app browsers). There, `getItem` THROWS — and it used to throw from inside
+ * getSnapshot, i.e. from inside render — and `setItem` threw out of the connect `.then`, leaving
+ * the dialog stuck on "connecting" forever. Storage failure now costs only durability: the
+ * session lives here, works for the whole visit, and honestly does not survive a reload.
+ */
+let memoryAccount: WalletAccount | null = null;
+
 export function readWallet(): WalletAccount | null {
   if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(STORAGE_KEY);
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return memoryAccount; // blocked storage — the in-memory session is all there is
+  }
+  // No stored session: the in-memory one still counts (it is set when a WRITE failed, which a
+  // working read cannot see). `memoryAccount` is a stable reference, so the snapshot contract holds.
+  if (raw === null) return memoryAccount;
   if (raw === cachedRaw) return cachedAccount;
   cachedRaw = raw;
-  if (!raw) {
-    cachedAccount = null;
-    return cachedAccount;
-  }
   try {
     const parsed = JSON.parse(raw) as WalletAccount;
     cachedAccount = parsed?.publicKey ? parsed : null;
@@ -64,6 +78,22 @@ export function readWallet(): WalletAccount | null {
     cachedAccount = null;
   }
   return cachedAccount;
+}
+
+/**
+ * Persist an account change (or a disconnect, as `null`). The write is best-effort on purpose:
+ * blocked storage may cost the session its durability, but it must never cost the state
+ * transition — the connect dialog closing, the header flipping — that the caller is mid-way
+ * through. `readWallet` serves the in-memory copy whenever storage cannot.
+ */
+function persistAccount(account: WalletAccount | null): void {
+  memoryAccount = account;
+  try {
+    if (account === null) window.localStorage.removeItem(STORAGE_KEY);
+    else window.localStorage.setItem(STORAGE_KEY, JSON.stringify(account));
+  } catch {
+    /* durability lost, session kept — see memoryAccount */
+  }
 }
 
 function subscribe(callback: () => void): () => void {
@@ -143,6 +173,44 @@ function serverRejectionSnapshot(): string | null {
   return null;
 }
 
+/**
+ * The active connector's id as a subscribed snapshot — primitive, so it is referentially stable
+ * for `useSyncExternalStore`, and SUBSCRIBED so its changes actually re-render.
+ *
+ * This is what lets `signAndSend` flip from `null` without user interaction: the SDK bundle
+ * finishing its load changes `activeConnector()`'s answer, but nothing re-rendered wallet
+ * consumers when it did — a visitor who connected early kept the operator-escrow footnote (and a
+ * null signer) until they touched something. `notifyCsprClickArrived` below is the emit that
+ * makes this snapshot move.
+ */
+function readConnectorId(): WalletConnector["id"] {
+  return typeof window === "undefined" ? "demo" : activeConnector().id;
+}
+
+function serverConnectorId(): WalletConnector["id"] {
+  return "demo";
+}
+
+/**
+ * Announce that the CSPR.click SDK finished loading. Called by the always-mounted watcher in
+ * `wallet-resume`; the emit wakes `useSyncExternalStore`, the `connectorId` snapshot flips from
+ * "demo" to "csprclick", and every consumer re-derives `signAndSend` from the real connector.
+ */
+export function notifyCsprClickArrived(): void {
+  emit();
+}
+
+/**
+ * Apply an account change the SDK announced on its own event channel — connected, unlocked,
+ * activeKeyChanged, disconnected (as `null`). This is the store side of the always-mounted
+ * subscription in `wallet-resume`: without it, a key switched or revoked in the wallet extension
+ * left the store — and every "Betting as …" line — stale until a reload.
+ */
+export function applyExternalWalletAccount(account: WalletAccount | null): void {
+  persistAccount(account);
+  emit();
+}
+
 export interface WalletContextValue {
   account: WalletAccount | null;
   connected: boolean;
@@ -187,6 +255,10 @@ export function useWallet(): WalletContextValue {
     csprClickAppIdRejection,
     serverRejectionSnapshot,
   );
+  // Subscribed — not merely derived at render — so the SDK bundle finishing its load (announced
+  // by `notifyCsprClickArrived`) re-renders every consumer and `signAndSend` below flips from
+  // null without anyone clicking anything.
+  const connectorId = useSyncExternalStore(subscribe, readConnectorId, serverConnectorId);
 
   const connect = useCallback(() => {
     inFlight?.abort();
@@ -194,21 +266,30 @@ export function useWallet(): WalletContextValue {
     inFlight = controller;
     setConnectState({ phase: "connecting" });
 
-    void activeConnector()
-      .connect({
-        signal: controller.signal,
-        onPairing: (uri) => {
-          if (!controller.signal.aborted) setConnectState({ phase: "pairing", uri });
-        },
-        onAccounts: (accounts, choose) => {
-          if (!controller.signal.aborted) setConnectState({ phase: "choosing", accounts, choose });
-        },
+    // `connectorForConnectAttempt`, not `activeConnector()`: a click that lands before the 1.4MB
+    // CSPR.click bundle has loaded must WAIT for it (under this same "connecting" phase) rather
+    // than silently resolve the demo connector on a fully configured deploy. Demo is still the
+    // answer when nothing is configured, the app id is known-rejected, or the wait times out.
+    void connectorForConnectAttempt()
+      .then((connector) => {
+        if (controller.signal.aborted) return null; // the visitor closed the dialog mid-wait
+        return connector.connect({
+          signal: controller.signal,
+          onPairing: (uri) => {
+            if (!controller.signal.aborted) setConnectState({ phase: "pairing", uri });
+          },
+          onAccounts: (accounts, choose) => {
+            if (!controller.signal.aborted) setConnectState({ phase: "choosing", accounts, choose });
+          },
+        });
       })
       .then((outcome) => {
+        if (outcome === null) return; // cancelled while waiting for the SDK — state already reset
         if (inFlight !== controller) return; // superseded by a newer attempt
         inFlight = null;
         if (outcome.ok) {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(outcome.account));
+          // Best-effort persistence: blocked storage must not strand the dialog on "connecting".
+          persistAccount(outcome.account);
           setConnectState(IDLE);
           return;
         }
@@ -234,8 +315,9 @@ export function useWallet(): WalletContextValue {
   }, []);
 
   const disconnect = useCallback(() => {
-    // Clear locally first: the session must end even if the SDK's own disconnect fails.
-    window.localStorage.removeItem(STORAGE_KEY);
+    // Clear locally first: the session must end even if the SDK's own disconnect fails — and even
+    // if storage is blocked (persistAccount clears the in-memory session regardless).
+    persistAccount(null);
     inFlight?.abort();
     inFlight = null;
     setConnectState(IDLE);
@@ -249,7 +331,7 @@ export function useWallet(): WalletContextValue {
     connected: account !== null,
     connect,
     disconnect,
-    connectorId: connector?.id ?? "demo",
+    connectorId,
     connectState,
     cancelConnect,
     connectError: connectState.phase === "error" ? connectState.message : null,

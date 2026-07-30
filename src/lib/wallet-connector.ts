@@ -472,6 +472,8 @@ export type CsprClickSignal =
   | { kind: "pairing"; uri: string }
   | { kind: "accounts"; accounts: WalletAccountLike[]; raw: unknown[] }
   | { kind: "connected"; account: WalletAccountLike }
+  /** A provider announced its session ended — the store must stop showing that account. */
+  | { kind: "disconnected"; provider: string }
   | { kind: "rejected" }
   | { kind: "failed"; message: string };
 
@@ -535,7 +537,12 @@ export function parseCsprClickEvent(event: unknown): CsprClickSignal | null {
     providerEvent.includes("connected") ||
     providerEvent.includes("unlocked") ||
     providerEvent.includes("activeKeyChanged");
-  if (activeKey.length > 0 && announcesAccount && !providerEvent.includes("disconnected")) {
+  if (providerEvent.includes("disconnected")) {
+    // Not a connection, whatever key rides on it — and worth reporting in its own right: the
+    // always-mounted store subscription clears a session the wallet itself has ended.
+    return { kind: "disconnected", provider };
+  }
+  if (activeKey.length > 0 && announcesAccount) {
     return { kind: "connected", account: { publicKey: activeKey, label } };
   }
   return null;
@@ -829,6 +836,14 @@ export function withoutClickConnect(url: string): string {
   }
 }
 
+/** Options for waiting on the SDK: attempts (×100ms), or a plain `timeoutMs` (attempts wins). */
+export interface CsprClickWaitOptions {
+  attempts?: number;
+  /** Total wait budget in milliseconds — sugar over `attempts` for callers that think in time. */
+  timeoutMs?: number;
+  wait?: (ms: number) => Promise<void>;
+}
+
 /**
  * Resolve once CSPR.click is loaded *and* configured, or give up.
  *
@@ -836,17 +851,46 @@ export function withoutClickConnect(url: string): string {
  * for the first few hundred milliseconds. Anything that auto-connects has to wait for it —
  * otherwise `activeConnector()` answers `demo` and the resume silently signs the visitor in as the
  * placeholder account, which is worse than not resuming at all. Never falls back to demo.
+ *
+ * The default budget is 4s (40 × 100ms). The `?click=connect` resume leg passes a much longer
+ * `timeoutMs`: a mobile in-app browser regularly takes longer than 4s to fetch the 1.4MB bundle,
+ * and by then the marker is already stripped from the URL — a resume that gives up there is lost
+ * for good, not retried.
  */
-export async function whenCsprClickReady(
-  options: { attempts?: number; wait?: (ms: number) => Promise<void> } = {},
-): Promise<boolean> {
-  const attempts = options.attempts ?? 40;
+export async function whenCsprClickReady(options: CsprClickWaitOptions = {}): Promise<boolean> {
+  const attempts =
+    options.attempts ??
+    (options.timeoutMs !== undefined
+      ? Math.max(1, Math.ceil(options.timeoutMs / ACCOUNT_SETTLE_INTERVAL_MS))
+      : 40);
   const wait = options.wait ?? sleep;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (csprClickConnector.available()) return true;
     if (attempt < attempts - 1) await wait(ACCOUNT_SETTLE_INTERVAL_MS);
   }
   return false;
+}
+
+/**
+ * The connector a fresh, user-initiated connect should use — which is deliberately NOT a bare
+ * `activeConnector()`.
+ *
+ * The race this closes: the CSPR.click script is `afterInteractive` and ~1.4MB, so for the first
+ * seconds of a page's life `window.csprclick` does not exist. A visitor who clicked Connect in
+ * that window was resolved straight to the demo connector — on a fully configured production
+ * deploy, silently signed in as the placeholder account. So when an app id is configured (and not
+ * known-rejected — a rejected id can never sign, and waiting on it would just delay the honest
+ * demo fallback), the click waits for the SDK under the caller's "connecting" phase and falls
+ * back to demo only if the wait times out. The same discipline `wallet-resume` already applied to
+ * the auto-resume leg.
+ */
+export async function connectorForConnectAttempt(
+  options: CsprClickWaitOptions = {},
+): Promise<WalletConnector> {
+  if (csprClick() === null && csprClickAppId() !== null && csprClickAppIdRejection() === null) {
+    await whenCsprClickReady(options);
+  }
+  return activeConnector();
 }
 
 export const csprClickConnector: WalletConnector = {

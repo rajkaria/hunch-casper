@@ -396,6 +396,17 @@ describe("the ?click=connect return leg", () => {
     installSdk({ connect: async () => ({ public_key: "01dd" }) });
     await expect(whenCsprClickReady({ attempts: 3, wait: noWait })).resolves.toBe(true);
   });
+
+  it("accepts a time budget, so the resume leg can wait out a slow mobile in-app browser", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CSPR_CLICK_APP_ID", "app-123");
+    let waits = 0;
+    const count = async (): Promise<void> => {
+      waits += 1;
+    };
+    // 500ms at the 100ms probe interval → 5 attempts → 4 sleeps between them.
+    await expect(whenCsprClickReady({ timeoutMs: 500, wait: count })).resolves.toBe(false);
+    expect(waits).toBe(4);
+  });
 });
 
 /**
@@ -598,7 +609,8 @@ describe("reading CSPR.click's events", () => {
         },
       }),
     ).toEqual({ kind: "connected", account: { publicKey: "01dd", label: "Casper Wallet" } });
-    // A disconnect also carries a key; it is not a connection.
+    // A disconnect also carries a key; it is not a connection — it is the signal the
+    // always-mounted store subscription uses to clear a session the wallet itself ended.
     expect(
       parseCsprClickEvent({
         detail: {
@@ -607,7 +619,7 @@ describe("reading CSPR.click's events", () => {
           activeKey: "01dd",
         },
       }),
-    ).toBeNull();
+    ).toEqual({ kind: "disconnected", provider: "casper-wallet" });
   });
 
   it("ignores events it has no opinion about instead of throwing on them", () => {

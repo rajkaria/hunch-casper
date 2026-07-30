@@ -14,9 +14,23 @@ import { DEFAULT_NETWORK, isCasperNetwork } from "@/config/network";
 const STORAGE_KEY = "hunch-casper.network";
 const listeners = new Set<() => void>();
 
+/**
+ * In-memory selection for browsers where localStorage is blocked (lockdown modes, sandboxed
+ * iframes). Reading throws there — and `readNetwork` runs inside getSnapshot, i.e. inside
+ * render — and a write that throws would leave the toggle visually dead. Blocked storage costs
+ * the selection its persistence across reloads, nothing else.
+ */
+let memoryNetwork: CasperNetwork | null = null;
+
 function readNetwork(): CasperNetwork {
   if (typeof window === "undefined") return DEFAULT_NETWORK;
-  const stored = window.localStorage.getItem(STORAGE_KEY);
+  let stored: string | null;
+  try {
+    stored = window.localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return memoryNetwork ?? DEFAULT_NETWORK;
+  }
+  if (stored === null) return memoryNetwork ?? DEFAULT_NETWORK;
   return isCasperNetwork(stored) ? stored : DEFAULT_NETWORK;
 }
 
@@ -41,7 +55,13 @@ export interface NetworkContextValue {
 export function useNetwork(): NetworkContextValue {
   const network = useSyncExternalStore(subscribe, readNetwork, serverSnapshot);
   const setNetwork = useCallback((n: CasperNetwork) => {
-    window.localStorage.setItem(STORAGE_KEY, n);
+    // Memory first, storage best-effort: a blocked write must still complete the switch.
+    memoryNetwork = n;
+    try {
+      window.localStorage.setItem(STORAGE_KEY, n);
+    } catch {
+      /* persistence lost, selection kept — readNetwork serves the in-memory copy */
+    }
     for (const l of listeners) l();
   }, []);
   return { network, setNetwork };

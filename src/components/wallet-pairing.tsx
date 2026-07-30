@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { encodeQr, qrSvgExtent, qrToSvgPath } from "@/lib/qr-code";
 import { CASPER_WALLET_DOWNLOAD_URL, casperWalletPairingDeepLink } from "@/lib/wallet-connector";
 import { localWalletAvailable, shortKey, useWallet } from "@/components/wallet-context";
@@ -19,18 +19,30 @@ import { localWalletAvailable, shortKey, useWallet } from "@/components/wallet-c
  */
 export function WalletPairing() {
   const { connectState, cancelConnect } = useWallet();
+  const open = connectState.phase !== "idle";
+  const panelRef = useRef<HTMLDivElement>(null);
 
   // Escape closes whatever this is showing — it is the only way out of a QR nobody can scan.
   useEffect(() => {
-    if (connectState.phase === "idle") return;
+    if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") cancelConnect();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [connectState.phase, cancelConnect]);
+  }, [open, cancelConnect]);
 
-  if (connectState.phase === "idle") return null;
+  // Minimal focus management: move focus into the dialog on open — a keyboard or screen-reader
+  // user was otherwise left focused on the Connect button UNDER the overlay — and hand it back to
+  // that button on close. Keyed on `open`, not the phase, so connecting→pairing does not re-steal.
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    panelRef.current?.focus();
+    return () => previous?.focus();
+  }, [open]);
+
+  if (!open) return null;
 
   return (
     <div
@@ -42,7 +54,11 @@ export function WalletPairing() {
         if (event.target === event.currentTarget) cancelConnect();
       }}
     >
-      <div className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-2xl">
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-2xl outline-none"
+      >
         {connectState.phase === "connecting" && (
           <Waiting onCancel={cancelConnect} />
         )}
