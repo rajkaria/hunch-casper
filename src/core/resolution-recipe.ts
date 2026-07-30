@@ -67,6 +67,44 @@ const SOURCES: ResolverSource[] = ["cspr_cloud", "coingecko", "macro_feed", "dra
 const COMPARATORS: ResolverComparator[] = ["gte", "lte"];
 
 /**
+ * The metrics each source can actually serve — the pairs the catalogue ships, Genesis emits
+ * (`chain-signals` adds `active_validators` / `latest_block_height`), and the Arbiter can therefore
+ * read at resolution time. A recipe outside this map composes fine as *data* but can never be
+ * resolved: `source: "coingecko", metric: "banana"` opens a market whose deciding datum does not
+ * exist, and the money in it has nowhere honest to go. Human creations are checked against this map
+ * BEFORE the bond is quoted; the catalogue itself is pinned to these pairs by its own tests.
+ */
+export const SOURCE_METRICS: Readonly<Record<ResolverSource, readonly string[]>> = {
+  coingecko: ["cspr_usd", "cspr_eur", "cspr_mcap_usd", "btc_usd", "eth_usd"],
+  cspr_cloud: [
+    "daily_deploys",
+    "active_validators",
+    "staking_apy_pct",
+    "total_staked_cspr",
+    "condor_activation_height",
+    "validator_uptime_pct",
+    "grant_milestones_completed",
+    "latest_block_height",
+  ],
+  macro_feed: ["tbill_3m_yield_pct", "gold_usd_oz", "stablecoin_supply_usd"],
+  drand: ["drand_parity", "beacon"],
+  internal: ["prophet_pnl", "arbiter_accuracy_pct"],
+};
+
+/**
+ * Source/metric coherence: `null` when the pair is resolvable, else a message naming what the
+ * source actually serves. Kept OUT of `validateRecipe` deliberately — that function checks a
+ * recipe's *internal* consistency wherever a recipe appears (including historic catalogue bindings
+ * and hash round-trips), while this check is the creation-time gate for NEW markets.
+ */
+export function sourceMetricError(source: ResolverSource, metric: string): string | null {
+  const allowed = SOURCE_METRICS[source];
+  if (!allowed) return `unknown source '${source}'`;
+  if (allowed.includes(metric.trim())) return null;
+  return `source '${source}' cannot resolve metric '${metric.trim()}' — it serves: ${allowed.join(", ")}`;
+}
+
+/**
  * Validate a recipe's internal consistency (not whether the datum is fetchable — that is the
  * Arbiter's job at resolution time). A threshold needs a target + comparator; a coin flip must read
  * drand; every method needs at least two outcomes; the resolve time must parse.

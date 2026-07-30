@@ -28,6 +28,7 @@ import {
   validateRecipe,
   recipeHash,
   recipeFromBinding,
+  sourceMetricError,
 } from "@/core/resolution-recipe";
 import { assessMarket } from "@/core/category-policy";
 import { categoryForResolver } from "@/core/market-category";
@@ -66,6 +67,16 @@ const YES_NO: MarketOutcome[] = [
 
 const DEFAULT_FEE_BPS = 200;
 const MAX_CLAIM_CHARS = 200;
+/**
+ * The vault's caps, mirrored (contracts/src/hunch_vault.rs: `MAX_QUESTION_LEN`,
+ * `MAX_PUBLIC_FEE_BPS`, `MAX_OUTCOMES`). They MUST be enforced here: on-chain `create_market` is
+ * submitted by the operator key, which is the vault ADMIN, so the contract's own public-creation
+ * guardrails never run for app creations — and `MAX_QUESTION_LEN` is BYTES (Rust `str::len`),
+ * where `MAX_CLAIM_CHARS` above counts UTF-16 chars. A 150-char emoji claim is ~600 bytes.
+ */
+const MAX_TITLE_BYTES = 200;
+const MAX_FEE_BPS = 500;
+const MAX_OUTCOMES = 8;
 
 function slugify(text: string): string {
   return text
@@ -116,6 +127,18 @@ export async function composeMarket(
   if (claim.length > MAX_CLAIM_CHARS) {
     return { ok: false, reason: "invalid-input", message: `claim must be ${MAX_CLAIM_CHARS} characters or fewer` };
   }
+  // The vault checks the on-chain question in BYTES, and the question is the claim plus the "?"
+  // this module appends. Reject over-byte claims before anyone pays a bond for a market the vault
+  // would refuse (or, worse, that the admin key would open past the vault's own cap).
+  const title = claim.endsWith("?") ? claim : `${claim}?`;
+  const titleBytes = new TextEncoder().encode(title).length;
+  if (titleBytes > MAX_TITLE_BYTES) {
+    return {
+      ok: false,
+      reason: "invalid-input",
+      message: `claim must fit in ${MAX_TITLE_BYTES} bytes on chain — this one is ${titleBytes} bytes once encoded (the trailing '?' counts)`,
+    };
+  }
 
   // Moderation FIRST — a prohibited claim never reaches the recipe or the LLM.
   const verdict = assessMarket(claim);
@@ -123,7 +146,59 @@ export async function composeMarket(
     return { ok: false, reason: "category", message: verdict.message ?? "market not allowed" };
   }
 
-  const outcomes = input.outcomes && input.outcomes.length >= 2 ? input.outcomes : YES_NO;
+  // The `internal` source is the meta shelf — markets that score the platform's own agent boards,
+  // resolved from state this server controls. The vault reserves the matching `meta` category to
+  // the admin for exactly that reason; the human create path must refuse it too, because the
+  // operator key IS the admin and would sail past the contract's check.
+  if (input.source === "internal") {
+    return {
+      ok: false,
+      reason: "invalid-input",
+      message: "the 'internal' source is reserved for the platform's own meta-markets",
+    };
+  }
+
+  // Vault cap on the fee, mirrored (the admin key skips `MAX_PUBLIC_FEE_BPS` on chain).
+  if (input.feeBps !== undefined) {
+    if (!Number.isInteger(input.feeBps) || input.feeBps < 0 || input.feeBps > MAX_FEE_BPS) {
+      return {
+        ok: false,
+        reason: "invalid-input",
+        message: `feeBps must be an integer between 0 and ${MAX_FEE_BPS}`,
+      };
+    }
+  }
+
+  // Outcomes, when the creator supplies them, must be the shape the vault (and the recipe) can
+  // hold: 2–8 entries, each a non-empty key + label. A 1-entry array used to silently become
+  // YES/NO — a market the creator did not ask for; now it is a plain rejection.
+  if (input.outcomes !== undefined) {
+    if (!Array.isArray(input.outcomes) || input.outcomes.length < 2 || input.outcomes.length > MAX_OUTCOMES) {
+      return {
+        ok: false,
+        reason: "invalid-input",
+        message: `outcomes must be a list of 2 to ${MAX_OUTCOMES} entries`,
+      };
+    }
+    for (const outcome of input.outcomes) {
+      if (
+        typeof outcome !== "object" ||
+        outcome === null ||
+        typeof outcome.key !== "string" ||
+        outcome.key.trim().length === 0 ||
+        typeof outcome.label !== "string" ||
+        outcome.label.trim().length === 0
+      ) {
+        return {
+          ok: false,
+          reason: "invalid-input",
+          message: "every outcome needs a non-empty key and label",
+        };
+      }
+    }
+  }
+
+  const outcomes = input.outcomes ?? YES_NO;
   const outcomeKeys = outcomes.map((o) => o.key);
 
   const recipe: ResolutionRecipe = recipeFromBinding(
@@ -135,9 +210,14 @@ export async function composeMarket(
   if (!validation.ok) {
     return { ok: false, reason: "invalid-recipe", message: validation.errors.join("; ") };
   }
+  // Coherence beyond internal validity: the source must actually SERVE the metric, or the market
+  // composes cleanly and then sits unresolvable forever with real money in its pools.
+  const incoherence = sourceMetricError(recipe.source, recipe.metric);
+  if (incoherence) {
+    return { ok: false, reason: "invalid-recipe", message: incoherence };
+  }
 
   const hash = recipeHash(recipe);
-  const title = claim.endsWith("?") ? claim : `${claim}?`;
 
   const duplicate = findDuplicate({ recipeHash: hash, title }, deps.existing);
   if (duplicate) {

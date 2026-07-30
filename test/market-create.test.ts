@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createContainer } from "@/lib/container";
 import {
   createMarket,
   creationBondMotes,
   creationBondPaymentBlocker,
+  exportConsumedBondPayments,
+  importConsumedBondPayments,
   __resetConsumedBonds,
 } from "@/lib/market-create";
 import { NATIVE_TRANSFER_MINIMUM_MOTES } from "@/config/network";
@@ -124,6 +126,134 @@ describe("human market creation — x402 bond handshake", () => {
     const container = createContainer("testnet");
     const res = await createMarket(container, req());
     expect(res.status === "error" && res.code).toBe(503);
+  });
+
+  it("a bond quoted before the created-count moved still verifies on the paid retry", async () => {
+    const container = createContainer("testnet");
+    const challenge = await createMarket(container, req({ seq: 0 }));
+    if (challenge.status !== "payment_required") throw new Error("expected challenge");
+    const proof = await container.payment.settle(challenge.requirement, "creator-1");
+    // Round rollovers move the created-count (and therefore the slug seq) while the visitor is
+    // signing the transfer. The requirement is quoted on the RECIPE hash, not the slug, so the
+    // retry re-derives the same nonce and the already-paid bond still verifies.
+    const res = await createMarket(container, { ...req({ seq: 7 }), paymentProof: proof });
+    expect(res.status).toBe("created");
+    if (res.status === "created") expect(res.slug.endsWith("-7")).toBe(true);
+  });
+});
+
+/**
+ * The bond's spent-set discipline under a REAL chain call: `create_market` takes 20–120s, and the
+ * old code only recorded the settlement AFTER it returned — so two concurrent requests carrying
+ * the same deployHash both passed the has-check and one bond opened two markets. The chain stub
+ * here is a hand-controlled gate so the in-flight window is exact, not timing-dependent.
+ */
+describe("bond replay under a slow real chain", () => {
+  const ORACLE = `account-hash-${"cc".repeat(32)}`;
+
+  function realEnvWithMockRail(): void {
+    process.env.CASPER_CHAIN_MODE = "real";
+    process.env.CASPER_REAL_AGENT_X402 = "true"; // keep the deterministic mock x402 rail
+    delete process.env.CASPER_X402_PAYTO;
+    process.env.CASPER_ORACLE_ACCOUNT = ORACLE;
+  }
+
+  /** Real-mode-valid request: the approved oracle, and a deadline inside the vault horizon. */
+  function realReq() {
+    return req({
+      oracle: ORACLE,
+      deadlineIso: new Date(Date.now() + 60 * 24 * 60 * 60 * 1_000).toISOString(),
+    });
+  }
+
+  function containerWithChain(createMarketImpl: () => Promise<{ deployHash: string; explorerUrl: string }>) {
+    const base = createContainer("testnet");
+    return { ...base, chain: { ...base.chain, createMarket: createMarketImpl } };
+  }
+
+  it("claims the bond BEFORE the chain call, so a concurrent replay cannot open a second market", async () => {
+    realEnvWithMockRail();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chainCreate = vi.fn(async () => {
+      await gate;
+      return { deployHash: "aa".repeat(32), explorerUrl: "https://explorer/aa" };
+    });
+    const container = containerWithChain(chainCreate);
+
+    const request = realReq();
+    const challenge = await createMarket(container, request);
+    if (challenge.status !== "payment_required") throw new Error("expected challenge");
+    const proof = await container.payment.settle(challenge.requirement, request.creator);
+
+    const first = createMarket(container, { ...request, paymentProof: proof });
+    await new Promise((resolve) => setTimeout(resolve, 0)); // let it claim + enter the chain call
+    expect(chainCreate).toHaveBeenCalledTimes(1); // in flight, not finished
+
+    const second = await createMarket(container, { ...request, paymentProof: proof });
+    expect(second.status).toBe("error");
+    if (second.status === "error") {
+      expect(second.code).toBe(402);
+      expect(second.error).toMatch(/already spent/);
+    }
+    expect(chainCreate).toHaveBeenCalledTimes(1); // the replay never reached the chain
+
+    release();
+    expect((await first).status).toBe("created");
+  });
+
+  it("releases the claim when the chain create fails, so the same paid bond can retry", async () => {
+    realEnvWithMockRail();
+    const chainCreate = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("node timeout"))
+      .mockResolvedValue({ deployHash: "bb".repeat(32), explorerUrl: "https://explorer/bb" });
+    const container = containerWithChain(chainCreate);
+
+    const request = realReq();
+    const challenge = await createMarket(container, request);
+    if (challenge.status !== "payment_required") throw new Error("expected challenge");
+    const proof = await container.payment.settle(challenge.requirement, request.creator);
+
+    const failed = await createMarket(container, { ...request, paymentProof: proof });
+    expect(failed.status === "error" && failed.code).toBe(502);
+    // Nothing was opened for that bond — the retry with the SAME settlement must succeed.
+    const retried = await createMarket(container, { ...request, paymentProof: proof });
+    expect(retried.status).toBe("created");
+  });
+});
+
+describe("consumed-bond snapshot (KV envelope seam)", () => {
+  it("exports what was consumed and imports as a union, dropping junk", async () => {
+    importConsumedBondPayments(["hash-a", "hash-b"]);
+    importConsumedBondPayments(["hash-b", "hash-c", "", 7 as unknown as string]);
+    expect(new Set(exportConsumedBondPayments())).toEqual(new Set(["hash-a", "hash-b", "hash-c"]));
+  });
+
+  it("a consumed bond appears in the export, and an imported hash is spent here too", async () => {
+    const container = createContainer("testnet");
+    const first = await createMarket(container, req());
+    if (first.status !== "payment_required") throw new Error("expected challenge");
+    const proof = await container.payment.settle(first.requirement, "creator-1");
+    const created = await createMarket(container, { ...req(), paymentProof: proof });
+    expect(created.status).toBe("created");
+    expect(exportConsumedBondPayments()).toContain(proof.deployHash);
+
+    // A different instance's envelope names a hash this instance never saw — after import, a
+    // creation presenting it is refused exactly as if it had been spent locally.
+    __resetConsumedBonds();
+    const challenge = await createMarket(container, req({ claim: "Will CSPR cross $0.15 by year end", target: "0.15" }));
+    if (challenge.status !== "payment_required") throw new Error("expected challenge");
+    const proof2 = await container.payment.settle(challenge.requirement, "creator-1");
+    importConsumedBondPayments([proof2.deployHash]);
+    const replay = await createMarket(container, {
+      ...req({ claim: "Will CSPR cross $0.15 by year end", target: "0.15" }),
+      paymentProof: proof2,
+    });
+    expect(replay.status).toBe("error");
+    if (replay.status === "error") expect(replay.code).toBe(402);
   });
 });
 

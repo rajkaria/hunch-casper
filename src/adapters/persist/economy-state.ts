@@ -75,6 +75,10 @@ import {
   exportEvidenceBundles,
   importEvidenceBundles,
 } from "@/adapters/mock/mock-evidence-store";
+import {
+  exportConsumedBondPayments,
+  importConsumedBondPayments,
+} from "@/lib/market-create";
 import type { EvidenceBundle } from "@/core/evidence-bundle";
 import {
   exportQuarantine,
@@ -113,6 +117,9 @@ interface EconomyEnvelope {
    * Arbiter's evidence lived only in the resolving instance's memory and every audit read 404'd. */
   evidenceLinks?: ResolutionEvidenceLink[];
   evidenceBundles?: [string, EvidenceBundle][];
+  /** Creation-bond payments already spent on a market. Optional: absent before bond replay
+   * protection persisted — without it, one paid bond re-verified on every cold instance. */
+  consumedBonds?: string[];
   /** Release tombstones (`[slug, releasedAt]`) so a merge can tell "released" from "never
    * quarantined". Optional: absent in envelopes written before merge-on-persist. */
   quarantineReleased?: [string, number][];
@@ -155,6 +162,7 @@ function currentEnvelope(): EconomyEnvelope {
     quarantineReleased: exportReleasedMarkets(),
     evidenceLinks: exportResolutionEvidence(),
     evidenceBundles: exportEvidenceBundles(),
+    consumedBonds: exportConsumedBondPayments(),
   };
 }
 
@@ -236,6 +244,7 @@ export function applyEconomyState(json: string): boolean {
     // Optional: envelopes written before evidence rode the envelope simply have none to restore.
     if (Array.isArray(parsed.evidenceLinks)) importResolutionEvidence(parsed.evidenceLinks);
     if (Array.isArray(parsed.evidenceBundles)) importEvidenceBundles(parsed.evidenceBundles);
+    if (Array.isArray(parsed.consumedBonds)) importConsumedBondPayments(parsed.consumedBonds);
   } catch {
     return false;
   }
@@ -403,6 +412,8 @@ export function mergeEconomyEnvelopes(local: EconomyEnvelope, remote: EconomyEnv
     evidenceBundles: [
       ...new Map([...(remote.evidenceBundles ?? []), ...(local.evidenceBundles ?? [])]).entries(),
     ],
+    // A spent bond is spent forever on every instance — union.
+    consumedBonds: [...new Set([...(local.consumedBonds ?? []), ...(remote.consumedBonds ?? [])])],
   };
 }
 

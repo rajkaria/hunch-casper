@@ -22,6 +22,7 @@ import { GET as termsGET } from "@/app/api/markets/create/route";
 import { createMarket, creationBondMotes, __resetConsumedBonds } from "@/lib/market-create";
 import { createContainer } from "@/lib/container";
 import { createRealPayment, verifyTransferResult } from "@/adapters/casper/real-payment";
+import { toOracleAddress } from "@/adapters/casper/real-chain";
 import { NATIVE_TRANSFER_MINIMUM_MOTES } from "@/config/network";
 import type { CreateMarketRequest } from "@/lib/market-create";
 import type { X402PaymentProof, X402PaymentRequirement } from "@/ports/payment";
@@ -29,6 +30,8 @@ import type { X402PaymentProof, X402PaymentRequirement } from "@/ports/payment";
 const CREATOR = `01${"aa".repeat(32)}`; // a real, signable public key
 const TREASURY = `01${"bb".repeat(32)}`; // CASPER_X402_PAYTO
 const ORACLE = `account-hash-${"cc".repeat(32)}`;
+/** A second real key, so the approved oracle can be named in either of its two spellings. */
+const ORACLE_PUBKEY = `01${"cd".repeat(32)}`;
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -42,7 +45,9 @@ function req(over: Partial<CreateMarketRequest> = {}): CreateMarketRequest {
     oracle: ORACLE,
     network: "testnet",
     seq: 0,
-    deadlineIso: "2026-12-31T00:00:00.000Z",
+    // Relative, not a fixed date: real mode now enforces the vault's future-and-within-180-days
+    // horizon before the bond, so a hardcoded deadline would rot as the calendar passes it.
+    deadlineIso: new Date(Date.now() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
     source: "coingecko",
     metric: "cspr_usd",
     method: "threshold",
@@ -63,10 +68,12 @@ function post(url: string, body: unknown) {
   );
 }
 
-/** Real mode with the transfer-verifying rail wired — production's configuration. */
+/** Real mode with the transfer-verifying rail wired — production's configuration. The approved
+ * oracle is part of that configuration now: real-mode creation refuses to bind any other. */
 function realModeWithTreasury(): void {
   vi.stubEnv("CASPER_CHAIN_MODE", "real");
   vi.stubEnv("CASPER_X402_PAYTO", TREASURY);
+  vi.stubEnv("CASPER_ORACLE_ACCOUNT", ORACLE);
 }
 
 describe("the bug: a fabricated bond proof can never settle the real rail", () => {
@@ -196,6 +203,129 @@ describe("the two identities that must be real before the bond is quoted", () =>
     const container = createContainer("testnet");
     const res = await createMarket(container, req({ creator: "demo-creator", oracle: "account-hash-arbiter" }));
     expect(res.status).toBe("payment_required");
+  });
+});
+
+/**
+ * The oracle is the account that decides who gets paid — and on this deployment `create_market`
+ * is submitted by the operator key, which is the vault ADMIN, so every one of the contract's
+ * public-creation guardrails (SelfOracle, OracleNotApproved) is skipped. These tests pin the
+ * app-side enforcement that replaces them: the submitted oracle must RESOLVE to the deployment's
+ * approved oracle, compared as accounts (public key ⇄ account-hash, case-insensitive), never as
+ * raw strings.
+ */
+describe("real mode binds only the deployment's approved oracle", () => {
+  it("rejects a creator smuggling their OWN account-hash as the oracle", async () => {
+    // The creator field is a public key; its account-hash is a different byte string, so the old
+    // raw comparison passed — and the creator became the oracle of a market they can bet in.
+    realModeWithTreasury();
+    const container = createContainer("testnet");
+    const res = await createMarket(container, req({ oracle: toOracleAddress(CREATOR) }));
+    expect(res.status).toBe("error");
+    if (res.status === "error") {
+      expect(res.code).toBe(400);
+      expect(res.error).toMatch(/own oracle/);
+    }
+  });
+
+  it("rejects a case-flipped spelling of the creator's account-hash", async () => {
+    realModeWithTreasury();
+    const container = createContainer("testnet");
+    const selfHash = toOracleAddress(CREATOR);
+    const flipped = `account-hash-${selfHash.replace(/^account-hash-/, "").toUpperCase()}`;
+    const res = await createMarket(container, req({ oracle: flipped }));
+    expect(res.status).toBe("error");
+    if (res.status === "error") {
+      expect(res.code).toBe(400);
+      expect(res.error).toMatch(/own oracle/);
+    }
+  });
+
+  it("rejects any well-formed oracle that is not the approved one", async () => {
+    realModeWithTreasury();
+    const container = createContainer("testnet");
+    const res = await createMarket(container, req({ oracle: `account-hash-${"dd".repeat(32)}` }));
+    expect(res.status).toBe("error");
+    if (res.status === "error") {
+      expect(res.code).toBe(400);
+      expect(res.error).toMatch(/approved oracle/);
+    }
+  });
+
+  it("accepts the approved oracle in its account-hash form (case-insensitively)", async () => {
+    realModeWithTreasury();
+    const container = createContainer("testnet");
+    expect((await createMarket(container, req())).status).toBe("payment_required");
+    const flipped = `account-hash-${"CC".repeat(32)}`;
+    expect((await createMarket(container, req({ oracle: flipped }))).status).toBe("payment_required");
+  });
+
+  it("accepts the approved oracle as a public key when the config holds its account-hash", async () => {
+    realModeWithTreasury();
+    vi.stubEnv("CASPER_ORACLE_ACCOUNT", toOracleAddress(ORACLE_PUBKEY));
+    const container = createContainer("testnet");
+    const res = await createMarket(container, req({ oracle: ORACLE_PUBKEY }));
+    expect(res.status).toBe("payment_required");
+  });
+
+  it("accepts the approved oracle as an account-hash when the config holds the public key", async () => {
+    realModeWithTreasury();
+    vi.stubEnv("CASPER_ORACLE_ACCOUNT", ORACLE_PUBKEY);
+    const container = createContainer("testnet");
+    const res = await createMarket(container, req({ oracle: toOracleAddress(ORACLE_PUBKEY) }));
+    expect(res.status).toBe("payment_required");
+  });
+
+  it("503s when no approved oracle is configured, instead of binding whatever was typed", async () => {
+    realModeWithTreasury();
+    vi.stubEnv("CASPER_ORACLE_ACCOUNT", "");
+    const container = createContainer("testnet");
+    const res = await createMarket(container, req());
+    expect(res.status).toBe("error");
+    if (res.status === "error") {
+      expect(res.code).toBe(503);
+      expect(res.error).toMatch(/CASPER_ORACLE_ACCOUNT/);
+    }
+  });
+});
+
+/**
+ * The vault's deadline rules never run for the admin key either, so the app enforces them before
+ * anyone pays: a past (or unparseable) deadline opens a market that can never be bet, and a
+ * years-out one escrows bettor funds far beyond the contract's own public horizon.
+ */
+describe("the deadline is validated before the bond challenge", () => {
+  it("rejects a deadline in the past", async () => {
+    realModeWithTreasury();
+    const container = createContainer("testnet");
+    const res = await createMarket(container, req({ deadlineIso: new Date(Date.now() - 3_600_000).toISOString() }));
+    expect(res.status).toBe("error");
+    if (res.status === "error") {
+      expect(res.code).toBe(400);
+      expect(res.error).toMatch(/future/);
+    }
+  });
+
+  it("rejects an unparseable deadline with the same clean 400", async () => {
+    realModeWithTreasury();
+    const container = createContainer("testnet");
+    const res = await createMarket(container, req({ deadlineIso: "not-a-date" }));
+    expect(res.status).toBe("error");
+    if (res.status === "error") expect(res.code).toBe(400);
+  });
+
+  it("rejects a deadline beyond the vault's 180-day public horizon", async () => {
+    realModeWithTreasury();
+    const container = createContainer("testnet");
+    const res = await createMarket(
+      container,
+      req({ deadlineIso: new Date(Date.now() + 200 * 24 * 60 * 60 * 1_000).toISOString() }),
+    );
+    expect(res.status).toBe("error");
+    if (res.status === "error") {
+      expect(res.code).toBe(400);
+      expect(res.error).toMatch(/180 days/);
+    }
   });
 });
 

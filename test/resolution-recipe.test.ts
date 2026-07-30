@@ -6,7 +6,10 @@ import {
   canonicalizeRecipe,
   recipeHash,
   recipeFromBinding,
+  sourceMetricError,
+  SOURCE_METRICS,
 } from "@/core/resolution-recipe";
+import { MARKET_DEFINITIONS } from "@/core/catalogue";
 import type { ResolverBinding } from "@/core/types";
 
 function recipe(over: Partial<ResolutionRecipe> = {}): ResolutionRecipe {
@@ -114,6 +117,29 @@ describe("canonical hash — any material change changes the hash", () => {
 
   it("changing ONLY the advisory description does NOT change the hash", () => {
     expect(recipeHash(recipe({ description: "totally different wording, same rule" }))).toBe(baseHash);
+  });
+});
+
+describe("source→metric coherence map", () => {
+  it("accepts every pair the shipped catalogue actually uses (the map cannot drift)", () => {
+    for (const def of MARKET_DEFINITIONS) {
+      expect(
+        sourceMetricError(def.resolver.source, def.resolver.metric),
+        `${def.slug}: ${def.resolver.source}/${def.resolver.metric}`,
+      ).toBeNull();
+    }
+  });
+
+  it("names what a source serves when the metric is foreign to it", () => {
+    expect(sourceMetricError("coingecko", "banana")).toMatch(/coingecko.*serves/);
+    expect(sourceMetricError("drand", "cspr_usd")).not.toBeNull();
+    expect(sourceMetricError("cspr_cloud", "gold_usd_oz")).not.toBeNull();
+  });
+
+  it("every declared source has at least one servable metric", () => {
+    for (const metrics of Object.values(SOURCE_METRICS)) {
+      expect(metrics.length).toBeGreaterThan(0);
+    }
   });
 });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useNetwork } from "@/components/network-context";
 import { isDemoAccount, useWallet } from "@/components/wallet-context";
@@ -70,6 +70,17 @@ function motesToCspr(motes: string): string {
 const POLL_INTERVAL_MS = 2_500;
 const POLL_TIMEOUT_MS = 180_000;
 
+/** The vault caps the on-chain question at 200 BYTES (not chars) — mirrored server-side too. */
+const MAX_TITLE_BYTES = 200;
+/** The vault's public-creation deadline horizon: 180 days out, max. */
+const DEADLINE_HORIZON_MS = 180 * 24 * 60 * 60 * 1_000;
+
+/** A UTC instant → the local `YYYY-MM-DDTHH:mm` string a datetime-local input's min/max wants. */
+function toLocalInputValue(ms: number): string {
+  const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000);
+  return d.toISOString().slice(0, 16);
+}
+
 function explorerHost(url: string): string {
   try {
     return new URL(url).host;
@@ -91,6 +102,11 @@ export default function CreateMarketPage() {
   const [oracle, setOracle] = useState("");
 
   const [terms, setTerms] = useState<CreationTerms | null>(null);
+  /** The terms fetch failed — named, not silently swallowed: without the terms the form doesn't
+   * know the bond, the approved oracle, or whether a wallet is required. */
+  const [termsError, setTermsError] = useState<string | null>(null);
+  /** The deadline picker — its min/max are stamped onto the DOM node after mount. */
+  const deadlineRef = useRef<HTMLInputElement | null>(null);
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [bond, setBond] = useState<BondPayment | null>(null);
   const [created, setCreated] = useState<Created | null>(null);
@@ -107,19 +123,35 @@ export default function CreateMarketPage() {
     void (async () => {
       try {
         const res = await fetch(`/api/markets/create?network=${network}`, { cache: "no-store" });
-        if (!res.ok) return;
+        if (!res.ok) throw new Error(`terms answered ${res.status}`);
         const json = (await res.json()) as CreationTerms;
         if (cancelled) return;
         setTerms(json);
+        setTermsError(null);
         setOracle((current) => (current.trim().length > 0 ? current : (json.oracle ?? "")));
       } catch {
-        /* the form still composes; the create call reports anything it cannot do */
+        // Say so instead of silently composing blind: without the terms the form has no bond
+        // amount, no approved oracle to prefill, and no idea whether a wallet is required.
+        if (!cancelled) {
+          setTermsError("Couldn't load this deployment's creation terms — refresh to retry.");
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
   }, [network]);
+
+  // Bound the deadline picker to (now, now + the vault's 180-day horizon]. Stamped onto the DOM
+  // node after mount rather than rendered as props: `Date.now()` in render would make the server-
+  // and client-rendered attributes disagree, and this is exactly the "update an external system"
+  // an effect is for. The server re-validates regardless.
+  useEffect(() => {
+    const el = deadlineRef.current;
+    if (!el) return;
+    el.min = toLocalInputValue(Date.now());
+    el.max = toLocalInputValue(Date.now() + DEADLINE_HORIZON_MS);
+  }, []);
 
   /** The identity the bond is paid from and the market is credited to. */
   const creator = account?.publicKey ?? "";
@@ -128,7 +160,21 @@ export default function CreateMarketPage() {
   /** Real bond, no signable wallet → nothing on this page can succeed, and it says so up front. */
   const needsWallet = walletRequired && !canSign;
 
+  /** The question as the vault will store it — the claim plus the appended "?" — in BYTES. */
+  const titleBytes = new TextEncoder().encode(
+    claim.trim().endsWith("?") ? claim.trim() : `${claim.trim()}?`,
+  ).length;
+  const claimTooLong = titleBytes > MAX_TITLE_BYTES;
+
+  /**
+   * The request body, or `null` when the deadline cannot be parsed. An empty/garbled
+   * datetime-local made `new Date(deadline).toISOString()` throw a RangeError, which the catch
+   * blocks then misreported as a network/creation failure — so the date is validated before any
+   * payload (and long before any payment) is built.
+   */
   function bodyBase() {
+    const parsed = Date.parse(deadline);
+    if (Number.isNaN(parsed)) return null;
     return {
       network,
       claim,
@@ -139,11 +185,16 @@ export default function CreateMarketPage() {
       method,
       target: method === "threshold" ? target : undefined,
       comparator: method === "threshold" ? comparator : undefined,
-      deadlineIso: new Date(deadline).toISOString(),
+      deadlineIso: new Date(parsed).toISOString(),
     };
   }
 
   async function requestChallenge() {
+    const body = bodyBase();
+    if (!body) {
+      setError("Pick a valid 'Resolves at' date before composing.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setCreated(null);
@@ -153,7 +204,7 @@ export default function CreateMarketPage() {
       const res = await fetch("/api/markets/create", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(bodyBase()),
+        body: JSON.stringify(body),
       });
       const json = await res.json();
       if (res.status === 402) {
@@ -234,13 +285,27 @@ export default function CreateMarketPage() {
 
   async function payAndCreate() {
     if (!challenge) return;
+    // Validate the payload BEFORE any money moves — a RangeError after the wallet signed would
+    // strand a paid bond behind a message that blames the network.
+    const body = bodyBase();
+    if (!body) {
+      setError("Pick a valid 'Resolves at' date before paying the bond.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       let paymentHeader: string;
-      const paid = await payBondWithWallet();
+      // A bond already paid for THIS challenge is reused, never re-signed: any failure AFTER the
+      // transfer (a slow block, a 502 from the create, a dropped connection) invites a retry, and
+      // the retry must present the existing transfer as proof rather than charge a second one.
+      // `requestChallenge` clears the bond, so a new challenge always quotes a fresh payment.
+      let paid = bond;
+      if (!paid) {
+        paid = await payBondWithWallet();
+        if (paid) setBond(paid);
+      }
       if (paid) {
-        setBond(paid);
         setStage("Waiting for the bond to land on chain…");
         await awaitBond(paid.transactionHash);
         paymentHeader = transferProof(challenge.nonce, paid.transactionHash);
@@ -259,7 +324,7 @@ export default function CreateMarketPage() {
       const res = await fetch("/api/markets/create", {
         method: "POST",
         headers: { "content-type": "application/json", "x-payment": paymentHeader },
-        body: JSON.stringify(bodyBase()),
+        body: JSON.stringify(body),
       });
       const json = await res.json();
       if (res.status === 201) {
@@ -323,8 +388,17 @@ export default function CreateMarketPage() {
             className="input"
             placeholder="Will CSPR cross $0.10 by year end?"
             value={claim}
+            maxLength={MAX_TITLE_BYTES}
             onChange={(e) => setClaim(e.target.value)}
           />
+          {/* maxLength counts UTF-16 chars; the vault counts BYTES — emoji and accents can blow
+              the cap while the input still accepts them, so the overflow is named in bytes. */}
+          {claimTooLong && (
+            <p className="text-xs text-down">
+              That question is {titleBytes} bytes once encoded — the vault caps it at {MAX_TITLE_BYTES}.
+              Shorten it.
+            </p>
+          )}
         </Field>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -357,7 +431,13 @@ export default function CreateMarketPage() {
             </Field>
           )}
           <Field label="Resolves at">
-            <input type="datetime-local" className="input" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+            <input
+              ref={deadlineRef}
+              type="datetime-local"
+              className="input"
+              value={deadline}
+              onChange={(e) => setDeadline(e.target.value)}
+            />
           </Field>
           <Field label="Oracle (approved, not you)">
             <input
@@ -377,11 +457,12 @@ export default function CreateMarketPage() {
           </p>
         )}
         {terms?.blocker && <p className="text-xs text-down">{terms.blocker}</p>}
+        {termsError && <p className="text-xs text-down">{termsError}</p>}
 
         {!challenge && !created && (
           <button
             className="btn btn-primary self-start disabled:opacity-50"
-            disabled={busy || claim.trim().length === 0 || oracleMissing || Boolean(terms?.blocker)}
+            disabled={busy || claim.trim().length === 0 || claimTooLong || oracleMissing || Boolean(terms?.blocker)}
             onClick={requestChallenge}
           >
             {busy ? "Composing…" : "Preview & get bond"}

@@ -62,6 +62,24 @@ describe("POST /api/markets/create", () => {
     expect(res.status).toBe(422);
   });
 
+  it("a paid bond still verifies after the created-count moves between challenge and retry", async () => {
+    // The route recomputes seq = created-count on every POST, and rollovers move that count
+    // constantly in prod. The x402 nonce is a function of the quote's marketId — which is the
+    // recipe hash now, not the seq-carrying slug — so a challenge answered later still verifies.
+    const challenge = await (await post(BODY)).json();
+    const nonce = challenge.accepts[0].nonce;
+
+    // Another creation lands first: the count (and therefore the slug seq) moves.
+    const OTHER = { ...BODY, claim: "Will ETH cross $5000 by year end", metric: "eth_usd", target: "5000" };
+    const otherChallenge = await (await post(OTHER)).json();
+    const otherProof = { scheme: "casper-x402", deployHash: "other-bond-tx", nonce: otherChallenge.accepts[0].nonce };
+    expect((await post(OTHER, otherProof)).status).toBe(201);
+
+    const res = await post(BODY, { scheme: "casper-x402", deployHash: "bond-settlement-tx-2", nonce });
+    expect(res.status).toBe(201);
+    expect((await res.json()).slug.endsWith("-1")).toBe(true); // the seq DID move — only the nonce held
+  });
+
   it("400s a bad network", async () => {
     const res = await post({ ...BODY, network: "devnet" });
     expect(res.status).toBe(400);
