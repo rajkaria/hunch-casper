@@ -72,6 +72,17 @@ export interface UnsignedTransaction {
 /** The original name, kept so the bet path's callers read unchanged. */
 export type UnsignedBetTransaction = UnsignedTransaction;
 
+/**
+ * A `create_market` call built for the CREATOR's own wallet to sign. The initiator is the visitor,
+ * so on chain `env().caller()` — and therefore `config.creator`, the account the vault refunds the
+ * bond to at clean settlement — is genuinely them. The bond rides as the call's attached value,
+ * from their account, in the same transaction.
+ */
+export interface PrepareCreateMarketInput extends CreateMarketInput {
+  /** The creator's Casper public key hex: the initiator, and the account the wallet signs as. */
+  creator: string;
+}
+
 /** A plain CSPR transfer for a visitor's wallet to sign — today, the x402 creation bond. */
 export interface TransferTransactionInput {
   /** The payer's Casper public key hex: the initiator, and the account the wallet signs as. */
@@ -136,6 +147,21 @@ export interface CasperChainPort {
    * inventing a transaction.
    */
   buildTransferTransaction?(input: TransferTransactionInput): Promise<UnsignedTransaction>;
+  /**
+   * Build a payable `create_market` with the CREATOR as initiator, unsigned, for their own wallet
+   * to sign — the self-custodial creation path.
+   *
+   * This is what makes the creation bond genuinely refundable: `HunchVault::refund_bond` pays
+   * `config.creator`, which is `env().caller()` at creation, so the signer of this transaction is
+   * who the vault returns the bond to at clean settlement. The operator-submitted `createMarket`
+   * above cannot deliver that — its caller is the operator. Same plan, same proxy envelope, same
+   * gas as the operator path, exactly as `buildBetTransaction` mirrors `placeBet`: the money
+   * path's ABI must not fork by who is paying.
+   *
+   * Optional for the same reason as the other builders: the mock adapter has no transaction to
+   * offer, and the route answers 501 so the page falls back to the demo handshake.
+   */
+  buildCreateMarketTransaction?(input: PrepareCreateMarketInput): Promise<UnsignedTransaction>;
   /**
    * Wait for a transaction submitted by SOMEONE ELSE (a visitor's wallet) to execute. Same
    * confirmation semantics as `placeBet`: a revert is a failure, not a bet.

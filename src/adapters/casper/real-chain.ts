@@ -54,6 +54,7 @@ import type {
   CreateMarketInput,
   DeployResult,
   PlaceBetInput,
+  PrepareCreateMarketInput,
   ResolveMarketInput,
   TransactionStatus,
   TransferTransactionInput,
@@ -498,6 +499,35 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
         { marketContract: opts.vaultV2PackageHash, vaultMarketId: input.marketId },
       );
       return submitPayable(plan, key);
+    },
+
+    /**
+     * The same `create_market`, built for the visitor's own key and left unsigned.
+     *
+     * Identical plan, identical proxy envelope, identical gas — the ONLY difference from
+     * `createMarket` above is the initiator and who signs, exactly as `buildBetTransaction`
+     * mirrors `placeBet`. The signer funds the gas AND the attached bond, and becomes
+     * `env().caller()` — the account the vault refunds the bond to at clean settlement, which is
+     * the whole point of this method existing.
+     */
+    async buildCreateMarketTransaction(input: PrepareCreateMarketInput): Promise<UnsignedTransaction> {
+      if (!opts.vaultV2PackageHash) {
+        throw new CasperConfigError(
+          "runtime market creation needs the singleton HunchVault v2 — set NEXT_PUBLIC_*_VAULT_V2 " +
+            "(a v1 per-market package has no create_market entry point)",
+        );
+      }
+      const plan = buildCreateMarketPlan(
+        { ...input, oracle: toOracleAddress(input.oracle) },
+        { marketContract: opts.vaultV2PackageHash, vaultMarketId: input.marketId },
+      );
+      const tx = buildPayable(plan, PublicKey.fromHex(input.creator.trim()));
+      return {
+        transactionJson: JSON.stringify(tx.toJSON()),
+        // Final before the signature — what the creation ticket binds and the receipt shows.
+        transactionHash: tx.hash.toHex(),
+        gasMotes: plan.gasMotes,
+      };
     },
 
     /** Non-payable `resolve` → a direct package-targeting transaction, signed by the oracle key. */

@@ -11,8 +11,15 @@ type Method = "threshold" | "direction" | "nway_winner" | "coin_flip" | "agent_m
 /** What creation costs and requires on THIS deployment — served by `GET /api/markets/create`. */
 interface CreationTerms {
   bondMotes: string;
-  /** True when the bond is a real CSPR transfer the visitor's own wallet has to sign. */
+  /** True when creating needs a signing wallet (real mode — either path). */
   walletRequired: boolean;
+  /**
+   * True when the visitor's own wallet signs `create_market` itself — the bond attaches from
+   * their account, and the vault refunds it to THEM at clean settlement.
+   */
+  selfCustodial: boolean;
+  /** Gas limit the prepared creation carries, in motes; the signer pays it. */
+  createGasMotes?: string;
   payTo: string;
   /** The approved, non-creator oracle the vault will bind; `null` when none is configured. */
   oracle: string | null;
@@ -25,6 +32,18 @@ interface Challenge {
   recipeHash: string;
   bondMotes: string;
   nonce: string;
+}
+
+/** A composed market + the unsigned `create_market` waiting for the visitor's wallet. */
+interface Prepared {
+  recipeHash: string;
+  bondMotes: string;
+  gasMotes: string;
+  transactionJson: string;
+  transactionHash: string;
+  explorerUrl: string;
+  ticket: string;
+  slug: string;
 }
 interface BondPayment {
   transactionHash: string;
@@ -108,6 +127,7 @@ export default function CreateMarketPage() {
   /** The deadline picker — its min/max are stamped onto the DOM node after mount. */
   const deadlineRef = useRef<HTMLInputElement | null>(null);
   const [challenge, setChallenge] = useState<Challenge | null>(null);
+  const [prepared, setPrepared] = useState<Prepared | null>(null);
   const [bond, setBond] = useState<BondPayment | null>(null);
   const [created, setCreated] = useState<Created | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -157,6 +177,8 @@ export default function CreateMarketPage() {
   const creator = account?.publicKey ?? "";
   const canSign = Boolean(signAndSend) && !isDemoAccount(account);
   const walletRequired = terms?.walletRequired ?? false;
+  /** The visitor signs `create_market` themselves — the bond is theirs, held and refunded. */
+  const selfCustodial = (terms?.selfCustodial ?? false) && canSign;
   /** Real bond, no signable wallet → nothing on this page can succeed, and it says so up front. */
   const needsWallet = walletRequired && !canSign;
 
@@ -199,8 +221,35 @@ export default function CreateMarketPage() {
     setError(null);
     setCreated(null);
     setChallenge(null);
+    setPrepared(null);
     setBond(null);
     try {
+      if (selfCustodial) {
+        // The server composes the market and builds the `create_market` transaction with THIS
+        // account as initiator. The preview card renders from what came back — recipe hash, bond,
+        // gas — before any wallet opens.
+        const res = await fetch("/api/markets/create/prepare", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(bodyBase()),
+        });
+        const json = await res.json();
+        if (res.ok) {
+          setPrepared({
+            recipeHash: json.recipeHash,
+            bondMotes: json.bondMotes,
+            gasMotes: json.gasMotes,
+            transactionJson: json.transactionJson,
+            transactionHash: json.transactionHash,
+            explorerUrl: json.explorerUrl,
+            ticket: json.ticket,
+            slug: json.slug,
+          });
+        } else {
+          setError(json.error ?? "could not compose the market");
+        }
+        return;
+      }
       const res = await fetch("/api/markets/create", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -283,6 +332,65 @@ export default function CreateMarketPage() {
     [network],
   );
 
+  /**
+   * The self-custodial creation: the visitor's wallet signs and submits the prepared
+   * `create_market` — their account attaches the bond and pays the gas, and the vault will refund
+   * the bond to THEM at clean settlement. Then poll `finalize` until the chain has executed it and
+   * the server has registered the market. A declined signature throws; nothing was submitted.
+   */
+  async function signAndCreate() {
+    if (!prepared || !signAndSend || !creator) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setStage("Approve the creation in your wallet…");
+      const sent = await signAndSend(prepared.transactionJson, creator);
+      if (!sent.ok) throw new Error(sent.message);
+
+      // The hash was final before the signature — the receipt goes up NOW, and stays up while the
+      // chain takes its 8-16s to execute.
+      setBond({ transactionHash: prepared.transactionHash, explorerUrl: prepared.explorerUrl });
+      setStage("Waiting for the chain to open the market…");
+
+      const deadlineMs = Date.now() + POLL_TIMEOUT_MS;
+      for (;;) {
+        const res = await fetch("/api/markets/create/finalize", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ticket: prepared.ticket }),
+          cache: "no-store",
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? "the creation could not be confirmed");
+        if (json.status === "reverted") throw new Error(json.error ?? "the vault refused this creation");
+        if (json.status === "created") {
+          setCreated({
+            slug: json.slug,
+            recipeHash: json.recipeHash,
+            seededBets: json.seededBets ?? 0,
+            simulated: false,
+            deployHash: json.deployHash,
+            explorerUrl: json.explorerUrl,
+          });
+          setPrepared(null);
+          return;
+        }
+        if (Date.now() >= deadlineMs) {
+          throw new Error(
+            "the creation has not executed yet — it is on the chain, so follow the link above to " +
+              "see where it got to before retrying",
+          );
+        }
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "creation failed");
+    } finally {
+      setBusy(false);
+      setStage(null);
+    }
+  }
+
   async function payAndCreate() {
     if (!challenge) return;
     // Validate the payload BEFORE any money moves — a RangeError after the wallet signed would
@@ -348,7 +456,7 @@ export default function CreateMarketPage() {
     }
   }
 
-  const bondMotes = challenge?.bondMotes ?? terms?.bondMotes ?? null;
+  const bondMotes = prepared?.bondMotes ?? challenge?.bondMotes ?? terms?.bondMotes ?? null;
   const oracleMissing = walletRequired && oracle.trim().length === 0;
 
   return (
@@ -363,14 +471,25 @@ export default function CreateMarketPage() {
       {bondMotes && (
         <p className="mt-2 text-sm text-muted">
           The bond is <span className="font-semibold text-foreground">{motesToCspr(bondMotes)} CSPR</span>
-          {walletRequired ? (
+          {terms?.selfCustodial ? (
+            // The honest version of "refundable", now that it is true: the visitor's own wallet
+            // signs `create_market`, so on chain THEY are the creator — and `refund_bond` pays
+            // the creator when the market settles cleanly.
+            <>
+              , attached from your own wallet when it signs the creation. The vault holds it
+              against this market and{" "}
+              <span className="text-foreground">
+                refunds it to your account when the market settles cleanly
+              </span>
+              {" — "}spamming the board costs; asking a real question doesn&apos;t.
+            </>
+          ) : walletRequired ? (
             <>
               , sent from your own wallet to the operator treasury and held against this market —
               which is what makes spamming the board cost something.{" "}
-              {/* Say who the chain thinks the creator is. `create_market` is submitted by the
-                  operator key, so the vault's matching on-chain bond is refunded to the OPERATOR
-                  at settlement, not to this account. Calling this "refundable" on screen would be
-                  a promise the contract does not make. */}
+              {/* On the x402 fallback the operator submits `create_market`, so the vault's
+                  on-chain refund goes to the operator, not this account. Only said when it is
+                  what would actually happen. */}
               <span className="text-foreground">
                 The market is opened on chain by the operator, so this bond is not refunded
                 automatically.
@@ -473,11 +592,13 @@ export default function CreateMarketPage() {
             below ends in a payment that cannot be made. */}
         {needsWallet && (
           <p className="text-sm text-muted">
-            The creation bond is a real transfer on {network}.{" "}
+            {terms?.selfCustodial
+              ? `Creating a market is a real transaction on ${network} — your wallet signs it and attaches the bond.`
+              : `The creation bond is a real transfer on ${network}.`}{" "}
             <button type="button" onClick={connect} className="text-accent underline underline-offset-2">
               Connect a Casper wallet
             </button>{" "}
-            to pay it from your own account.
+            to {terms?.selfCustodial ? "sign it from your own account" : "pay it from your own account"}.
           </p>
         )}
         {signingDisabledReason && <p className="text-[11px] text-muted">{signingDisabledReason}</p>}
@@ -496,28 +617,47 @@ export default function CreateMarketPage() {
         )}
         {connected && account && walletRequired && canSign && (
           <p className="text-[11px] text-muted">
-            Creating as <span className="font-mono text-foreground">{account.label}</span> · you sign and
-            fund the bond from your own account
+            Creating as <span className="font-mono text-foreground">{account.label}</span>
+            {selfCustodial ? (
+              <>
+                {" "}· your wallet signs <span className="font-mono">create_market</span> itself — on
+                chain you are the creator, and the bond refunds to you at clean settlement
+              </>
+            ) : (
+              <> · you sign and fund the bond from your own account</>
+            )}
           </p>
         )}
 
         {error && <p className="text-sm text-down">{error}</p>}
 
-        {challenge && (
+        {(challenge || prepared) && (
           <div className="card flex flex-col gap-3 p-4">
             <div className="text-sm">
               <div className="text-muted">Resolution recipe hash</div>
-              <div className="mt-1 break-all font-mono text-xs text-foreground">{challenge.recipeHash}</div>
+              <div className="mt-1 break-all font-mono text-xs text-foreground">
+                {(prepared ?? challenge)!.recipeHash}
+              </div>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted">Creation bond{walletRequired ? "" : " (refundable)"}</span>
-              <span className="font-semibold">{motesToCspr(challenge.bondMotes)} CSPR</span>
+              <span className="text-muted">
+                Creation bond{prepared || !walletRequired ? " (refundable)" : ""}
+              </span>
+              <span className="font-semibold">{motesToCspr((prepared ?? challenge)!.bondMotes)} CSPR</span>
             </div>
-            {/* The bond's own receipt: a real hash the moment the wallet submits it, live for the
-                whole time the chain takes to execute it and the market takes to open. */}
+            {prepared && (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted">Gas limit (unused is mostly refunded)</span>
+                <span className="font-semibold">{motesToCspr(prepared.gasMotes)} CSPR</span>
+              </div>
+            )}
+            {/* The receipt: a real hash the moment the wallet submits it, live for the whole time
+                the chain takes to execute it and the market takes to open. */}
             {bond && (
               <div className="rounded-lg border border-border bg-surface-2 p-3 text-xs">
-                <div className="mb-1 font-semibold text-gold">Bond transfer submitted</div>
+                <div className="mb-1 font-semibold text-gold">
+                  {prepared ? "Creation submitted — your wallet signed it" : "Bond transfer submitted"}
+                </div>
                 <div className="truncate font-mono text-muted">{bond.transactionHash}</div>
                 <a
                   href={bond.explorerUrl}
@@ -533,9 +673,15 @@ export default function CreateMarketPage() {
             <button
               className="btn btn-primary disabled:opacity-50"
               disabled={busy || needsWallet}
-              onClick={payAndCreate}
+              onClick={prepared ? signAndCreate : payAndCreate}
             >
-              {busy ? (stage ?? "Creating…") : needsWallet ? "Connect a wallet to pay the bond" : "Pay bond & create"}
+              {busy
+                ? (stage ?? "Creating…")
+                : needsWallet
+                  ? "Connect a wallet to pay the bond"
+                  : prepared
+                    ? "Sign & create — bond comes back at settlement"
+                    : "Pay bond & create"}
             </button>
           </div>
         )}

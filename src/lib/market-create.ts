@@ -6,10 +6,11 @@
  *
  * The creation bond is the moderation economics: opening a market costs something, so spamming the
  * board costs money. The vault holds a bond per market and returns it to whoever CALLED
- * `create_market` at clean settlement — which on this path is the operator, not the human whose
- * transfer paid for it. See the warning in `config/creation-bond.ts`: making the visitor's bond
- * genuinely refundable means letting them sign `create_market` themselves, the same self-custodial
- * move `/api/chain/bet/prepare` made for betting.
+ * `create_market` at clean settlement. On THIS path that caller is the operator — which is why the
+ * primary human flow is the self-custodial one (`/api/markets/create/prepare` + `finalize`,
+ * sharing `composeForCreation`/`registerComposedMarket` below): the visitor's own wallet signs
+ * `create_market`, so the refund genuinely reaches them. This x402 path remains for agents and for
+ * deployments without the v2 vault.
  *
  * ⚠️ Real-mode safety mirrors `agent-bet.ts`: in `CASPER_CHAIN_MODE=real` an on-chain
  * `create_market` is operator-funded, so the bond must be verifiably paid — the same
@@ -136,8 +137,171 @@ export function bondPayTo(): string {
   return process.env.CASPER_X402_PAYTO ?? "vault-mock-account";
 }
 
+/** A structured rejection both creation paths turn into a user-facing 4xx. */
+export type ComposeForCreationResult =
+  | { ok: true; definition: MarketDefinition; recipeHash: string; bondMotes: string }
+  | { ok: false; error: string; code: number; reason?: ComposeReason };
+
+/**
+ * Validate the creation identities and compose the market — everything both creation paths share
+ * BEFORE any money is asked for. The x402 path (`createMarket`) issues its bond challenge on the
+ * result; the self-custodial path (`/api/markets/create/prepare`) builds the wallet transaction
+ * from it and `finalize` re-runs it to rebuild the exact definition from the ticket's claims.
+ */
+export async function composeForCreation(
+  container: Container,
+  req: CreateMarketRequest,
+  opts: { skipDuplicateCheck?: boolean } = {},
+): Promise<ComposeForCreationResult> {
+  if (typeof req.oracle !== "string" || req.oracle.trim().length === 0) {
+    return { ok: false, code: 400, error: "an approved oracle account is required" };
+  }
+  const real = chainMode() === "real";
+  // The self-oracle check compares NORMALIZED identities, not raw strings: the creator field is a
+  // public key while the oracle may be an account-hash, so the same account has two byte-distinct
+  // spellings (plus case-flips) — exactly the gap a self-resolving creator would use. The vault
+  // enforces this too (I5), but never for the admin key that submits x402-path creations.
+  const oracleNorm = await normalizeAccountId(req.oracle, real);
+  const creatorNorm = await normalizeAccountId(req.creator, real);
+  if (oracleNorm === creatorNorm) {
+    return { ok: false, code: 400, error: "a creator may not be their own oracle" };
+  }
+  // Real mode is the only place these two shapes MATTER, and the only place a bad one is
+  // expensive: the creator is the account whose transfer must verify (or whose wallet must sign),
+  // and the oracle is a `Key` the vault stores. Both are checked BEFORE anything is paid, so
+  // nobody pays for a market that could never be opened. In mock mode the labels never reach a
+  // chain, so they stand.
+  if (realBondRequired() && !PUBLIC_KEY_HEX.test(req.creator.trim())) {
+    return {
+      ok: false,
+      code: 400,
+      error:
+        "connect a Casper wallet to create a market — the creation bond is a transfer from your " +
+        "own account, so the creator must be your public key",
+    };
+  }
+  if (real && !ORACLE_ADDRESS.test(req.oracle.trim())) {
+    return {
+      ok: false,
+      code: 400,
+      error: `oracle must be an 'account-hash-<64 hex>' address or a Casper public key, got: ${req.oracle.trim()}`,
+    };
+  }
+  // Pre-payment gates, skipped on the finalize recompose (`skipDuplicateCheck`): finalize re-runs
+  // this AFTER the chain executed the creator's own transaction, and refusing to index a market
+  // the chain holds is the one dishonest outcome. They ran at prepare/challenge time.
+  if (real && !opts.skipDuplicateCheck) {
+    // The submitted oracle must BE the deployment's approved oracle — not merely a valid,
+    // non-creator address. On the x402 path the operator key is the vault ADMIN, so the
+    // contract's OracleNotApproved guardrail never runs and any address accepted here becomes
+    // the account that decides who gets paid; on the self-custodial path the chain re-checks.
+    const approved = oracleAccount();
+    if (!approved) {
+      return {
+        ok: false,
+        code: 503,
+        error:
+          "no approved oracle is configured on this deployment (CASPER_ORACLE_ACCOUNT) — a market cannot be bound to one",
+      };
+    }
+    if (oracleNorm !== (await normalizeAccountId(approved, true))) {
+      return {
+        ok: false,
+        code: 400,
+        error: `only the deployment's approved oracle is accepted as a market's oracle: ${approved}`,
+      };
+    }
+    // The vault's deadline rules, mirrored for the same skipped-guardrail reason: the deadline
+    // must be a real future instant, and no further out than the public horizon — bettor funds
+    // are escrowed until it passes.
+    const deadlineMs = Date.parse(req.deadlineIso ?? "");
+    if (Number.isNaN(deadlineMs) || deadlineMs <= Date.now()) {
+      return { ok: false, code: 400, error: "deadline must be a valid future timestamp" };
+    }
+    if (deadlineMs > Date.now() + MAX_DEADLINE_HORIZON_MS) {
+      return {
+        ok: false,
+        code: 400,
+        error: "deadline must be within 180 days — the vault's public-creation horizon",
+      };
+    }
+  }
+
+  // `finalize` recomposes from a ticket whose transaction the chain has ALREADY executed. The
+  // authoritative duplicate gate ran at prepare, and the vault enforced `MarketExists` for the
+  // slug — failing the recompose on a title collision that appeared in between would refuse to
+  // index a market the chain holds, which is the one dishonest outcome.
+  const existing = opts.skipDuplicateCheck ? [] : [...allDefinitions()];
+  const composed = await composeMarket(req, { llm: container.llm, existing });
+  if (!composed.ok) {
+    const code = composed.reason === "duplicate" ? 409 : composed.reason === "category" ? 422 : 400;
+    return { ok: false, code, error: composed.message, reason: composed.reason };
+  }
+  return {
+    ok: true,
+    definition: composed.definition,
+    recipeHash: composed.recipeHash,
+    bondMotes: creationBondMotes(),
+  };
+}
+
+/**
+ * Register a composed market off-chain and seed it — the tail every creation path shares once the
+ * money question is settled (bond verified on the x402 path; `create_market` executed on the
+ * self-custodial path; nothing at all in mock mode).
+ */
+export async function registerComposedMarket(
+  container: Container,
+  definition: MarketDefinition,
+  recipeHash: string,
+  opts: {
+    receipt: { deployHash: string; explorerUrl: string } | null;
+    seedByFleet: boolean;
+    seq: number;
+  },
+): Promise<CreateMarketResult> {
+  // Register the off-chain mirror (throws if the slug somehow already exists — a race we surface).
+  try {
+    addCreatedMarket(definition, container.network);
+  } catch (err) {
+    return { status: "error", code: 409, error: err instanceof Error ? err.message : "market already exists" };
+  }
+  const market = buildMarket(definition, container.network);
+  appendAction({
+    agent: "Community",
+    kind: "market_created",
+    marketId: market.id,
+    marketTitle: market.title,
+    narration: `${definition.subtitle ?? "community market"} · recipe ${recipeHash.slice(0, 16)}…`,
+    deployHash: opts.receipt?.deployHash,
+    explorerUrl: opts.receipt?.explorerUrl,
+    simulated: opts.receipt === null,
+  });
+
+  // Long-tail liquidity: the fleet seeds the new market so it doesn't open empty.
+  let seeded: AgentAction[] = [];
+  if (opts.seedByFleet) {
+    try {
+      seeded = await seedNewMarketByFleet(container, definition.slug, { maxProphets: 2, startSeq: opts.seq });
+    } catch {
+      /* seeding is best-effort — a seeding failure never fails the creation */
+    }
+  }
+
+  return {
+    status: "created",
+    slug: definition.slug,
+    recipeHash,
+    deployHash: opts.receipt?.deployHash,
+    explorerUrl: opts.receipt?.explorerUrl,
+    simulated: opts.receipt === null,
+    seededBets: seeded.length,
+  };
+}
+
 export async function createMarket(container: Container, req: CreateMarketRequest): Promise<CreateMarketResult> {
-  // Real-mode safety gate — identical policy to the agent bet rail.
+  // Real-mode safety gate — identical policy to the agent bet rail. (The self-custodial prepare
+  // route is NOT behind this: it needs no treasury, because no money passes through the server.)
   const realPaymentConfigured = Boolean(process.env.CASPER_X402_PAYTO);
   if (chainMode() === "real" && process.env.CASPER_REAL_AGENT_X402 !== "true" && !realPaymentConfigured) {
     return {
@@ -147,83 +311,11 @@ export async function createMarket(container: Container, req: CreateMarketReques
         "real-mode market creation is disabled — set CASPER_X402_PAYTO (trustless bond verification) or CASPER_REAL_AGENT_X402=true",
     };
   }
-  if (typeof req.oracle !== "string" || req.oracle.trim().length === 0) {
-    return { status: "error", code: 400, error: "an approved oracle account is required" };
-  }
-  const real = chainMode() === "real";
-  // The self-oracle check compares NORMALIZED identities, not raw strings: the creator field is a
-  // public key while the oracle may be an account-hash, so the same account has two byte-distinct
-  // spellings (plus case-flips) — exactly the gap a self-resolving creator would use.
-  const oracleNorm = await normalizeAccountId(req.oracle, real);
-  const creatorNorm = await normalizeAccountId(req.creator, real);
-  if (oracleNorm === creatorNorm) {
-    // The vault enforces this too (I5) — but never for the admin key that submits app creations,
-    // so this check is the entire defense. Rejecting early also gives a clean message.
-    return { status: "error", code: 400, error: "a creator may not be their own oracle" };
-  }
-  // Real mode is the only place these two shapes MATTER, and the only place a bad one is
-  // expensive: the creator is the account whose transfer must verify, and the oracle is a `Key`
-  // the vault stores. Both are checked BEFORE the bond challenge is issued, so nobody pays for a
-  // market that could never be opened. In mock mode the labels never reach a chain, so they stand.
-  if (realBondRequired() && !PUBLIC_KEY_HEX.test(req.creator.trim())) {
-    return {
-      status: "error",
-      code: 400,
-      error:
-        "connect a Casper wallet to create a market — the creation bond is a transfer from your " +
-        "own account, so the creator must be your public key",
-    };
-  }
-  if (real && !ORACLE_ADDRESS.test(req.oracle.trim())) {
-    return {
-      status: "error",
-      code: 400,
-      error: `oracle must be an 'account-hash-<64 hex>' address or a Casper public key, got: ${req.oracle.trim()}`,
-    };
-  }
-  if (real) {
-    // The submitted oracle must BE the deployment's approved oracle — not merely a valid,
-    // non-creator address. The vault's OracleNotApproved guardrail is skipped for the admin key,
-    // so any address accepted here becomes the account that decides who gets paid.
-    const approved = oracleAccount();
-    if (!approved) {
-      return {
-        status: "error",
-        code: 503,
-        error:
-          "no approved oracle is configured on this deployment (CASPER_ORACLE_ACCOUNT) — a market cannot be bound to one",
-      };
-    }
-    if (oracleNorm !== (await normalizeAccountId(approved, true))) {
-      return {
-        status: "error",
-        code: 400,
-        error: `only the deployment's approved oracle is accepted as a market's oracle: ${approved}`,
-      };
-    }
-    // The vault's deadline rules, mirrored for the same skipped-guardrail reason: the deadline
-    // must be a real future instant, and no further out than the public horizon — bettor funds
-    // are escrowed until it passes. Checked BEFORE the bond challenge is issued.
-    const deadlineMs = Date.parse(req.deadlineIso ?? "");
-    if (Number.isNaN(deadlineMs) || deadlineMs <= Date.now()) {
-      return { status: "error", code: 400, error: "deadline must be a valid future timestamp" };
-    }
-    if (deadlineMs > Date.now() + MAX_DEADLINE_HORIZON_MS) {
-      return {
-        status: "error",
-        code: 400,
-        error: "deadline must be within 180 days — the vault's public-creation horizon",
-      };
-    }
-  }
-
-  const composed = await composeMarket(req, { llm: container.llm, existing: [...allDefinitions()] });
+  const composed = await composeForCreation(container, req);
   if (!composed.ok) {
-    const code = composed.reason === "duplicate" ? 409 : composed.reason === "category" ? 422 : 400;
-    return { status: "error", code, error: composed.message, reason: composed.reason };
+    return { status: "error", code: composed.code, error: composed.error, reason: composed.reason };
   }
-  const { definition, recipeHash } = composed;
-  const bondMotes = creationBondMotes();
+  const { definition, recipeHash, bondMotes } = composed;
 
   // The bond is quoted against the RECIPE HASH, never the slug: the slug carries the
   // created-count seq, which moves whenever anything else creates a market (round rollovers do,
@@ -279,43 +371,11 @@ export async function createMarket(container: Container, req: CreateMarketReques
     }
   }
 
-  // Register the off-chain mirror (throws if the slug somehow already exists — a race we surface).
-  try {
-    addCreatedMarket(definition, container.network);
-  } catch (err) {
-    return { status: "error", code: 409, error: err instanceof Error ? err.message : "market already exists" };
-  }
-  const market = buildMarket(definition, container.network);
-  appendAction({
-    agent: "Community",
-    kind: "market_created",
-    marketId: market.id,
-    marketTitle: market.title,
-    narration: `${definition.subtitle ?? "community market"} · recipe ${recipeHash.slice(0, 16)}…`,
-    deployHash: receipt?.deployHash,
-    explorerUrl: receipt?.explorerUrl,
-    simulated: receipt === null,
+  return registerComposedMarket(container, definition, recipeHash, {
+    receipt,
+    seedByFleet: req.seedByFleet !== false,
+    seq: req.seq,
   });
-
-  // Long-tail liquidity: the fleet seeds the new market so it doesn't open empty.
-  let seeded: AgentAction[] = [];
-  if (req.seedByFleet !== false) {
-    try {
-      seeded = await seedNewMarketByFleet(container, definition.slug, { maxProphets: 2, startSeq: req.seq });
-    } catch {
-      /* seeding is best-effort — a seeding failure never fails the creation */
-    }
-  }
-
-  return {
-    status: "created",
-    slug: definition.slug,
-    recipeHash,
-    deployHash: receipt?.deployHash,
-    explorerUrl: receipt?.explorerUrl,
-    simulated: receipt === null,
-    seededBets: seeded.length,
-  };
 }
 
 /** Recompute a created market's definition (for the route's confirmation payload). */

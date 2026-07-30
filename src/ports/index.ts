@@ -6,6 +6,7 @@ export type {
   DeployResult,
   PlaceBetInput,
   ResolveMarketInput,
+  PrepareCreateMarketInput,
   TransactionStatus,
   TransferTransactionInput,
   UnsignedBetTransaction,

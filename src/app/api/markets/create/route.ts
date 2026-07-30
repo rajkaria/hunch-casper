@@ -15,9 +15,10 @@ import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { bondPayTo, createMarket, creationBondMotes, creationBondPaymentBlocker } from "@/lib/market-create";
 import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
-import { DEFAULT_NETWORK, isCasperNetwork } from "@/config/network";
+import { DEFAULT_NETWORK, getNetworkConfig, isCasperNetwork } from "@/config/network";
 import { chainMode, isSimulated } from "@/config/chain-mode";
 import { oracleAccount } from "@/agent/genesis";
+import { DEFAULT_CREATE_GAS_MOTES } from "@/adapters/casper/deploy-plan";
 import type { X402PaymentProof } from "@/ports/payment";
 import type { ResolverComparator, ResolverKind, ResolverSource, MarketOutcome } from "@/core/types";
 import { listCreatedMarkets } from "@/adapters/mock/market-source";
@@ -47,17 +48,26 @@ export async function GET(req: Request): Promise<Response> {
   const network = isCasperNetwork(requested) ? requested : DEFAULT_NETWORK;
   const bondMotes = creationBondMotes();
   const real = chainMode() === "real";
+  const oracle = real ? oracleAccount() : "account-hash-arbiter";
+  // Self-custodial creation: the visitor's own wallet signs `create_market`, attaching the bond —
+  // which is the ONLY configuration under which the vault's settlement-time refund reaches them.
+  // Needs the v2 vault (the entry point lives there) and an approved oracle to bind.
+  const selfCustodial = real && Boolean(getNetworkConfig(network).contracts.vaultV2) && Boolean(oracle);
   return NextResponse.json(
     {
       network,
       bondMotes,
-      // Real mode + a treasury = the transfer-verifying rail: the bond is a transaction the
-      // visitor's own wallet must sign. Anything else settles against the deterministic mock.
-      walletRequired: real && Boolean(process.env.CASPER_X402_PAYTO),
+      // In real mode a human always needs a wallet: either to sign `create_market` itself
+      // (self-custodial) or to sign the bond transfer the x402 rail verifies.
+      walletRequired: real,
+      selfCustodial,
+      // The gas limit baked into the prepared transaction — the visitor pays it, so the form
+      // shows it. Casper's refund model returns 75% of the unused portion.
+      createGasMotes: DEFAULT_CREATE_GAS_MOTES,
       payTo: bondPayTo(),
       // `null` in real mode with no oracle configured — the form says so rather than offering a
       // default, because the vault's one structural rule is that a creator may not self-oracle.
-      oracle: real ? oracleAccount() : "account-hash-arbiter",
+      oracle,
       simulated: isSimulated(),
       blocker: creationBondPaymentBlocker(bondMotes),
     },
