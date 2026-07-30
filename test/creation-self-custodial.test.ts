@@ -79,6 +79,9 @@ beforeEach(() => {
   resetCreatedMarkets();
   resetActivity();
   vi.stubEnv("CASPER_CHAIN_MODE", "real");
+  // The hardened composeForCreation accepts only the deployment's approved oracle — a real
+  // deployment always has one configured, so these fixtures bind to it.
+  vi.stubEnv("CASPER_ORACLE_ACCOUNT", ORACLE);
   vi.unstubAllGlobals();
 });
 
@@ -107,7 +110,8 @@ describe("POST /api/markets/create/prepare", () => {
       specBody({ feeBps: 600 }),
     );
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toMatch(/caps the fee/i);
+    // The shared composer now rejects the fee before the route's own vault-cap message is built.
+    expect((await res.json()).error).toMatch(/caps the fee|between 0 and 500/i);
   });
 
   it("refuses a deadline beyond the vault's 180-day public horizon", async () => {
