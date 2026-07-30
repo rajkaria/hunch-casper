@@ -20,7 +20,9 @@ import type {
   PaymentPort,
   PlaceBetInput,
   TransactionStatus,
+  TransferTransactionInput,
   UnsignedBetTransaction,
+  UnsignedTransaction,
   ResolveMarketInput,
 } from "@/ports";
 import type { AgentAccount, TransferInput, TransferResult, WalletPort } from "@/ports/wallet";
@@ -101,6 +103,11 @@ function createLazyRealChain(
       // the narrowing has to be real rather than a `!`.
       if (!chain.buildBetTransaction) throw new Error("this chain cannot build unsigned bets");
       return chain.buildBetTransaction(input);
+    },
+    async buildTransferTransaction(input: TransferTransactionInput): Promise<UnsignedTransaction> {
+      const chain = await load();
+      if (!chain.buildTransferTransaction) throw new Error("this chain cannot build unsigned transfers");
+      return chain.buildTransferTransaction(input);
     },
     async confirmTransaction(transactionHash: string): Promise<DeployResult> {
       const chain = await load();

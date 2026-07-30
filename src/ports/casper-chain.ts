@@ -54,19 +54,31 @@ export interface CreateMarketInput {
 }
 
 /**
- * A bet transaction built but NOT signed — for the visitor's own wallet to sign.
+ * A transaction built but NOT signed — for the visitor's own wallet to sign.
  *
  * `transactionHash` is known here, before any signature exists, because the hash covers the
  * payload and approvals are appended to it. That is what lets the server bind a prepared bet to
  * the hash it will have on chain (see `lib/bet-ticket.ts`) instead of taking the client's word for
  * what was signed.
  */
-export interface UnsignedBetTransaction {
+export interface UnsignedTransaction {
   /** The transaction as JSON text, ready to hand to a wallet. */
   transactionJson: string;
   transactionHash: string;
   /** Gas limit baked into the transaction, in motes — the visitor pays it, so the UI shows it. */
   gasMotes: string;
+}
+
+/** The original name, kept so the bet path's callers read unchanged. */
+export type UnsignedBetTransaction = UnsignedTransaction;
+
+/** A plain CSPR transfer for a visitor's wallet to sign — today, the x402 creation bond. */
+export interface TransferTransactionInput {
+  /** The payer's Casper public key hex: the initiator, and the account the wallet signs as. */
+  from: string;
+  /** Recipient — a public key hex or `account-hash-<64hex>`; the two are different on-chain values. */
+  to: string;
+  amountMotes: string;
 }
 
 /**
@@ -109,6 +121,21 @@ export interface CasperChainPort {
    * route falls back to the operator-signed path rather than inventing one.
    */
   buildBetTransaction?(input: PlaceBetInput): Promise<UnsignedBetTransaction>;
+  /**
+   * Build a native CSPR transfer with the PAYER as initiator, unsigned, so their wallet signs and
+   * their account is debited — the x402 creation bond's money path.
+   *
+   * It has to be the visitor's own transfer, not an operator convenience: `real-payment.ts`
+   * verifies the on-chain initiator against the requirement's payer, so a bond the server moved
+   * would prove nothing about who created the market. Before this existed the create page
+   * fabricated a `demo-…` settlement id, which the transfer-verifying rail rejected on sight —
+   * every real-mode creation failed with "invalid or unverifiable creation-bond payment".
+   *
+   * Optional, exactly like `buildBetTransaction`: the mock adapter has no chain to transfer on and
+   * does not implement it, and the route answers 501 so the caller falls back rather than
+   * inventing a transaction.
+   */
+  buildTransferTransaction?(input: TransferTransactionInput): Promise<UnsignedTransaction>;
   /**
    * Wait for a transaction submitted by SOMEONE ELSE (a visitor's wallet) to execute. Same
    * confirmation semantics as `placeBet`: a revert is a failure, not a bet.

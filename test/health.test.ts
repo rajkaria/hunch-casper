@@ -36,6 +36,7 @@ function healthyReal(): HealthInputs {
     persistence: { configured: true, reachable: true, status: 200, latencyMs: 12 },
     x402: { payToConfigured: true, legacyOptIn: false },
     signer: { bettorKeyConfigured: true, oracleKeyConfigured: true },
+    creation: { bondBlocker: null, oracleAccountConfigured: true },
     cronSecretConfigured: true,
     csprCloudKeyConfigured: true,
     economy: { actionCount: 12, newestActionTs: NOW - 60_000 },
@@ -495,5 +496,44 @@ describe("the wallet check judges the app id's reality, not just its presence", 
   it("gives an unreachable probe the benefit of the doubt — their outage is not our misconfig", () => {
     expect(armed({ status: "unreachable" }).checks.find((x) => x.name === "wallet")!.status).toBe("ok");
     expect(armed(undefined).checks.find((x) => x.name === "wallet")!.status).toBe("ok");
+  });
+});
+
+/**
+ * Human market creation. Both of these made the create page reject everyone with no way to tell a
+ * broken deployment from bad input — which is how an unpayable bond stayed live.
+ */
+describe("creation health", () => {
+  function creationCheck(i: HealthInputs) {
+    return buildHealthReport(i).checks.find((c) => c.name === "creation");
+  }
+
+  it("is ok when the bond is transferable and an oracle is approved", () => {
+    expect(creationCheck(healthyReal())?.status).toBe("ok");
+  });
+
+  it("fails when the configured bond is below the chainspec transfer floor", () => {
+    const i: HealthInputs = {
+      ...healthyReal(),
+      creation: { bondBlocker: "below the native-transfer minimum", oracleAccountConfigured: true },
+    };
+    const report = buildHealthReport(i);
+    expect(creationCheck(i)?.status).toBe("fail");
+    expect(report.problems).toContain("creation");
+  });
+
+  it("fails when no approved oracle account is configured — nothing can be bound", () => {
+    const i: HealthInputs = {
+      ...healthyReal(),
+      creation: { bondBlocker: null, oracleAccountConfigured: false },
+    };
+    expect(creationCheck(i)?.status).toBe("fail");
+    expect(creationCheck(i)?.detail).toMatch(/CASPER_ORACLE_ACCOUNT/);
+  });
+
+  it("is skipped in mock mode and absent for a caller that does not report it", () => {
+    expect(creationCheck({ ...healthyReal(), chainMode: "mock" })?.status).toBe("skip");
+    const withoutCreation = { ...healthyReal(), creation: undefined };
+    expect(creationCheck(withoutCreation)).toBeUndefined();
   });
 });

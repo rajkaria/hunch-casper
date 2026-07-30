@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createContainer } from "@/lib/container";
-import { createMarket, creationBondMotes, __resetConsumedBonds } from "@/lib/market-create";
+import {
+  createMarket,
+  creationBondMotes,
+  creationBondPaymentBlocker,
+  __resetConsumedBonds,
+} from "@/lib/market-create";
+import { NATIVE_TRANSFER_MINIMUM_MOTES } from "@/config/network";
 import type { CreateMarketRequest } from "@/lib/market-create";
 import { agentBet, __resetConsumedNonces } from "@/lib/agent-bet";
 import { __resetLedger } from "@/adapters/mock/settlement-ledger";
@@ -150,9 +156,24 @@ describe("created market runs create → bet → resolve → claim end to end", 
 });
 
 describe("creation economics", () => {
-  it("the creation bond is a small, refundable 1 CSPR by default", () => {
+  /**
+   * The bond is paid by a NATIVE CSPR transfer from the creator's wallet, and Casper's chainspec
+   * rejects a native transfer below 2.5 CSPR (`native_transfer_minimum_motes`, a consensus rule).
+   * The old 1 CSPR default was therefore unpayable: no proof could exist, so every real-mode
+   * creation answered "invalid or unverifiable creation-bond payment". The default sits ON the
+   * floor so the whole transferred amount is the bond — held, and refunded at clean settlement.
+   */
+  it("the default creation bond is payable by a native transfer", () => {
     delete process.env.CASPER_CREATION_BOND_MOTES;
-    expect(creationBondMotes()).toBe("1000000000"); // 1 CSPR
+    expect(creationBondMotes()).toBe("2500000000"); // 2.5 CSPR
+    expect(BigInt(creationBondMotes())).toBeGreaterThanOrEqual(NATIVE_TRANSFER_MINIMUM_MOTES);
+    expect(creationBondPaymentBlocker()).toBeNull();
+  });
+
+  it("an override below the transfer floor is named as an operator misconfiguration", () => {
+    process.env.CASPER_CREATION_BOND_MOTES = "1000000000";
+    expect(creationBondMotes()).toBe("1000000000");
+    expect(creationBondPaymentBlocker()).toMatch(/native-transfer minimum/);
   });
 
   it("a bet preview on a freshly composed market is computable (cost estimate seam)", async () => {

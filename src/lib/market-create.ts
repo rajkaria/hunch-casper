@@ -4,9 +4,12 @@
  * path, and it reuses the same x402 handshake so a human posting a bond and an agent placing a bet
  * settle through one rail.
  *
- * The creation bond is the moderation economics: a market that resolves cleanly refunds it; an
- * unresolvable, duplicate, or abandoned market forfeits it (the vault holds it; slashing is the
- * registry hook). So spamming the board costs money, and the honest creator is made whole.
+ * The creation bond is the moderation economics: opening a market costs something, so spamming the
+ * board costs money. The vault holds a bond per market and returns it to whoever CALLED
+ * `create_market` at clean settlement — which on this path is the operator, not the human whose
+ * transfer paid for it. See the warning in `config/creation-bond.ts`: making the visitor's bond
+ * genuinely refundable means letting them sign `create_market` themselves, the same self-custodial
+ * move `/api/chain/bet/prepare` made for betting.
  *
  * ⚠️ Real-mode safety mirrors `agent-bet.ts`: in `CASPER_CHAIN_MODE=real` an on-chain
  * `create_market` is operator-funded, so the bond must be verifiably paid — the same
@@ -24,12 +27,31 @@ import { seedNewMarketByFleet } from "@/agent/prophet";
 import { chainMode } from "@/config/chain-mode";
 import type { AgentAction } from "@/adapters/mock/activity-log";
 
-/** Default creation bond (1 CSPR), overridable via `CASPER_CREATION_BOND_MOTES`. Mirrors Genesis. */
-export const DEFAULT_CREATION_BOND_MOTES = "1000000000";
+// The bond's own module — Genesis reads the same one, so the number the vault is handed and the
+// number a visitor is quoted cannot drift. Re-exported because callers and tests import it here.
+export {
+  DEFAULT_CREATION_BOND_MOTES,
+  creationBondMotes,
+  creationBondPaymentBlocker,
+} from "@/config/creation-bond";
+import { creationBondMotes } from "@/config/creation-bond";
 
-export function creationBondMotes(): string {
-  const raw = process.env.CASPER_CREATION_BOND_MOTES;
-  return raw && /^\d+$/.test(raw) && BigInt(raw) > 0n ? raw : DEFAULT_CREATION_BOND_MOTES;
+/** A Casper public key hex (ed25519 `01…` / secp256k1 `02…`) — a real, signable account. */
+const PUBLIC_KEY_HEX = /^0[12][0-9a-fA-F]{64,128}$/;
+
+/**
+ * An identifier the vault can store as a market's oracle: a prefixed `account-hash-…`/`hash-…`, or
+ * a public key hex the adapter derives the account hash from (`toOracleAddress`).
+ *
+ * A friendly placeholder like `account-hash-arbiter` is none of those — `Key::newKey` throws on it
+ * while building the transaction, i.e. AFTER the bond has been paid. Rejecting the shape up front
+ * turns that into a 400 the form can point at the field.
+ */
+const ORACLE_ADDRESS = /^((account-hash|hash)-[0-9a-fA-F]{64}|0[12][0-9a-fA-F]{64,128})$/;
+
+/** True when the bond must be a REAL on-chain transfer (the transfer-verifying x402 rail is wired). */
+function realBondRequired(): boolean {
+  return chainMode() === "real" && Boolean(process.env.CASPER_X402_PAYTO);
 }
 
 /** Bonds already spent on a created market — one bond payment opens exactly one market. */
@@ -61,7 +83,7 @@ export type CreateMarketResult =
   | { status: "error"; error: string; code: number; reason?: ComposeReason };
 
 /** The bond `payTo` — the treasury/vault the requirement points at, same as a bet. */
-function bondPayTo(): string {
+export function bondPayTo(): string {
   return process.env.CASPER_X402_PAYTO ?? "vault-mock-account";
 }
 
@@ -82,6 +104,26 @@ export async function createMarket(container: Container, req: CreateMarketReques
   if (req.oracle.trim() === req.creator.trim()) {
     // The vault enforces this too (I5); rejecting early gives a clean message instead of a revert.
     return { status: "error", code: 400, error: "a creator may not be their own oracle" };
+  }
+  // Real mode is the only place these two shapes MATTER, and the only place a bad one is
+  // expensive: the creator is the account whose transfer must verify, and the oracle is a `Key`
+  // the vault stores. Both are checked BEFORE the bond challenge is issued, so nobody pays for a
+  // market that could never be opened. In mock mode the labels never reach a chain, so they stand.
+  if (realBondRequired() && !PUBLIC_KEY_HEX.test(req.creator.trim())) {
+    return {
+      status: "error",
+      code: 400,
+      error:
+        "connect a Casper wallet to create a market — the creation bond is a transfer from your " +
+        "own account, so the creator must be your public key",
+    };
+  }
+  if (chainMode() === "real" && !ORACLE_ADDRESS.test(req.oracle.trim())) {
+    return {
+      status: "error",
+      code: 400,
+      error: `oracle must be an 'account-hash-<64 hex>' address or a Casper public key, got: ${req.oracle.trim()}`,
+    };
   }
 
   const composed = await composeMarket(req, { llm: container.llm, existing: [...allDefinitions()] });

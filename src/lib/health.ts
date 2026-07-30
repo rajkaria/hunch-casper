@@ -10,6 +10,7 @@
  */
 
 import { chainMode } from "@/config/chain-mode";
+import { creationBondPaymentBlocker } from "@/config/creation-bond";
 import {
   csprClickAppIdsFromEnv,
   csprClickApplicationUrl,
@@ -242,6 +243,10 @@ export async function gatherHealth(
     signer: {
       bettorKeyConfigured: isSet("CASPER_BETTOR_KEY"),
       oracleKeyConfigured: isSet("CASPER_ORACLE_KEY"),
+    },
+    creation: {
+      bondBlocker: creationBondPaymentBlocker(),
+      oracleAccountConfigured: isSet("CASPER_ORACLE_ACCOUNT"),
     },
     cronSecretConfigured: isSet("CRON_SECRET") || isSet("TICK_CRON_SECRET"),
     csprCloudKeyConfigured: isSet("CSPR_CLOUD_API_KEY"),

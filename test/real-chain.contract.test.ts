@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { createRealChain, realChainOptionsFromEnv, CasperConfigError } from "@/adapters/casper/real-chain";
+import {
+  createRealChain,
+  realChainOptionsFromEnv,
+  toOracleAddress,
+  CasperConfigError,
+} from "@/adapters/casper/real-chain";
 import { runCasperChainContract } from "./contract/casper-chain.shared";
 import type { ExecutionOutcome } from "@/adapters/casper/confirm";
 
@@ -174,5 +179,88 @@ describe("checkTransaction", () => {
       status: "reverted",
       error: "User error: 19",
     });
+  });
+});
+
+/**
+ * The creation bond's transfer, built for a visitor's wallet to sign.
+ *
+ * Unsigned construction needs no key, so the whole shape is checkable in CI: initiator, recipient
+ * form, amount, and the chainspec floor that made the old 1 CSPR bond unpayable. The hash is
+ * asserted stable because it is what the x402 proof and the on-screen receipt both name — it is
+ * final before any signature exists.
+ */
+describe("buildTransferTransaction — the x402 creation bond", () => {
+  const CREATOR = `01${"aa".repeat(32)}`;
+  const TREASURY_KEY = `01${"bb".repeat(32)}`;
+  const TREASURY_HASH = `account-hash-${"cc".repeat(32)}`;
+
+  const chain = createRealChain("testnet", {
+    bettorKey: "0".repeat(64),
+    marketPackageHash: `hash-${"0".repeat(64)}`,
+    proxyWasmPath: "/dev/null",
+  });
+
+  it("builds a native transfer to a public-key treasury the wallet can sign", async () => {
+    const tx = await chain.buildTransferTransaction!({
+      from: CREATOR,
+      to: TREASURY_KEY,
+      amountMotes: "2500000000",
+    });
+    expect(tx.transactionHash).toMatch(/^[0-9a-f]{64}$/);
+    const json = JSON.parse(tx.transactionJson);
+    // Round-trips as JSON — the exact thing handed to CSPR.click's `send`.
+    expect(JSON.stringify(json).length).toBeGreaterThan(0);
+    expect(BigInt(tx.gasMotes)).toBeGreaterThan(0n);
+  });
+
+  it("targets an account-hash treasury as an account-hash, not a public key", async () => {
+    // The two are different on-chain values (deriving one needs blake2b), and the verifier
+    // compares payTo against both forms — so the builder must not normalise them into one.
+    const byHash = await chain.buildTransferTransaction!({
+      from: CREATOR,
+      to: TREASURY_HASH,
+      amountMotes: "2500000000",
+    });
+    const byKey = await chain.buildTransferTransaction!({
+      from: CREATOR,
+      to: TREASURY_KEY,
+      amountMotes: "2500000000",
+    });
+    expect(byHash.transactionHash).not.toBe(byKey.transactionHash);
+  });
+
+  it("refuses an amount below the chainspec native-transfer minimum", async () => {
+    // THE BUG: the creation bond was 1 CSPR. A node answers `-32016 insufficient transfer amount`
+    // from inside a wallet popup — so it is caught here, where it can be explained.
+    await expect(
+      chain.buildTransferTransaction!({ from: CREATOR, to: TREASURY_KEY, amountMotes: "1000000000" }),
+    ).rejects.toThrow(/native-transfer minimum/);
+  });
+});
+
+/**
+ * The oracle a market is bound to. `CASPER_ORACLE_ACCOUNT` names an account, and there are two
+ * ordinary ways to write one down — a public key hex and its account hash. Only the second is a
+ * `Key` the vault can store, and `Key::newKey` throws on the first rather than understanding it,
+ * so the adapter derives it. Deriving is deliberate and one-way: an already-prefixed identifier is
+ * never rewritten, because a public key and its account hash are different on-chain values.
+ */
+describe("toOracleAddress", () => {
+  it("derives the account hash from a public key hex", () => {
+    const derived = toOracleAddress(`01${"aa".repeat(32)}`);
+    expect(derived).toMatch(/^account-hash-[0-9a-f]{64}$/);
+  });
+
+  it("passes an already-prefixed address through untouched", () => {
+    const hash = `account-hash-${"cc".repeat(32)}`;
+    expect(toOracleAddress(hash)).toBe(hash);
+    expect(toOracleAddress(` ${hash} `)).toBe(hash);
+  });
+
+  it("leaves an unparseable placeholder alone for the caller to reject", () => {
+    // `market-create.ts` refuses `account-hash-arbiter` before anything is quoted; silently
+    // rewriting it here would hide that, and there is nothing to rewrite it TO.
+    expect(toOracleAddress("account-hash-arbiter")).toBe("account-hash-arbiter");
   });
 });

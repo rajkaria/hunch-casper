@@ -104,13 +104,15 @@ export function definitionFromTrigger(trigger: GenesisTrigger, framing: string):
   };
 }
 
-/** The creation bond Genesis attaches, in motes. Held by the vault, refunded at settlement. */
-export const DEFAULT_CREATION_BOND_MOTES = "1000000000";
-
-export function creationBondMotes(): string {
-  const raw = process.env.CASPER_CREATION_BOND_MOTES;
-  return raw && /^\d+$/.test(raw) && BigInt(raw) > 0n ? raw : DEFAULT_CREATION_BOND_MOTES;
-}
+/**
+ * The creation bond Genesis attaches, in motes. Held by the vault, refunded at settlement.
+ *
+ * Re-exported from `config/creation-bond` rather than redefined: this file and `lib/market-create`
+ * both hand the number to the vault, and two copies of a money constant only ever agree until one
+ * of them is edited.
+ */
+export { DEFAULT_CREATION_BOND_MOTES, creationBondMotes } from "@/config/creation-bond";
+import { creationBondMotes } from "@/config/creation-bond";
 
 /**
  * The account bound as a market's oracle — the only address that can resolve it, i.e. the address

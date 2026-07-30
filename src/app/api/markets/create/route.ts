@@ -13,9 +13,11 @@
 
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
-import { createMarket } from "@/lib/market-create";
+import { bondPayTo, createMarket, creationBondMotes, creationBondPaymentBlocker } from "@/lib/market-create";
 import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
-import { isCasperNetwork } from "@/config/network";
+import { DEFAULT_NETWORK, isCasperNetwork } from "@/config/network";
+import { chainMode, isSimulated } from "@/config/chain-mode";
+import { oracleAccount } from "@/agent/genesis";
 import type { X402PaymentProof } from "@/ports/payment";
 import type { ResolverComparator, ResolverKind, ResolverSource, MarketOutcome } from "@/core/types";
 import { listCreatedMarkets } from "@/adapters/mock/market-source";
@@ -28,6 +30,39 @@ function readPaymentHeader(req: Request): X402PaymentProof | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * GET — the terms of creation on THIS deployment, before anything is composed.
+ *
+ * The form cannot guess any of it. The bond is an env-tunable number; the approved oracle is an
+ * `account-hash-…` the vault will store as a `Key` and only the server knows; whether a wallet is
+ * required depends on which x402 rail is wired. The page shipped with `account-hash-arbiter`
+ * hardcoded in the oracle field — a friendly placeholder that `Key::newKey` rejects, so even a
+ * correctly paid bond would have died building the transaction. Serving the real values is what
+ * makes the form fillable-in-one-go rather than a guessing game.
+ */
+export async function GET(req: Request): Promise<Response> {
+  const requested = new URL(req.url).searchParams.get("network");
+  const network = isCasperNetwork(requested) ? requested : DEFAULT_NETWORK;
+  const bondMotes = creationBondMotes();
+  const real = chainMode() === "real";
+  return NextResponse.json(
+    {
+      network,
+      bondMotes,
+      // Real mode + a treasury = the transfer-verifying rail: the bond is a transaction the
+      // visitor's own wallet must sign. Anything else settles against the deterministic mock.
+      walletRequired: real && Boolean(process.env.CASPER_X402_PAYTO),
+      payTo: bondPayTo(),
+      // `null` in real mode with no oracle configured — the form says so rather than offering a
+      // default, because the vault's one structural rule is that a creator may not self-oracle.
+      oracle: real ? oracleAccount() : "account-hash-arbiter",
+      simulated: isSimulated(),
+      blocker: creationBondPaymentBlocker(bondMotes),
+    },
+    { headers: { "cache-control": "no-store" } },
+  );
 }
 
 export async function POST(req: Request): Promise<Response> {

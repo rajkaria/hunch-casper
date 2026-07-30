@@ -31,6 +31,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  AccountHash,
   Args,
   CLTypeString,
   CLTypeUInt8,
@@ -39,6 +40,7 @@ import {
   HttpHandler,
   Key,
   KeyAlgorithm,
+  NativeTransferBuilder,
   PrivateKey,
   PublicKey,
   RpcClient,
@@ -54,10 +56,17 @@ import type {
   PlaceBetInput,
   ResolveMarketInput,
   TransactionStatus,
+  TransferTransactionInput,
   UnsignedBetTransaction,
+  UnsignedTransaction,
 } from "@/ports/casper-chain";
 import type { CasperNetwork } from "@/config/network";
-import { explorerTransactionUrl, getNetworkConfig } from "@/config/network";
+import {
+  explorerTransactionUrl,
+  getNetworkConfig,
+  NATIVE_TRANSFER_MINIMUM_MOTES,
+} from "@/config/network";
+import { TRANSFER_PAYMENT_MOTES } from "./real-wallet";
 import {
   buildBetPlan,
   buildCommitBundlePlan,
@@ -165,6 +174,24 @@ export function toHexHash(address: string): string {
     throw new CasperConfigError(`expected a 32-byte hex contract hash, got: ${address}`);
   }
   return hex;
+}
+
+/**
+ * An oracle identifier → the `account-hash-…` form the vault stores as a `Key`.
+ *
+ * `Key::newKey` parses only PREFIXED identifiers, so a bare public key hex — a perfectly ordinary
+ * way to name an account, and how `CASPER_ORACLE_ACCOUNT` may well be set — throws while building
+ * the transaction rather than being understood. Deriving the account hash needs blake2b, which is
+ * why it happens here in the adapter (which already owns the on-chain encoding) instead of in the
+ * pure plan builder. Anything already prefixed is passed through untouched: a public key and its
+ * account hash are different values and normalising one into the other must be deliberate.
+ */
+export function toOracleAddress(oracle: string): string {
+  const raw = oracle.trim();
+  if (/^0[12][0-9a-fA-F]{64,128}$/.test(raw)) {
+    return PublicKey.fromHex(raw).accountHash().toPrefixedString();
+  }
+  return raw;
 }
 
 export function hexToBytes(hex: string): Uint8Array {
@@ -380,6 +407,48 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
       };
     },
 
+    /**
+     * The x402 creation bond as a native transfer the VISITOR signs — same construction as the
+     * fleet's own transfers (`real-wallet.ts`), minus the key.
+     *
+     * The chainspec floor is checked here rather than left to the node: below it the submit comes
+     * back as a raw `-32016`, from inside a wallet popup, with nothing on screen to explain it. A
+     * bond that cannot be transferred is an operator misconfiguration and says so.
+     */
+    async buildTransferTransaction(input: TransferTransactionInput): Promise<UnsignedTransaction> {
+      const amount = BigInt(input.amountMotes);
+      if (amount < NATIVE_TRANSFER_MINIMUM_MOTES) {
+        throw new CasperConfigError(
+          `a transfer of ${amount} motes is below the chainspec native-transfer minimum of ` +
+            `${NATIVE_TRANSFER_MINIMUM_MOTES} motes (2.5 CSPR) — the node would reject it ` +
+            `(-32016 insufficient transfer amount)`,
+        );
+      }
+      const builder = new NativeTransferBuilder()
+        .from(PublicKey.fromHex(input.from.trim()))
+        .amount(input.amountMotes)
+        .chainName(cfg.chainName)
+        .payment(TRANSFER_PAYMENT_MOTES);
+
+      // A public key and an account-hash are different values (deriving one needs blake2b), so the
+      // recipient's form decides the builder call rather than being normalised into one shape.
+      const to = input.to.trim();
+      if (/^account-hash-[0-9a-fA-F]{64}$/.test(to)) {
+        builder.targetAccountHash(AccountHash.fromString(to));
+      } else {
+        builder.target(PublicKey.fromHex(to));
+      }
+
+      const tx = builder.build();
+      return {
+        transactionJson: JSON.stringify(tx.toJSON()),
+        // Final before the signature, exactly as in `buildBetTransaction` — so the receipt and the
+        // x402 proof can both name it the moment the wallet accepts.
+        transactionHash: tx.hash.toHex(),
+        gasMotes: String(TRANSFER_PAYMENT_MOTES),
+      };
+    },
+
     /** Confirm a transaction a visitor's wallet submitted. Same semantics as our own submits. */
     async confirmTransaction(transactionHash: string): Promise<DeployResult> {
       return confirm(transactionHash);
@@ -424,10 +493,10 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
         );
       }
       const key = loadKey(opts.bettorKey);
-      const plan = buildCreateMarketPlan(input, {
-        marketContract: opts.vaultV2PackageHash,
-        vaultMarketId: input.marketId,
-      });
+      const plan = buildCreateMarketPlan(
+        { ...input, oracle: toOracleAddress(input.oracle) },
+        { marketContract: opts.vaultV2PackageHash, vaultMarketId: input.marketId },
+      );
       return submitPayable(plan, key);
     },
 

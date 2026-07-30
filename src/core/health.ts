@@ -44,6 +44,19 @@ export interface HealthInputs {
     legacyOptIn: boolean;
   };
   signer: { bettorKeyConfigured: boolean; oracleKeyConfigured: boolean };
+  /**
+   * Whether a human can actually open a market. Optional so existing callers/tests are unchanged.
+   * Reported because both of its failure modes are invisible from every other check: a bond below
+   * the chainspec transfer floor is unpayable by any wallet, and with no approved oracle account
+   * there is no address the vault can bind — and both present to a visitor as one opaque rejection
+   * on the create page.
+   */
+  creation?: {
+    /** Why the configured bond cannot be paid by a wallet, or `null` when it can. */
+    bondBlocker: string | null;
+    /** `CASPER_ORACLE_ACCOUNT` set — the approved, non-creator oracle every market is bound to. */
+    oracleAccountConfigured: boolean;
+  };
   /** `CRON_SECRET`/`TICK_CRON_SECRET` set — required for the tick in real mode. */
   cronSecretConfigured: boolean;
   /** `CSPR_CLOUD_API_KEY` set — live validator signal for Genesis. */
@@ -225,6 +238,29 @@ function x402Check(i: HealthInputs): HealthCheck {
     "warn",
     "real mode with no CASPER_X402_PAYTO and no legacy opt-in — agent bets fail closed (402), which is the safe default",
   );
+}
+
+/**
+ * Human market creation. Both failures here are silent from the outside: the create page just
+ * refuses, and the visitor has no way to tell a broken deployment from something they typed. That
+ * is exactly how the unpayable 1 CSPR bond survived — the page answered "invalid or unverifiable
+ * creation-bond payment" to everyone, forever, and no check said why.
+ */
+function creationCheck(i: HealthInputs): HealthCheck | null {
+  if (!i.creation) return null;
+  if (i.chainMode !== "real") {
+    return check("creation", "skip", "mock mode — bonds settle against the deterministic verifier");
+  }
+  if (i.creation.bondBlocker) return check("creation", "fail", i.creation.bondBlocker);
+  if (!i.creation.oracleAccountConfigured) {
+    return check(
+      "creation",
+      "fail",
+      "real mode with no CASPER_ORACLE_ACCOUNT — every market must be bound to an approved, " +
+        "non-creator oracle, and there is no safe default for it, so no market can be created",
+    );
+  }
+  return check("creation", "ok", "bond is payable by a wallet transfer and an approved oracle is configured");
 }
 
 /** Signing keys. In real mode, no bettor key means nothing can be submitted at all. */
@@ -487,6 +523,7 @@ export function buildHealthReport(i: HealthInputs): HealthReport {
     ...contractChecks(i),
     persistenceCheck(i),
     x402Check(i),
+    ...((c) => (c ? [c] : []))(creationCheck(i)),
     ...signerChecks(i),
     cronCheck(i),
     signalsCheck(i),
