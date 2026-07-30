@@ -199,7 +199,7 @@ export async function runGenesis(
   // that fails we still register the off-chain mirror, labelled simulated — see `createOnChain`.
   const receipt = await createOnChain(container, def);
 
-  addCreatedMarket(def); // MarketFactory.register_market, off-chain mirror
+  addCreatedMarket(def, container.network); // MarketFactory.register_market, off-chain mirror
   const market = buildMarket(def, container.network);
   appendAction({
     agent: "Genesis",

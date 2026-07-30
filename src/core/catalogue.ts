@@ -41,6 +41,13 @@ export interface MarketDefinition {
   deadlineIso: string;
   /** Seed pool per outcome key, in motes — deterministic starting liquidity for demos. */
   seedPoolMotes: Record<string, string>;
+  /**
+   * The network a runtime-created market was born on. Catalogue definitions leave this unset —
+   * they exist on every network by design. Created/round/user definitions are one-network facts:
+   * without this, a testnet-born round was mirrored onto the mainnet board as a "locked" market
+   * with a fabricated seed pool.
+   */
+  network?: "testnet" | "mainnet";
 }
 
 const YES_NO: MarketOutcome[] = [

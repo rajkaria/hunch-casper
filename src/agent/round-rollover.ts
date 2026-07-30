@@ -98,7 +98,7 @@ export async function rollMaturedRounds(container: Container): Promise<AgentActi
     // Register the off-chain mirror only AFTER the chain accepted it, so a reverted create can
     // never leave a round that looks bettable but has no escrow behind it.
     try {
-      addCreatedMarket(def);
+      addCreatedMarket(def, container.network);
     } catch (err) {
       console.warn("[rollover] round already registered:", JSON.stringify(def.slug), err);
       continue;

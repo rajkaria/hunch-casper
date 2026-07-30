@@ -226,7 +226,11 @@ describe("serializeEconomyState / applyEconomyState round-trip", () => {
     expect(listActions()).toEqual(actionsBefore);
     expect(ledgerSettledEntries("testnet")).toEqual(settledBefore);
     expect(ledgerGet(MARKET_ID)).toEqual(marketBefore);
-    expect([...listCreatedMarkets()]).toEqual(createdBefore);
+    // Restoration stamps the origin network on pre-migration definitions (testnet — mainnet has
+    // never had runtime creation), so unstamped snapshots come back stamped, not mirrored.
+    expect([...listCreatedMarkets()]).toEqual(
+      createdBefore.map((d) => (d.network ? d : { ...d, network: "testnet" })),
+    );
     expect(oracleReputationOf("arbiter")).toEqual(arbiterBefore);
 
     // The counter round-trips too: new actions never collide with restored seqs.

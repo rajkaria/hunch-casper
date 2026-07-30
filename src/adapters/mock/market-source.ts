@@ -27,15 +27,20 @@ export function findDefinition(slug: string): MarketDefinition | undefined {
   return allDefinitions().find((d) => d.slug === slug);
 }
 
-/** Materialise every known market for a network. */
+/** Materialise every known market for a network. Catalogue definitions exist everywhere;
+ * runtime-created ones only on the network they were born on — a testnet round must not appear
+ * as a fabricated "locked" market on the mainnet board. */
 export function buildAllMarkets(network: CasperNetwork): Market[] {
-  return allDefinitions().map((d) => buildMarket(d, network));
+  return allDefinitions()
+    .filter((d) => !d.network || d.network === network)
+    .map((d) => buildMarket(d, network));
 }
 
-/** Register a Genesis-created market. Throws on a slug collision. */
-export function addCreatedMarket(def: MarketDefinition): void {
+/** Register a Genesis-created market. Throws on a slug collision. Pass the network the market
+ * was created on; a definition that already carries one keeps it. */
+export function addCreatedMarket(def: MarketDefinition, network?: CasperNetwork): void {
   if (findDefinition(def.slug)) throw new Error(`market '${def.slug}' already exists`);
-  created.push(def);
+  created.push(def.network || !network ? def : { ...def, network });
   fireEconomyPersistHook(); // snapshot to KV when configured (no-op otherwise) — see adapters/persist
 }
 
@@ -62,5 +67,7 @@ export function exportCreatedMarkets(): CreatedMarketsSnapshot {
 /** Restore a snapshot, REPLACING (not merging) current state. Idempotent. */
 export function importCreatedMarkets(snapshot: CreatedMarketsSnapshot): void {
   created.length = 0;
-  created.push(...structuredClone(snapshot.created));
+  // Envelopes written before definitions carried an origin network hold testnet-born markets
+  // only (mainnet has never had runtime creation) — stamp the default rather than mirror them.
+  created.push(...structuredClone(snapshot.created).map((d) => (d.network ? d : { ...d, network: "testnet" as const })));
 }

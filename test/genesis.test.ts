@@ -95,3 +95,21 @@ describe("Genesis market maker", () => {
     expect(json.created.category).toBe("casper-native");
   });
 });
+
+describe("created markets stay on their birth network", () => {
+  it("a testnet-born Genesis market never appears on the mainnet board", async () => {
+    const container = createContainer("testnet");
+    const market = await runGenesis(container, trigger);
+    expect(market.id.startsWith("testnet:")).toBe(true);
+
+    const { buildAllMarkets } = await import("@/adapters/mock/market-source");
+    const slugsOnMainnet = buildAllMarkets("mainnet").map((m) => m.slug);
+    const slugsOnTestnet = buildAllMarkets("testnet").map((m) => m.slug);
+    expect(slugsOnTestnet).toContain(market.slug);
+    // Before definitions carried an origin network, this mirrored: the mainnet board listed
+    // testnet rounds as "locked" markets with fabricated seed pools.
+    expect(slugsOnMainnet).not.toContain(market.slug);
+    // Catalogue markets still exist on both networks by design.
+    expect(slugsOnMainnet).toContain("coin-flip-5m");
+  });
+});
