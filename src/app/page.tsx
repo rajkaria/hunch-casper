@@ -4,6 +4,15 @@ import { LiveNumbers } from "@/components/live-numbers";
 import { LoopDiagram } from "@/components/loop-diagram";
 import { MarketTicker } from "@/components/market-ticker";
 import { Reveal } from "@/components/reveal";
+import { liveCountsByCategory } from "@/components/market-card";
+import { createContainer } from "@/lib/container";
+import { DEFAULT_NETWORK } from "@/config/network";
+import { ensureDemoSeed } from "@/adapters/mock/demo-seed";
+import type { MarketCategory } from "@/core/types";
+
+// The hero stats (LiveNumbers) and the category counts read live state — a build-time-frozen
+// prerender would show the economy stuck at deploy day.
+export const revalidate = 60;
 
 const AGENTS = [
   {
@@ -67,11 +76,17 @@ const LOOP = [
   },
 ];
 
-const CATEGORIES = [
+const CATEGORIES: {
+  key: MarketCategory;
+  label: string;
+  body: string;
+  example: string;
+  accent: string;
+  color: string;
+}[] = [
   {
     key: "casper-native",
     label: "Casper-native",
-    count: 10,
     body: "CSPR price and market cap, a recurring daily up/down round, daily deploys, active validators, staking APY, total staked — plus public-good feeds on the Condor upgrade, validator-set health, and grant milestones.",
     example: "CSPR above $0.05 by Aug 1?",
     accent: "text-accent",
@@ -80,7 +95,6 @@ const CATEGORIES = [
   {
     key: "provably-fair",
     label: "Provably fair",
-    count: 1,
     body: "The Flip — Heads, Tails, or Tie decided by the drand public randomness beacon. No house, no edge.",
     example: "The Flip — Heads, Tails, or Tie?",
     accent: "text-gold",
@@ -89,7 +103,6 @@ const CATEGORIES = [
   {
     key: "rwa",
     label: "RWA / macro",
-    count: 5,
     body: "Real-world assets and macro: 3-month T-bill yield, gold, BTC, ETH, and total stablecoin supply.",
     example: "BTC above $150k by Aug 1?",
     accent: "text-up",
@@ -98,13 +111,29 @@ const CATEGORIES = [
   {
     key: "meta",
     label: "Meta / agents",
-    count: 3,
     body: "Markets about the swarm itself — which Prophet out-earns, and whether the Arbiter stays above 95% accuracy.",
     example: "Which Prophet tops the board this week?",
     accent: "text-accent-2",
     color: "var(--accent-2)",
   },
 ];
+
+/**
+ * Live open-market counts per category, from the same store `/api/markets` serves — this copy
+ * used to hard-code totals that drifted from the live board. Refreshed with the page's
+ * revalidation; `null` (→ countless copy) when the store is empty or unreachable, so the page
+ * never asserts a number it can't back.
+ */
+async function loadLiveCounts(): Promise<Record<MarketCategory, number> | null> {
+  try {
+    ensureDemoSeed(DEFAULT_NETWORK); // same call the markets API makes — keep the copy consistent with the board
+    const markets = await createContainer(DEFAULT_NETWORK).store.list({ network: DEFAULT_NETWORK });
+    const counts = liveCountsByCategory(markets);
+    return Object.values(counts).some((n) => n > 0) ? counts : null;
+  } catch {
+    return null;
+  }
+}
 
 const TRUST = [
   {
@@ -207,7 +236,9 @@ function SectionHeader({
   );
 }
 
-export default function Home() {
+export default async function Home() {
+  const liveCounts = await loadLiveCounts();
+  const totalLive = liveCounts ? Object.values(liveCounts).reduce((a, b) => a + b, 0) : 0;
   return (
     <main className="flex flex-1 flex-col">
       {/* Hero */}
@@ -341,7 +372,11 @@ export default function Home() {
 
       {/* What you can bet on */}
       <section className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
-        <SectionHeader eyebrow="19 markets, 4 categories" eyebrowClass="text-up" title="What you can bet on.">
+        <SectionHeader
+          eyebrow={liveCounts ? `${totalLive} live markets, 4 categories` : "4 categories"}
+          eyebrowClass="text-up"
+          title="What you can bet on."
+        >
           <p className="max-w-2xl text-muted">
             Or type a claim in plain English and{" "}
             <Link href="/create" className="text-foreground underline decoration-border underline-offset-4 hover:decoration-accent">
@@ -359,7 +394,9 @@ export default function Home() {
               >
                 <div className="flex items-center justify-between">
                   <span className={`text-base font-semibold ${c.accent}`}>{c.label}</span>
-                  <span className="chip num px-2.5 py-0.5 text-xs text-muted">{c.count} markets</span>
+                  {liveCounts && liveCounts[c.key] > 0 && (
+                    <span className="chip num px-2.5 py-0.5 text-xs text-muted">{liveCounts[c.key]} live</span>
+                  )}
                 </div>
                 <p className="text-sm leading-relaxed text-muted">{c.body}</p>
                 <p className="mt-auto text-xs text-muted-2">

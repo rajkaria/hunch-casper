@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useNetwork } from "@/components/network-context";
 import { useMarkets } from "@/components/use-markets";
+import { marketHref } from "@/components/market-card";
 import { computeOdds, formatProbability } from "@/core/parimutuel-odds";
 import { motesToCspr } from "@/core/types";
 import type { Market } from "@/core/types";
@@ -14,7 +15,7 @@ import type { Market } from "@/core/types";
  * an empty tape would just be a stripe of dead space.
  */
 
-function TickerEntry({ market }: { market: Market }) {
+function TickerEntry({ market, focusable }: { market: Market; focusable: boolean }) {
   const odds = computeOdds(market);
   const top = odds.reduce((a, b) => (b.impliedProbability > a.impliedProbability ? b : a), odds[0]);
   const label = market.outcomes.find((o) => o.key === top?.outcomeKey)?.label ?? top?.outcomeKey ?? "";
@@ -22,7 +23,9 @@ function TickerEntry({ market }: { market: Market }) {
 
   return (
     <Link
-      href={`/markets/${market.slug}`}
+      href={marketHref(market.slug)}
+      // The duplicate marquee copy is aria-hidden, but hidden links must not stay in the tab order.
+      tabIndex={focusable ? undefined : -1}
       className="group flex shrink-0 items-center gap-2.5 px-5 py-2.5 text-xs whitespace-nowrap"
     >
       <span className="text-muted transition-colors group-hover:text-foreground">{market.title}</span>
@@ -54,7 +57,7 @@ export function MarketTicker() {
           aria-hidden={copy === 1}
         >
           {shown.map((m) => (
-            <TickerEntry key={`${copy}-${m.id}`} market={m} />
+            <TickerEntry key={`${copy}-${m.id}`} market={m} focusable={copy === 0} />
           ))}
         </div>
       ))}

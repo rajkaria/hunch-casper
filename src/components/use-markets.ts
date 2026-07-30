@@ -80,8 +80,30 @@ interface MarketData {
   error: string | null;
 }
 
+/**
+ * API path for one market, slug percent-encoded — a round slug's `#` (`cspr-hourly-updown#20658`)
+ * interpolated raw would truncate the URL at the fragment and drop the query string.
+ */
+export function marketApiPath(slug: string): string {
+  return `/api/markets/${encodeURIComponent(slug)}`;
+}
+
+/**
+ * Decode a `[slug]` route param. Next hands dynamic segments over still percent-encoded (the same
+ * reason `agents/[id]` decodes), so a round slug arrives as `cspr-hourly-updown%2320658` and would
+ * miss the store without this. A no-op on already-decoded slugs — catalogue slugs never contain `%`.
+ */
+export function decodeSlugParam(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw; // malformed escapes ("100%zz") — pass through and let the API 404 it honestly
+  }
+}
+
 /** Fetch a single market from the read model (`GET /api/markets/[slug]`). */
-export function useMarket(network: CasperNetwork, slug: string): MarketState {
+export function useMarket(network: CasperNetwork, slugParam: string): MarketState {
+  const slug = decodeSlugParam(slugParam);
   const [data, setData] = useState<MarketData | null>(null);
   // Bumped by `refresh()`. `fresh` rides alongside rather than in the counter so a refetch can ask
   // for a KV-fresh read without that becoming part of the effect's identity.
@@ -92,7 +114,7 @@ export function useMarket(network: CasperNetwork, slug: string): MarketState {
     const ctrl = new AbortController();
     const query = `network=${network}${reload.fresh ? "&fresh=1" : ""}`;
     // `no-store`: a refetch that the browser answers from its own HTTP cache is not a refresh.
-    fetch(`/api/markets/${slug}?${query}`, { signal: ctrl.signal, cache: "no-store" })
+    fetch(`${marketApiPath(slug)}?${query}`, { signal: ctrl.signal, cache: "no-store" })
       .then(async (res) => {
         if (res.status === 404) return { market: null };
         if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? "failed to load market");

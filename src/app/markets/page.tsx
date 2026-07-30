@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useNetwork } from "@/components/network-context";
 import { useMarkets } from "@/components/use-markets";
 import type { MarketCategory } from "@/core/types";
-import { MarketCard } from "@/components/market-card";
+import { MarketCard, countLiveMarkets } from "@/components/market-card";
 
 const FILTERS: { key: MarketCategory | "all"; label: string }[] = [
   { key: "all", label: "All" },
@@ -23,6 +23,7 @@ export default function MarketsPage() {
     () => (filter === "all" ? markets : markets.filter((m) => m.category === filter)),
     [markets, filter],
   );
+  const live = useMemo(() => countLiveMarkets(shown), [shown]);
 
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-12 sm:px-6">
@@ -34,9 +35,15 @@ export default function MarketsPage() {
             "Loading markets…"
           ) : (
             <>
-              <span className="num text-foreground">{shown.length}</span> live on Casper{" "}
-              <span className="text-foreground">{network}</span> — created, traded, and resolved by
-              agents.
+              <span className="num text-foreground">{live}</span> live on Casper{" "}
+              <span className="text-foreground">{network}</span>
+              {shown.length > live && (
+                <>
+                  {" · "}
+                  <span className="num text-foreground">{shown.length - live}</span> settled
+                </>
+              )}{" "}
+              — created, traded, and resolved by agents.
             </>
           )}
         </p>

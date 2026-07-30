@@ -15,18 +15,60 @@ function formatCspr(motes: string): string {
   return cspr >= 1000 ? `${(cspr / 1000).toFixed(1)}k` : cspr.toFixed(0);
 }
 
+/**
+ * Market page path with the slug percent-encoded. Round slugs contain `#`
+ * (`cspr-hourly-updown#20658`), which a raw href would turn into a URL fragment — the link
+ * would land on the base market, not the round.
+ */
+export function marketHref(slug: string): string {
+  return `/markets/${encodeURIComponent(slug)}`;
+}
+
+/** Status chip copy for a non-open market; `null` for open markets (no chip). */
+export function marketStatusChip(market: Market): string | null {
+  if (market.status === "resolved") {
+    const winner = market.outcomes.find((o) => o.key === market.resolvedOutcomeKey);
+    return `Resolved · ${winner?.label ?? market.resolvedOutcomeKey ?? "—"}`;
+  }
+  if (market.status === "locked") return "Locked";
+  if (market.status === "void") return "Void";
+  return null;
+}
+
+/** How many markets are live — only `open` trades; locked/resolved/void have stopped. */
+export function countLiveMarkets(markets: Market[]): number {
+  return markets.filter((m) => m.status === "open").length;
+}
+
+/** Live (open) market count per category — drives copy that must never contradict the board. */
+export function liveCountsByCategory(markets: Market[]): Record<MarketCategory, number> {
+  const counts: Record<MarketCategory, number> = { "casper-native": 0, "provably-fair": 0, rwa: 0, meta: 0 };
+  for (const m of markets) {
+    if (m.status === "open") counts[m.category] += 1;
+  }
+  return counts;
+}
+
 export function MarketCard({ market }: { market: Market }) {
   const odds = computeOdds(market);
   const cat = CATEGORY_META[market.category];
+  const statusChip = marketStatusChip(market);
   return (
     <Link
-      href={`/markets/${market.slug}`}
+      href={marketHref(market.slug)}
       className="card card-hover card-signal group flex flex-col gap-4 p-5"
       style={{ "--card-accent": cat.color } as React.CSSProperties}
     >
       <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider">
         <span className={`font-semibold ${cat.className}`}>{cat.label}</span>
-        <span className="chip px-2 py-0.5 text-muted">{market.network}</span>
+        <span className="flex items-center gap-1.5">
+          {statusChip && (
+            <span className={`chip px-2 py-0.5 ${market.status === "resolved" ? "text-gold" : "text-muted"}`}>
+              {statusChip}
+            </span>
+          )}
+          <span className="chip px-2 py-0.5 text-muted">{market.network}</span>
+        </span>
       </div>
 
       <h3 className="text-base font-semibold leading-snug">{market.title}</h3>
@@ -57,7 +99,7 @@ export function MarketCard({ market }: { market: Market }) {
       <div className="flex items-center justify-between border-t border-border pt-3 text-xs text-muted">
         <span className="num">{formatCspr(market.totalStakedMotes)} CSPR staked</span>
         <span className="font-semibold transition-colors group-hover:text-accent">
-          Trade{" "}
+          {market.status === "open" ? "Trade" : "View"}{" "}
           <span aria-hidden="true" className="inline-block transition-transform duration-300 group-hover:translate-x-0.5">
             →
           </span>

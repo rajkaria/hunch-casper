@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motesToCspr } from "@/core/types";
 import { SWARM_REFRESH_EVENT } from "@/components/swarm-triggers";
+import { marketHref } from "@/components/market-card";
 
 interface AgentAction {
   seq: number;
@@ -20,15 +21,17 @@ interface AgentAction {
   ts?: number;
 }
 
-/** Compact relative time — "now" / "12s ago" / "4m ago" / "2h ago". */
-function relativeTime(ts: number | undefined, nowMs: number): string {
+/** Compact relative time — "now" / "12s ago" / "4m ago" / "2h ago" / "3d ago". */
+export function relativeTime(ts: number | undefined, nowMs: number): string {
   if (!ts) return "";
   const s = Math.max(0, Math.round((nowMs - ts) / 1000));
   if (s < 5) return "now";
   if (s < 60) return `${s}s ago`;
   const m = Math.round(s / 60);
   if (m < 60) return `${m}m ago`;
-  return `${Math.round(m / 60)}h ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
 }
 
 const AGENT_ACCENT: Record<string, string> = {
@@ -124,7 +127,7 @@ export function ActivityFeed() {
           <div className="flex items-center gap-2 text-sm">
             <span className={`font-semibold ${AGENT_ACCENT[a.agent] ?? "text-foreground"}`}>{a.agent}</span>
             <span className="text-muted">{VERB[a.kind]}</span>
-            <Link href={`/markets/${slugOf(a.marketId)}`} className="truncate text-foreground hover:text-accent">
+            <Link href={marketHref(slugOf(a.marketId))} className="truncate text-foreground hover:text-accent">
               {a.marketTitle ?? a.marketId}
             </Link>
             {a.kind === "bet_placed" && a.outcomeKey && (
