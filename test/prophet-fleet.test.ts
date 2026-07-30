@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { runProphetFleet } from "@/agent/prophet";
+import { confirmableBeforeDeadline, runProphetFleet } from "@/agent/prophet";
 import { createContainer } from "@/lib/container";
 import { listActions, __resetActivity } from "@/adapters/mock/activity-log";
 import { __resetLedger } from "@/adapters/mock/settlement-ledger";
@@ -39,6 +39,17 @@ describe("Prophet fleet", () => {
     await runProphetFleet(container, 0);
     const after = await container.store.get(target.slug, "testnet");
     expect(BigInt(after!.totalStakedMotes) > BigInt(target.totalStakedMotes)).toBe(true);
+  });
+
+  it("refuses targets whose deadline falls inside the confirmation window — a paid bet on a locking market buys nothing", async () => {
+    const container = createContainer("testnet");
+    const [sample] = await container.store.list({ network: "testnet", status: "open" });
+    const now = Date.now();
+    // Deadline inside 2× the 150s confirm window → skipped; comfortably outside → bettable.
+    expect(confirmableBeforeDeadline({ ...sample, deadlineIso: new Date(now + 60_000).toISOString() }, now)).toBe(false);
+    expect(confirmableBeforeDeadline({ ...sample, deadlineIso: new Date(now + 3_600_000).toISOString() }, now)).toBe(true);
+    // Missing/garbage deadlines never veto a bet — the ledger's own status check still guards.
+    expect(confirmableBeforeDeadline({ ...sample, deadlineIso: "" }, now)).toBe(true);
   });
 
   it("the cron route runs a round and the activity API returns the feed", async () => {

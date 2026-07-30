@@ -18,6 +18,7 @@ import { appendAction } from "@/adapters/mock/activity-log";
 import type { AgentAction } from "@/adapters/mock/activity-log";
 import type { X402PaymentProof, X402PaymentRequirement } from "@/ports/payment";
 import { chainMode } from "@/config/chain-mode";
+import { DEFAULT_CONFIRM_TIMEOUT_MS } from "@/adapters/casper/confirm";
 import { recordPaidNotPlaced, recordPlacement } from "@/agent/bet-breaker";
 import { isQuarantined, permanentMarketFault, quarantineMarket } from "@/agent/market-quarantine";
 
@@ -278,6 +279,20 @@ export function selectRoundTarget(open: Market[], seq: number): Market | null {
   return open[seq % open.length];
 }
 
+/**
+ * Whether a bet paid for NOW can still land before the market locks. The agent's x402 transfer
+ * waits up to `DEFAULT_CONFIRM_TIMEOUT_MS` for execution and the market locks on the wall clock
+ * meanwhile, so a deadline inside that window is a guaranteed paid-not-placed loss: the escrow is
+ * refused AFTER the money moved. Two windows of margin — one for the transfer, one for the
+ * escrow. Better to sit a round out than to buy nothing.
+ */
+export function confirmableBeforeDeadline(market: Market, nowMs: number): boolean {
+  if (!market.deadlineIso) return true;
+  const deadline = Date.parse(market.deadlineIso);
+  if (Number.isNaN(deadline)) return true;
+  return deadline - nowMs > 2 * DEFAULT_CONFIRM_TIMEOUT_MS;
+}
+
 export async function runProphetFleet(
   container: Container,
   seq: number,
@@ -293,7 +308,10 @@ export async function runProphetFleet(
   );
   if (open.length === 0) return [];
 
-  const target = selectRoundTarget(open, seq);
+  const confirmable = open.filter((m) => confirmableBeforeDeadline(m, Date.now()));
+  if (confirmable.length === 0) return [];
+
+  const target = selectRoundTarget(confirmable, seq);
   if (!target) return [];
 
   const count = Math.min(opts.maxProphets ?? prophetsPerTick(), PROPHETS.length);
