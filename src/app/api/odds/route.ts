@@ -14,14 +14,14 @@ import { createContainer } from "@/lib/container";
 import { DEFAULT_NETWORK, isCasperNetwork } from "@/config/network";
 import { computeOdds } from "@/core/parimutuel-odds";
 import { motesToCspr } from "@/core/types";
-import { meterCall, enforcePayment, readPaymentProof } from "@/lib/query-meter";
+import { meterCall, callerIdentity, enforcePayment, readPaymentProof } from "@/lib/query-meter";
 
 export async function GET(req: Request): Promise<Response> {
   const params = new URL(req.url).searchParams;
   const netParam = params.get("network");
   const network = isCasperNetwork(netParam) ? netParam : DEFAULT_NETWORK;
   const slug = params.get("slug");
-  const caller = params.get("caller") ?? req.headers.get("x-oracle-key") ?? "anonymous";
+  const caller = callerIdentity(params.get("caller") ?? req.headers.get("x-oracle-key"), req);
 
   const container = createContainer(network);
   const decision = meterCall(caller, Date.now());
@@ -54,7 +54,8 @@ export async function GET(req: Request): Promise<Response> {
     question: m.title,
     status: m.status,
     poolCspr: Number(motesToCspr(m.totalStakedMotes).toFixed(2)),
-    outcomes: computeOdds(m).map((o) => ({
+    // Fee-inclusive multiples: the number this feed sells must be the number settlement pays.
+    outcomes: computeOdds(m, m.feeBps).map((o) => ({
       outcomeKey: o.outcomeKey,
       probability: Math.round(o.impliedProbability * 10000) / 10000,
       payoutMultiple: Math.round(o.payoutMultiple * 100) / 100,

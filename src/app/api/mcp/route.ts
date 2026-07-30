@@ -63,7 +63,10 @@ export async function POST(req: Request): Promise<Response> {
         if (!res.ok) {
           return result(id, { content: [{ type: "text", text: res.error }], isError: true });
         }
-        if (name === "place_bet") await persistEconomyState();
+        // Persist only when the tool actually mutated state — a proof-less place_bet returns the
+        // payment challenge and changes nothing, so flushing the snapshot would be a free
+        // KV-write amplifier.
+        if (res.mutated) await persistEconomyState();
         return result(id, { content: [{ type: "text", text: JSON.stringify(res.data) }] });
       } catch (err) {
         // Never let an adapter throw escape as a raw 500 — keep the JSON-RPC envelope intact.

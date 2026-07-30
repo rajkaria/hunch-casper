@@ -23,12 +23,19 @@ export const OEMBED_MAX_WIDTH = 800;
 export const OEMBED_MAX_HEIGHT = 600;
 const OEMBED_MIN = 120;
 
-/** Clamp a requested dimension into a sane range, or fall back to the default when absent/invalid. */
+/**
+ * Clamp a requested dimension into a sane range, or fall back to the default when absent/invalid.
+ * The consumer's maxwidth/maxheight is a hard ceiling (the oEmbed spec forbids exceeding it), so
+ * the readability floor applies only when it fits under that ceiling; below it we honour the
+ * request down to 1px rather than violate the spec.
+ */
 export function clampDimension(raw: string | null, fallback: number, max: number): number {
   if (raw === null) return fallback;
   const n = Number(raw);
   if (!Number.isFinite(n)) return fallback;
-  return Math.max(OEMBED_MIN, Math.min(Math.floor(n), max));
+  const requested = Math.min(Math.floor(n), max);
+  if (requested < OEMBED_MIN) return Math.max(1, requested);
+  return requested;
 }
 
 export function buildOEmbed(input: {

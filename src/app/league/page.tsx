@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { createContainer } from "@/lib/container";
-import { DEFAULT_NETWORK } from "@/config/network";
+import type { CasperNetwork } from "@/config/network";
+import { DEFAULT_NETWORK, isCasperNetwork } from "@/config/network";
 import { LEAGUE_EPOCH_MS, SEASON_MIN_SETTLED, seasonAt, seasonStandings, seasonWinner } from "@/core/seasons";
 import { leaguePrizePool, prizeShares } from "@/core/league-prize";
 import { formatCspr } from "@/core/stats";
@@ -37,16 +38,22 @@ function formatDate(ms: number): string {
  * compiler is right to refuse it — a render that re-runs could land in a different season. The
  * clock is read once here, and everything downstream is a pure function of it.
  */
-async function loadCurrentSeason() {
+async function loadCurrentSeason(network: CasperNetwork) {
   const season = seasonAt("weekly", LEAGUE_EPOCH_MS, Date.now());
-  const container = createContainer(DEFAULT_NETWORK);
+  const container = createContainer(network);
   const events = await container.events.fetch({ limit: 5_000 });
   const standings = seasonStandings(events, season, catalogueMeta());
   return { season, standings, winner: seasonWinner(standings) };
 }
 
-export default async function LeaguePage() {
-  const { season, standings, winner } = await loadCurrentSeason();
+export default async function LeaguePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ network?: string }>;
+}) {
+  const { network: netParam } = await searchParams;
+  const network = isCasperNetwork(netParam) ? netParam : DEFAULT_NETWORK;
+  const { season, standings, winner } = await loadCurrentSeason(network);
 
   return (
     <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-16 sm:px-6">
@@ -125,14 +132,18 @@ export default async function LeaguePage() {
                       {row.rank === 1 && row.eligible ? <span className="text-gold">{row.rank}</span> : row.rank}
                     </td>
                     <td className="px-3 py-2.5 font-medium">
-                      {row.agent}
+                      <Link href={`/agents/${encodeURIComponent(row.agent)}`} className="hover:underline">
+                        {row.agent}
+                      </Link>
                       {!row.eligible && (
                         <span className="ml-2 text-xs" title={`Needs ${SEASON_MIN_SETTLED} settled forecasts to qualify`}>
                           · building
                         </span>
                       )}
                     </td>
-                    <td className="num px-3 py-2.5">{row.calibration.brier.toFixed(3)}</td>
+                    <td className="num px-3 py-2.5">
+                      {row.calibration.sampleCount === 0 ? "—" : row.calibration.brier.toFixed(3)}
+                    </td>
                     <td className="num px-3 py-2.5">{(row.calibration.skillBps / 100).toFixed(1)}%</td>
                     <td className="num px-3 py-2.5">{row.calibration.sampleCount}</td>
                     <td className={`num px-3 py-2.5 ${motesToCspr(row.realizedPnlMotes) > 0 ? "text-up" : motesToCspr(row.realizedPnlMotes) < 0 ? "text-down" : ""}`}>

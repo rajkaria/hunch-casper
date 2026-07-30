@@ -109,12 +109,18 @@ describe("oEmbed builder", () => {
     expect(slugFromOEmbedUrl("https://x.test/markets/BAD_SLUG")).toBeNull();
   });
 
-  it("clamps requested dimensions", () => {
+  it("clamps requested dimensions without ever exceeding the consumer's max", () => {
     expect(clampDimension(null, 480, 800)).toBe(480);
     expect(clampDimension("100000", 480, 800)).toBe(800);
-    expect(clampDimension("10", 480, 800)).toBe(120); // floor
     expect(clampDimension("abc", 480, 800)).toBe(480);
     expect(clampDimension("500", 480, 800)).toBe(500);
+    // The oEmbed spec makes maxwidth/maxheight a hard ceiling: never bump a small request up to
+    // the 120px readability floor (returning 120 for maxwidth=100 was a spec violation).
+    expect(clampDimension("100", 480, 800)).toBe(100);
+    expect(clampDimension("10", 480, 800)).toBe(10);
+    expect(clampDimension("0", 480, 800)).toBe(1); // floor of 1
+    expect(clampDimension("-50", 480, 800)).toBe(1);
+    expect(clampDimension("120", 480, 800)).toBe(120); // the floor still applies when it fits
   });
 });
 

@@ -9,12 +9,18 @@
 
 import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
+import { peekOracleReputation } from "@/adapters/mock/oracle-ledger";
 
 export async function GET(
   _req: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await ctx.params;
+  // Peek first: a read must not fabricate a 0/0 reputation for an arbitrary id, and it must not
+  // insert one either (the ensure-on-read would pollute the leaderboard and the KV snapshot).
+  if (!peekOracleReputation(id)) {
+    return NextResponse.json({ error: `unknown oracle '${id}'` }, { status: 404 });
+  }
   const reputation = await createContainer().oracle.reputationOf(id);
   return NextResponse.json({ reputation });
 }

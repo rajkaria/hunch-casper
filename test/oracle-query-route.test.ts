@@ -78,4 +78,35 @@ describe("POST /api/oracle/query", () => {
     expect((await query({ network: "testnet", caller: "c" })).status).toBe(400);
     expect((await query({ network: "devnet", slug: SLUG })).status).toBe(400);
   });
+
+  it("meters caller-less queries per client IP, not one shared anonymous bucket", async () => {
+    process.env.ORACLE_FREE_QUERIES_PER_HOUR = "1";
+    const from = (ip: string) =>
+      queryPOST(
+        new Request("http://localhost/api/oracle/query", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-forwarded-for": ip },
+          body: JSON.stringify({ network: "testnet", slug: SLUG }),
+        }),
+      );
+    expect((await from("9.9.9.9")).status).toBe(200);
+    expect((await from("9.9.9.9")).status).toBe(402); // this IP's free tier is spent
+    expect((await from("8.8.8.8")).status).toBe(200); // another consumer is unaffected
+  });
+
+  it("ignores a non-string caller instead of metering '[object Object]'", async () => {
+    process.env.ORACLE_FREE_QUERIES_PER_HOUR = "1";
+    const withObjCaller = (ip: string) =>
+      queryPOST(
+        new Request("http://localhost/api/oracle/query", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-forwarded-for": ip },
+          body: JSON.stringify({ network: "testnet", slug: SLUG, caller: { a: 1 } }),
+        }),
+      );
+    // Both fall back to their own IP buckets — if they were lumped into one stringified-object
+    // bucket the second call would 402.
+    expect((await withObjCaller("7.7.7.7")).status).toBe(200);
+    expect((await withObjCaller("6.6.6.6")).status).toBe(200);
+  });
 });

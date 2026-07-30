@@ -40,7 +40,17 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await context.params;
-  const agent = decodeURIComponent(id);
+  let agent: string;
+  try {
+    agent = decodeURIComponent(id);
+  } catch {
+    // decodeURIComponent throws URIError on ids like "100%zz" — that's the caller's bad input,
+    // not our 500.
+    return NextResponse.json(
+      { error: "malformed agent id" },
+      { status: 400, headers: { "cache-control": "no-store" } },
+    );
+  }
   const param = new URL(req.url).searchParams.get("network");
   const network = isCasperNetwork(param) ? param : DEFAULT_NETWORK;
 

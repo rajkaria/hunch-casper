@@ -1,14 +1,23 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { POST as mcpPOST } from "@/app/api/mcp/route";
 import { MARKET_DEFINITIONS } from "@/core/catalogue";
 import { __resetLedger } from "@/adapters/mock/settlement-ledger";
 import { __resetOracleLedger } from "@/adapters/mock/oracle-ledger";
 import { __resetConsumedNonces } from "@/lib/agent-bet";
+import { persistEconomyState } from "@/adapters/persist/economy-state";
+
+// Spy on the KV flush (a no-op in tests) so the route's "persist only on a real mutation" contract
+// is observable. Everything else in the module stays real.
+vi.mock("@/adapters/persist/economy-state", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/adapters/persist/economy-state")>();
+  return { ...actual, persistEconomyState: vi.fn(actual.persistEconomyState) };
+});
 
 beforeEach(() => {
   __resetLedger();
   __resetOracleLedger();
   __resetConsumedNonces();
+  vi.mocked(persistEconomyState).mockClear();
 });
 
 const URL = "http://localhost/api/mcp";
@@ -95,6 +104,34 @@ describe("MCP server (/api/mcp)", () => {
     );
     expect(placed.status).toBe("placed");
     expect(placed.deployHash).toHaveLength(64);
+  });
+
+  it("persists the economy snapshot only when place_bet actually places", async () => {
+    // A proof-less place_bet is a read (it returns the payment challenge) — no KV write.
+    const quote = parseContent(
+      await callTool("place_bet", {
+        network: "testnet",
+        marketId: "testnet:btc-150k-aug",
+        outcomeKey: "yes",
+        amountMotes: "1000000000",
+        bettor: "agent:momentum",
+      }),
+    );
+    expect(quote.status).toBe("payment_required");
+    expect(persistEconomyState).not.toHaveBeenCalled();
+
+    const placed = parseContent(
+      await callTool("place_bet", {
+        network: "testnet",
+        marketId: "testnet:btc-150k-aug",
+        outcomeKey: "yes",
+        amountMotes: "1000000000",
+        bettor: "agent:momentum",
+        paymentProof: { scheme: "casper-x402", deployHash: "def", nonce: quote.requirement.nonce },
+      }),
+    );
+    expect(placed.status).toBe("placed");
+    expect(persistEconomyState).toHaveBeenCalled();
   });
 
   it("rejects an unknown method", async () => {

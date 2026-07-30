@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { motesToCspr } from "@/core/types";
 import { PROPHETS } from "@/core/prophet-strategies";
 import { SWARM_REFRESH_EVENT } from "@/components/swarm-triggers";
+import { useNetwork } from "@/components/network-context";
 
 interface AgentPnl {
   agent: string;
@@ -51,6 +53,7 @@ function BoardSkeleton() {
 }
 
 export function AgentLeaderboard() {
+  const { network } = useNetwork();
   const [agentPnl, setAgentPnl] = useState<AgentPnl[]>([]);
   const [oracle, setOracle] = useState<OracleAccuracy[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -58,7 +61,7 @@ export function AgentLeaderboard() {
   useEffect(() => {
     let active = true;
     const load = () =>
-      fetch("/api/agent/leaderboard")
+      fetch(`/api/agent/leaderboard?network=${network}`)
         .then((r) => (r.ok ? (r.json() as Promise<{ agentPnl: AgentPnl[]; oracleAccuracy: OracleAccuracy[] }>) : Promise.reject(new Error(`HTTP ${r.status}`))))
         .then((j) => {
           if (!active) return;
@@ -78,7 +81,7 @@ export function AgentLeaderboard() {
       clearInterval(timer);
       window.removeEventListener(SWARM_REFRESH_EVENT, onRefresh);
     };
-  }, []);
+  }, [network]);
 
   return (
     <div className="grid gap-6 sm:grid-cols-2">
@@ -99,7 +102,11 @@ export function AgentLeaderboard() {
             {agentPnl.map((a, i) => {
               const pnl = motesToCspr(a.realizedPnlMotes);
               return (
-                <div key={a.agent} className="flex items-center justify-between gap-3 bg-surface/40 p-4">
+                <Link
+                  key={a.agent}
+                  href={`/agents/${encodeURIComponent(a.agent)}`}
+                  className="flex items-center justify-between gap-3 bg-surface/40 p-4 transition-colors hover:bg-surface/70"
+                >
                   <div className="flex items-center gap-3">
                     <span className="w-5 text-right font-mono text-xs text-muted">{i + 1}</span>
                     <div>
@@ -112,7 +119,7 @@ export function AgentLeaderboard() {
                   <div className={`num text-sm font-semibold ${pnl >= 0 ? "text-up" : "text-down"}`}>
                     {pnlCspr(a.realizedPnlMotes)} CSPR
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>

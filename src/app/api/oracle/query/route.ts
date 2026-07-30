@@ -13,7 +13,7 @@ import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { isCasperNetwork } from "@/config/network";
 import { resolutionEvidenceFor } from "@/adapters/mock/resolution-evidence-ledger";
-import { meterCall, enforcePayment, readPaymentProof, __resetSharedQueryMeter } from "@/lib/query-meter";
+import { meterCall, callerIdentity, enforcePayment, readPaymentProof, __resetSharedQueryMeter } from "@/lib/query-meter";
 
 /** Test-only reset — delegates to the shared meter so this and /api/odds share one pool. */
 export function __resetQueryMeter(): void {
@@ -34,7 +34,8 @@ export async function POST(req: Request): Promise<Response> {
   }
   const slug = String(body.slug ?? "");
   if (slug.length === 0) return NextResponse.json({ error: "slug is required" }, { status: 400 });
-  const caller = String(body.caller ?? req.headers.get("x-oracle-key") ?? "anonymous");
+  const explicitCaller = typeof body.caller === "string" && body.caller.length > 0 ? body.caller : req.headers.get("x-oracle-key");
+  const caller = callerIdentity(explicitCaller, req);
 
   const container = createContainer(network);
   const decision = meterCall(caller, Date.now());

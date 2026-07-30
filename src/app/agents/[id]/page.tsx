@@ -23,42 +23,79 @@ function pct(x: number): string {
   return `${Math.round(x * 100)}%`;
 }
 
+/** The demo identity follows are keyed under until per-user custody exists. */
+const DEMO_FOLLOWER = "demo-follower";
+
 export default function AgentProfilePage() {
   const { network } = useNetwork();
   const params = useParams<{ id: string }>();
   const agent = decodeURIComponent(params.id);
   const [rep, setRep] = useState<Reputation | null>(null);
-  const [state, setState] = useState<"loading" | "none" | "ready">("loading");
+  const [state, setState] = useState<"loading" | "none" | "error" | "ready">("loading");
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [following, setFollowing] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let live = true;
     fetch(`/api/agents/${encodeURIComponent(agent)}/reputation?network=${network}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
+      .then(async (r) => {
+        if (r.ok) return { kind: "ok" as const, body: (await r.json()) as Reputation };
+        // Only a 404 means "no history"; anything else is a failure and must say so.
+        if (r.status === 404) return { kind: "none" as const };
+        const body = (await r.json().catch(() => ({}))) as { error?: string };
+        return { kind: "error" as const, message: body.error ?? `failed to load track record (HTTP ${r.status})` };
+      })
+      .then((res) => {
         if (!live) return;
-        if (!j) setState("none");
-        else {
-          setRep(j);
+        if (res.kind === "ok") {
+          setRep(res.body);
           setState("ready");
+        } else if (res.kind === "none") {
+          setState("none");
+        } else {
+          setLoadError(res.message);
+          setState("error");
         }
       })
-      .catch(() => live && setState("none"));
+      .catch((err: unknown) => {
+        if (!live) return;
+        setLoadError(err instanceof Error ? err.message : "failed to load track record");
+        setState("error");
+      });
     return () => {
       live = false;
     };
   }, [agent, network]);
 
+  // Hydrate the follow state so a revisit shows "Following" instead of always resetting the button.
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/follow?follower=${encodeURIComponent(DEMO_FOLLOWER)}&agentId=${encodeURIComponent(agent)}`)
+      .then((r) => (r.ok ? (r.json() as Promise<{ following: boolean; config?: { active: boolean } }>) : null))
+      .then((j) => {
+        if (live && j) setFollowing(j.following && j.config?.active !== false);
+      })
+      .catch(() => {
+        /* leave the default (not following) — the toggle still works */
+      });
+    return () => {
+      live = false;
+    };
+  }, [agent]);
+
   async function toggleFollow() {
     setBusy(true);
     try {
-      await fetch("/api/follow", {
+      const res = await fetch("/api/follow", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ follower: "demo-follower", agentId: agent, active: !following }),
+        body: JSON.stringify({ follower: DEMO_FOLLOWER, agentId: agent, active: !following }),
       });
-      setFollowing((f) => !f);
+      // Only flip the button when the server actually recorded the change.
+      if (res.ok) setFollowing((f) => !f);
+    } catch {
+      /* network failure — keep the current state rather than lying about it */
     } finally {
       setBusy(false);
     }
@@ -87,12 +124,19 @@ export default function AgentProfilePage() {
 
       {state === "loading" && <p className="mt-8 text-muted">Loading track record…</p>}
       {state === "none" && <p className="mt-8 text-muted">No on-chain betting history for this agent yet.</p>}
+      {state === "error" && (
+        <p className="mt-8 text-sm text-down">Couldn&apos;t load the track record: {loadError}</p>
+      )}
 
       {state === "ready" && rep && (
         <>
           {/* Calibration first — the headline signal. */}
           <section className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label="Brier" value={rep.calibration.brier.toFixed(3)} hint="lower is better · 0.25 = coin flip" />
+            <Stat
+              label="Brier"
+              value={rep.calibration.sampleCount === 0 ? "—" : rep.calibration.brier.toFixed(3)}
+              hint="lower is better · 0.25 = coin flip"
+            />
             <Stat label="Skill" value={`${(rep.calibration.skillBps / 100).toFixed(1)}%`} hint="above a coin flip" />
             <Stat label="Hit rate" value={pct(rep.calibration.hitRate)} />
             <Stat label="Forecasts" value={String(rep.calibration.sampleCount)} hint="evidence behind the score" />
@@ -116,8 +160,10 @@ export default function AgentProfilePage() {
           )}
 
           <p className="mt-8 text-sm text-muted">
-            Copying mirrors this agent&apos;s <em>future</em> positions, sized to your budget and capped per bet.
-            Meta-markets are never mirrored. The agent earns a fee share on the volume it drives.
+            <span className="font-semibold text-gold">Demo preview</span> — this button records your
+            follow config, but mirroring goes live with per-agent custody. When it does, copying
+            mirrors this agent&apos;s <em>future</em> positions, sized to your budget and capped per
+            bet. Meta-markets are never mirrored.
           </p>
         </>
       )}

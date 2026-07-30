@@ -4,6 +4,8 @@ import type { OracleReputationState } from "@/core/oracle-reputation";
 import {
   oracleRecordResolution,
   oracleReputationOf,
+  peekOracleReputation,
+  exportOracleState,
   __resetOracleLedger,
 } from "@/adapters/mock/oracle-ledger";
 import { GET as oracleGET } from "@/app/api/oracle/[id]/route";
@@ -34,6 +36,18 @@ describe("oracle-reputation ledger", () => {
     expect(accuracyBps(rep.accurate, rep.resolved)).toBe(9609);
   });
 
+  it("peek reads without inserting — the Arbiter baseline is visible, junk ids are not fabricated", () => {
+    // Unknown oracle: no reputation, and crucially no seeded 0/0 entry left behind.
+    expect(peekOracleReputation("ghost")).toBeUndefined();
+    // The Arbiter's baseline is visible even before anything touched the ledger…
+    expect(peekOracleReputation("arbiter")?.resolved).toBe(128);
+    // …and neither peek inserted anything (exportOracleState reads raw entries, no ensure()).
+    expect(exportOracleState().reputations).toHaveLength(0);
+    // A recorded oracle becomes peekable.
+    oracleRecordResolution("other", "m1", true);
+    expect(peekOracleReputation("other")?.resolved).toBe(1);
+  });
+
   it("folds new resolutions in and is idempotent per market", () => {
     const a = oracleRecordResolution("arbiter", "m1", true);
     expect(a.resolved).toBe(129);
@@ -59,5 +73,24 @@ describe("GET /api/oracle/[id]", () => {
     expect(json.reputation.accuracyBps).toBe(9609);
     expect(json.reputation.resolvedCount).toBe(128);
     expect(json.reputation.accuracy).toBeCloseTo(0.9609, 4);
+  });
+
+  it("404s an unknown oracle instead of fabricating a reputation — and the read leaves no trace", async () => {
+    const res = await oracleGET(new Request("http://localhost/api/oracle/totally-junk"), {
+      params: Promise.resolve({ id: "totally-junk" }),
+    });
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toContain("unknown oracle 'totally-junk'");
+    // The old ensure-on-read would have seeded a 0/0 entry into the board + the KV snapshot.
+    expect(exportOracleState().reputations.some(([id]) => id === "totally-junk")).toBe(false);
+  });
+
+  it("still serves an oracle that earned its entry through a resolution", async () => {
+    oracleRecordResolution("community-1", "m9", true);
+    const res = await oracleGET(new Request("http://localhost/api/oracle/community-1"), {
+      params: Promise.resolve({ id: "community-1" }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).reputation.resolvedCount).toBe(1);
   });
 });

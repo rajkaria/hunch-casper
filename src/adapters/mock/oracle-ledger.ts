@@ -40,6 +40,18 @@ export function oracleReputationOf(oracleId: string): OracleReputationState {
 }
 
 /**
+ * A non-inserting read: the oracle's reputation if it is known, else `undefined`. Unlike
+ * `oracleReputationOf` this never seeds the ledger, so a junk id in a GET can't pollute the
+ * leaderboard or the persisted snapshot. The Arbiter's baseline is visible even before first
+ * insert — it is always a known oracle.
+ */
+export function peekOracleReputation(oracleId: string): OracleReputationState | undefined {
+  const existing = ledger.get(oracleId);
+  if (existing) return { ...existing };
+  return oracleId === "arbiter" ? { ...ARBITER_BASELINE } : undefined;
+}
+
+/**
  * Every known oracle's reputation, ranked by accuracy (desc) then most-resolved — the
  * oracle-accuracy leaderboard. The Arbiter is always present (seeded on first read) so the board
  * is never empty even before the first live resolution.

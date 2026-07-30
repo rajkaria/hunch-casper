@@ -68,6 +68,16 @@ describe("GET /api/agents/[id]/reputation", () => {
     expect(json).not.toHaveProperty("trustScore");
   });
 
+  it("400s a malformed (undecodable) agent id instead of crashing", async () => {
+    // "100%zz" makes decodeURIComponent throw URIError — that must be the caller's 400, not our 500.
+    const res = await reputationGET(
+      new Request("http://localhost/api/agents/100%zz/reputation"),
+      params("100%zz"),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("malformed agent id");
+  });
+
   it("decodes a URL-encoded agent id", async () => {
     const encoded = encodeURIComponent(KNOWN_AGENT);
     expect(encoded).toContain("%3A");

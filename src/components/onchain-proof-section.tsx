@@ -39,7 +39,7 @@ export function OnchainProofSection() {
   if (proofs.length === 0) return null;
 
   return (
-    <section className="border-t border-border bg-surface/40">
+    <section id="onchain-proof" className="scroll-mt-24 border-t border-border bg-surface/40">
       <div className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
         <div className="mb-10 flex flex-col gap-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-up">

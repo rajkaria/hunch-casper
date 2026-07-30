@@ -33,4 +33,41 @@ describe("/api/follow", () => {
     expect((await followGET(new Request("http://localhost/api/follow?follower=x"))).status).toBe(400);
     expect((await post({ follower: "u1" })).status).toBe(400);
   });
+
+  it("400s non-string identities instead of storing '[object Object]'", async () => {
+    expect((await post({ follower: { a: 1 }, agentId: "agent:x" })).status).toBe(400);
+    expect((await post({ follower: "u1", agentId: 42 })).status).toBe(400);
+    // Nothing was stored under the stringified object.
+    const read = await followGET(
+      new Request("http://localhost/api/follow?follower=%5Bobject%20Object%5D&agentId=agent:x"),
+    );
+    expect((await read.json()).following).toBe(false);
+  });
+
+  it("requires scaleBps to be a safe integer in 1..10000", async () => {
+    expect((await post({ follower: "u1", agentId: "a", scaleBps: 0 })).status).toBe(400);
+    expect((await post({ follower: "u1", agentId: "a", scaleBps: -5 })).status).toBe(400);
+    expect((await post({ follower: "u1", agentId: "a", scaleBps: 10_001 })).status).toBe(400);
+    expect((await post({ follower: "u1", agentId: "a", scaleBps: 2.5 })).status).toBe(400);
+    expect((await post({ follower: "u1", agentId: "a", scaleBps: "2500" })).status).toBe(400);
+    const ok = await post({ follower: "u1", agentId: "a", scaleBps: 10_000 });
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).scaleBps).toBe(10_000);
+  });
+
+  it("requires perBetCapMotes (when present) to be a digits-only string", async () => {
+    expect((await post({ follower: "u1", agentId: "a", perBetCapMotes: 5 })).status).toBe(400);
+    expect((await post({ follower: "u1", agentId: "a", perBetCapMotes: "1e9" })).status).toBe(400);
+    expect((await post({ follower: "u1", agentId: "a", perBetCapMotes: "-5" })).status).toBe(400);
+    const ok = await post({ follower: "u1", agentId: "a", perBetCapMotes: "5000000000" });
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).perBetCapMotes).toBe("5000000000");
+  });
+
+  it("caps identity lengths at 128 characters", async () => {
+    const long = "x".repeat(129);
+    expect((await post({ follower: long, agentId: "a" })).status).toBe(400);
+    expect((await post({ follower: "u", agentId: long })).status).toBe(400);
+    expect((await post({ follower: "x".repeat(128), agentId: "a" })).status).toBe(200);
+  });
 });

@@ -124,7 +124,8 @@ function pickNetwork(args: Record<string, unknown>): CasperNetwork {
 }
 
 function marketView(m: Market) {
-  const odds = computeOdds(m);
+  // Fee-inclusive: an agent acting on this multiple gets the number settlement pays.
+  const odds = computeOdds(m, m.feeBps);
   return {
     id: m.id,
     slug: m.slug,
@@ -145,7 +146,11 @@ function marketView(m: Market) {
   };
 }
 
-export type ToolResult = { ok: true; data: unknown } | { ok: false; error: string };
+export type ToolResult =
+  /** `mutated` is set when the call actually changed economy state (e.g. a bet placed) — the
+   * transport uses it to decide whether a KV persist is warranted. Absent ⇒ read-only. */
+  | { ok: true; data: unknown; mutated?: boolean }
+  | { ok: false; error: string };
 
 /** Dispatch one MCP tool call against the app's ports. */
 export async function callTool(name: string, rawArgs: unknown): Promise<ToolResult> {
@@ -170,7 +175,7 @@ export async function callTool(name: string, rawArgs: unknown): Promise<ToolResu
     case "get_odds": {
       const m = await container.store.get(String(args.slug ?? ""), network);
       if (!m) return { ok: false, error: `no market '${String(args.slug)}' on ${network}` };
-      return { ok: true, data: { slug: m.slug, odds: computeOdds(m) } };
+      return { ok: true, data: { slug: m.slug, odds: computeOdds(m, m.feeBps) } };
     }
     case "quote_bet": {
       const res = await agentBet(container, {
@@ -191,7 +196,8 @@ export async function callTool(name: string, rawArgs: unknown): Promise<ToolResu
         paymentProof: args.paymentProof as X402PaymentProof | undefined,
       });
       if (res.status === "error") return { ok: false, error: res.error };
-      return { ok: true, data: res };
+      // Only a placed bet mutates the economy — a payment_required challenge changes nothing.
+      return { ok: true, data: res, mutated: res.status === "placed" };
     }
     case "get_oracle_reputation": {
       const oracleId = typeof args.oracleId === "string" && args.oracleId.length > 0 ? args.oracleId : "arbiter";

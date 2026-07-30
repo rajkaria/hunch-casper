@@ -27,6 +27,18 @@ export function meterCall(caller: string, nowMs: number): MeterDecision {
   return meterQuery(caller, nowMs, METER, queryTierFromEnv());
 }
 
+/**
+ * The identity a metered call is billed to. An explicit caller id / x-oracle-key wins; otherwise
+ * key by client IP so anonymous consumers each get their own free tier instead of one shared —
+ * and trivially resettable — "anonymous" bucket. Demo-grade: x-forwarded-for is spoofable, but it
+ * moves the reset cost from "omit a parameter" to "rotate an IP".
+ */
+export function callerIdentity(explicit: string | null | undefined, req: Request): string {
+  if (typeof explicit === "string" && explicit.length > 0) return explicit;
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return ip ? `ip:${ip}` : "anonymous";
+}
+
 export type PaidGate =
   | { ok: true }
   | { ok: false; status: 402; challenge: unknown }
