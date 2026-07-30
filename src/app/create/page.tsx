@@ -584,7 +584,11 @@ export default function CreateMarketPage() {
             disabled={busy || claim.trim().length === 0 || claimTooLong || oracleMissing || Boolean(terms?.blocker)}
             onClick={requestChallenge}
           >
-            {busy ? "Composing…" : "Preview & get bond"}
+            {/* `busy` is shared with the pay/sign flow below, and this button once claimed to be
+                "Composing…" while a wallet was open on the creation — two buttons, both busy, one
+                lying about what for. `stage` is set only by the flows down there, so its absence is
+                what makes this one's own work. */}
+            {busy && stage === null ? "Composing…" : "Preview & get bond"}
           </button>
         )}
 

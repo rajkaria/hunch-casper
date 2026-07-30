@@ -127,7 +127,25 @@ export interface CsprClickLike {
   /** Abandons an in-flight sign-in. Closes the popup in popup mode; a no-op otherwise. */
   cancelSignIn?: () => void;
   disconnect?: (provider?: string, options?: unknown) => Promise<unknown>;
-  getActiveAccount?: () => { public_key?: string; publicKey?: string; name?: string } | null;
+  getActiveAccount?: () => {
+    public_key?: string;
+    publicKey?: string;
+    name?: string;
+    /** Which wallet this session belongs to — `"casper-wallet"`, `"walletconnect"`, … */
+    provider?: string;
+  } | null;
+  /**
+   * The live provider instance, or `undefined` when the SDK has not built one in THIS page's
+   * lifetime. Read-only here, and the whole subject of `prepareToSign` below.
+   */
+  provider?: { name?: () => string } | undefined;
+  /**
+   * Build (or return) the provider instance for a wallet key, assigning `sdk.provider` as a side
+   * effect. Public in SDK 2.1 and what `sign()` calls on every signature; `send()` does not, which
+   * is the bug `prepareToSign` exists to close. Returns `undefined` when the wallet cannot be
+   * instantiated (extension gone), and THROWS `Unsupported wallet: <key>` for an unknown key.
+   */
+  getProviderInstance?: (provider: string) => Promise<unknown>;
   /**
    * The SDK's mobile handoff, and the reason Connect used to open a download page in a new tab.
    * Typed here only so it can be disarmed — see `disarmInAppBrowserRedirect`.
@@ -893,6 +911,105 @@ export async function connectorForConnectAttempt(
   return activeConnector();
 }
 
+// ---------------------------------------------------------------------------------------------
+// The signing pre-flight — the step SDK 2.1's `send()` forgot
+// ---------------------------------------------------------------------------------------------
+
+/** The wallet key of the provider instance the SDK currently holds, or `null` if it holds none. */
+function liveProviderName(sdk: CsprClickLike): string | null {
+  const live = sdk.provider;
+  if (!live) return null;
+  try {
+    return typeof live.name === "function" ? live.name() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Make the SDK safe to call `send()` on — and the reason this exists is worth spelling out,
+ * because the failure it prevents is invisible.
+ *
+ * `sign()` in `csprclick-sdk-2.1.js` resolves its provider before using it:
+ *
+ *     async sign(e,t){ const r=this.getActiveAccount(); if(!r) throw Error("Sign in first.");
+ *       ... const n=await this.getProviderInstance(r.provider);
+ *       if(!n) throw Error("Could not establish a connection with the provider"); ... }
+ *
+ * `send()` does not:
+ *
+ *     async send(e,t,r=void 0,n=120){ const i=this.getActiveAccount(); if(!i) throw Error("Sign in first.");
+ *       if(t!==i?.public_key) throw Error("signing public key is not active");
+ *       return new Promise(async(t,o)=>{ const s=await this.doWorkAndPersistAccountChangesIfNeeded(i,
+ *           async()=>await(this.provider?.send(e,i,{chainName:this.chainName})));
+ *         ...
+ *         if(r&&a){ …websocket… } else s.status="sent",t({...s}) })}
+ *
+ * `this.provider` is only ever assigned inside `getProviderInstance`, i.e. by a `connect`,
+ * `switchAccount` or `sign` **in this page's lifetime**. But `getActiveAccount()` reads
+ * `localStorage["csprclick:account"]`, so it survives a reload. On any page load that did not
+ * itself run a connect — a refresh, a link, a return from the wallet — the two disagree: the
+ * account is there, the provider is not.
+ *
+ * Then `this.provider?.send(...)` short-circuits to `undefined`, `s` is `undefined`, and the else
+ * branch does `s.status="sent"` → a TypeError thrown inside an `async` Promise *executor*. That
+ * rejects only the executor's own discarded promise; the promise `send()` returned **never
+ * settles**. No wallet popup, no error, no rejection — the caller's `await` hangs for the life of
+ * the page. Verified live against the shipped bundle on 2026-07-31: with a stored account and no
+ * provider instance, `csprclick.send("{}", key)` was still pending after 6 seconds. That is the
+ * "Approve the creation in your wallet…" freeze on `/create`, and it applied equally to every bet.
+ *
+ * So this does what `send()` should: resolve the provider first, and answer with a message instead
+ * of a promise that never returns. Deliberately NOT a timeout around `send()` — once the provider
+ * is live the only thing left to wait for is a human at a wallet popup, and a timeout there would
+ * report failure for a bond that was actually paid.
+ *
+ * Returns `null` when signing may proceed, or the reason it may not.
+ */
+export async function prepareToSign(sdk: CsprClickLike, publicKey: string): Promise<string | null> {
+  // An SDK build that cannot be asked is absence of evidence, not evidence of a dead session:
+  // proceed and let `send()` answer. Every shipped 2.x exposes this.
+  if (typeof sdk.getActiveAccount !== "function") return null;
+  const active = sdk.getActiveAccount();
+  if (!active) {
+    // Our own session outlived CSPR.click's. Reconnecting is the only route back, and saying so is
+    // strictly better than the SDK's bare "Sign in first."
+    return "This wallet is no longer signed in to CSPR.click — reconnect it and try again.";
+  }
+  const activeKey = active.public_key ?? active.publicKey;
+  if (typeof activeKey === "string" && activeKey.length > 0 && activeKey !== publicKey) {
+    // The extension switched accounts under us. `send()` throws "signing public key is not active";
+    // name the actual problem instead.
+    return "Your wallet is on a different account than this page — reconnect to sign with it.";
+  }
+  const provider = typeof active.provider === "string" ? active.provider : "";
+  // Nothing to resolve against, or an SDK build without the method: leave it to `send()` rather
+  // than invent a failure. (`liveProviderName` already answering means the instance is warm.)
+  if (provider.length === 0) return null;
+  if (liveProviderName(sdk) === provider) return null;
+  const label = PROVIDER_LABELS[provider] ?? "The wallet";
+  try {
+    if (providerNeedsPairing(provider) && sdk.signInWithAccount) {
+      // A WalletConnect relay session does not survive a reload the way an extension does, so the
+      // instance alone is not enough: `signInWithAccount` is the SDK's own resume — it builds the
+      // instance AND re-opens the session with `dontShowUI`, exactly as its React UI does.
+      await sdk.signInWithAccount(active);
+    } else if (sdk.getProviderInstance) {
+      await sdk.getProviderInstance(provider);
+    } else {
+      return null;
+    }
+  } catch (err) {
+    // `getProviderInstance` throws only for an unknown wallet key; `signInWithAccount` swallows its
+    // own failures by signing out, which the check below catches.
+    return err instanceof Error ? err.message : `${label} could not be reached`;
+  }
+  if (liveProviderName(sdk) !== provider) {
+    return `${label} could not be reached from this page — reconnect your wallet and try again.`;
+  }
+  return null;
+}
+
 export const csprClickConnector: WalletConnector = {
   id: "csprclick",
   // Loaded, configured, AND not known-rejected: an app id CSPR.click refuses leaves the SDK
@@ -987,6 +1104,10 @@ export const csprClickConnector: WalletConnector = {
     if (!sdk?.send) {
       return { ok: false, reason: "failed", message: "This wallet cannot sign transactions" };
     }
+    // Before anything is submitted: give the SDK the provider instance `send()` assumes it already
+    // has. Without this the call below can hang forever with no popup — see `prepareToSign`.
+    const blocked = await prepareToSign(sdk, publicKey);
+    if (blocked !== null) return { ok: false, reason: "failed", message: blocked };
     try {
       const res = await sdk.send(transactionJson, publicKey);
       if (res?.cancelled) {
