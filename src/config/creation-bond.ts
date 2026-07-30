@@ -23,12 +23,14 @@
  * The vault only ever checks `attached >= creation_bond`, so attaching more than the deployed
  * vault's configured bond can never revert a call that used to work.
  *
- * ⚠️ WHO GETS THE REFUND. `HunchVault::refund_bond` returns the bond to `config.creator`, which is
- * `env().caller()` at creation — and on the human path `create_market` is submitted by the
- * OPERATOR key, so the refund lands with the operator, not with the visitor whose transfer paid
- * for it. Until creation is wallet-signed end to end (the same move betting already made in
- * `/api/chain/bet/prepare`), the visitor's bond is held, not refundable, and the create page says
- * exactly that rather than promising otherwise.
+ * ## Who gets the refund
+ *
+ * `HunchVault::refund_bond` returns the bond to `config.creator`, which is `env().caller()` at
+ * creation. On the SELF-CUSTODIAL path (`/api/markets/create/prepare` → the visitor's wallet
+ * signs `create_market`, the bond rides as attached value) the caller is the visitor, so the
+ * refund reaches them — that path is why "refundable" is true on the create page. On the x402
+ * fallback (bond transferred to the treasury, operator submits `create_market`) the caller is the
+ * operator, the refund lands with the operator, and the page says the bond is held, not refunded.
  */
 
 import { NATIVE_TRANSFER_MINIMUM_MOTES } from "@/config/network";

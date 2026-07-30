@@ -19,6 +19,7 @@ import type {
   OraclePort,
   PaymentPort,
   PlaceBetInput,
+  PrepareCreateMarketInput,
   TransactionStatus,
   TransferTransactionInput,
   UnsignedBetTransaction,
@@ -108,6 +109,13 @@ function createLazyRealChain(
       const chain = await load();
       if (!chain.buildTransferTransaction) throw new Error("this chain cannot build unsigned transfers");
       return chain.buildTransferTransaction(input);
+    },
+    async buildCreateMarketTransaction(input: PrepareCreateMarketInput): Promise<UnsignedTransaction> {
+      const chain = await load();
+      if (!chain.buildCreateMarketTransaction) {
+        throw new Error("this chain cannot build unsigned create_market transactions");
+      }
+      return chain.buildCreateMarketTransaction(input);
     },
     async confirmTransaction(transactionHash: string): Promise<DeployResult> {
       const chain = await load();
