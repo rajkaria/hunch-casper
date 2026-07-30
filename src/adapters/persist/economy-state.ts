@@ -741,9 +741,13 @@ export function persistEconomyState(fetchImpl?: typeof fetch): Promise<void> {
       while (dirty) {
         dirty = false;
         let written = false;
+        let remoteUnread = false;
         for (let attempt = 0; attempt < CAS_MAX_ATTEMPTS && !written; attempt++) {
           const remote = await readRemoteEnvelope(cfg, fetchImpl);
-          if (remote.kind === "unavailable") break; // fail open to the plain write below
+          if (remote.kind === "unavailable") {
+            remoteUnread = true;
+            break; // never write blind over a store we could not read — see below
+          }
           // Snapshot → merge → import → serialize is one synchronous block: mutations that landed
           // during the GET above are inside `currentEnvelope()`, and nothing can interleave before
           // the import. Clearing `dirty` here is therefore safe — everything mutated so far is in
@@ -773,10 +777,25 @@ export function persistEconomyState(fetchImpl?: typeof fetch): Promise<void> {
           }
         }
         if (!written) {
-          // KV read down or conflicts exhausted: degrade to the pre-merge behaviour. Memory holds
-          // every union the attempts above managed to apply, so this is still the richest view.
-          dirty = false;
-          await plainSet(cfg, fetchImpl, serializeEconomyState());
+          // KV read down or conflicts exhausted. The old behaviour here was a blind last-writer-
+          // wins SET of whatever memory holds — which, on a COLD instance during a transient KV
+          // read failure, is the fresh demo seed. That exact sequence WIPED the production
+          // envelope (rev 127 → rev-less seed) during the 2026-07-31 deploy's cold-start burst:
+          // one persist-time GET timed out and the floor overwrote the whole economy's history.
+          // A store we could not read is a store we may not overwrite. Leave the write undone,
+          // keep the state in memory, and let the next mutation (or the next persist call) retry
+          // against a readable store. Conflict exhaustion likewise: another writer is alive and
+          // landing unions; ours rides the next cycle.
+          dirty = true;
+          if (!warnedWrite) {
+            warnedWrite = true;
+            console.warn(
+              remoteUnread
+                ? "[economy-state] KV unreadable at persist time — write skipped (never overwrite an unread store); retrying on the next mutation"
+                : "[economy-state] KV compare-and-set conflicts exhausted — write deferred to the next mutation",
+            );
+          }
+          break; // exit the while — a retry inside this writer would spin against the same outage
         }
       }
     } finally {

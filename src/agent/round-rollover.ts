@@ -18,7 +18,7 @@ import type { AgentAction } from "@/adapters/mock/activity-log";
 import type { MarketDefinition } from "@/core/catalogue";
 import { appendAction } from "@/adapters/mock/activity-log";
 import { MARKET_DEFINITIONS } from "@/core/catalogue";
-import { currentRound } from "@/core/round-schedule";
+import { cadenceIntervalMs, currentRound, roundWindow } from "@/core/round-schedule";
 import { roundMarketId } from "@/core/round-id";
 import { addCreatedMarket, findDefinition } from "@/adapters/mock/market-source";
 import { isQuarantined } from "@/agent/market-quarantine";
@@ -51,71 +51,88 @@ export async function rollMaturedRounds(container: Container): Promise<AgentActi
   const actions: AgentAction[] = [];
 
   for (const parent of MARKET_DEFINITIONS) {
-    const round = currentRound(parent.cadence, nowMs);
-    if (!round) continue; // one-shot: nothing to roll
+    const current = currentRound(parent.cadence, nowMs);
+    if (!current) continue; // one-shot: nothing to roll
     // Quarantine is a deliberate human decision. Rolling a quarantined market would silently
     // resurrect the very thing an operator switched off, and charge the treasury to do it.
     if (isQuarantined(parent.slug)) continue;
 
-    const def = roundDefinitionFor(parent, round);
-    if (findDefinition(def.slug)) continue; // this round already exists — idempotent by design
+    // Current round plus a bounded backfill of the two before it. The mirror is rebuildable
+    // state; when it is lost (a cold instance, a wiped envelope — it happened), the chain still
+    // holds those rounds' entries and their escrowed stakes, and without a mirror definition the
+    // arbiter sweep can never see them to settle. Backfilled past rounds materialise as `locked`
+    // (deadline already passed) and the next sweep resolves them.
+    const rounds = [current.index - 2, current.index - 1, current.index]
+      .filter((i) => i >= 0)
+      .map((i) => ({ index: i, ...roundWindow(i, cadenceIntervalMs(parent.cadence)!) }));
 
-    // Per-market isolation: one revert must not abort every other market's rollover, or a single
-    // misconfigured market freezes the whole economy's cadence.
-    let receipt: { deployHash: string; explorerUrl: string } | null = null;
-    if (chainMode() === "real") {
-      const oracle = oracleAccount();
-      if (!oracle) {
-        // The vault binds an approved, non-creator oracle to every market; there is no safe
-        // default. Without one the round would be unresolvable, which is worse than not opening it.
-        console.warn(
-          "[rollover] real mode without CASPER_ORACLE_ACCOUNT — skipping %s",
-          JSON.stringify(def.slug),
-        );
-        continue;
+    for (const round of rounds) {
+      const def = roundDefinitionFor(parent, round);
+      if (findDefinition(def.slug)) continue; // this round already exists — idempotent by design
+
+      // Per-market isolation: one revert must not abort every other market's rollover, or a single
+      // misconfigured market freezes the whole economy's cadence.
+      let receipt: { deployHash: string; explorerUrl: string } | null = null;
+      if (chainMode() === "real") {
+        const oracle = oracleAccount();
+        if (!oracle) {
+          // The vault binds an approved, non-creator oracle to every market; there is no safe
+          // default. Without one the round would be unresolvable, which is worse than not opening it.
+          console.warn(
+            "[rollover] real mode without CASPER_ORACLE_ACCOUNT — skipping %s",
+            JSON.stringify(def.slug),
+          );
+          continue;
+        }
+        try {
+          receipt = await container.chain.createMarket({
+            marketId: def.slug,
+            question: def.title,
+            category: def.category,
+            oracle,
+            feeBps: def.feeBps,
+            deadlineMs: round.deadlineMs,
+            outcomeKeys: def.outcomes.map((o) => o.key),
+            bondMotes: creationBondMotes(),
+          });
+        } catch (err) {
+          // MarketExists (User error: 11) is the backfill's proof, not a failure: the chain
+          // already holds this round — exactly the mirror-lost case — so register the mirror.
+          const message = err instanceof Error ? err.message : String(err);
+          if (!/User error:\s*11\b/.test(message)) {
+            console.warn(
+              "[rollover] could not open the round — skipped this tick, retrying next:",
+              JSON.stringify({ slug: def.slug, round: round.index }),
+              err,
+            );
+            continue;
+          }
+          console.warn("[rollover] chain already holds round — re-registering the lost mirror:", JSON.stringify(def.slug));
+        }
       }
+
+      // Register the off-chain mirror only AFTER the chain accepted it, so a reverted create can
+      // never leave a round that looks bettable but has no escrow behind it.
       try {
-        receipt = await container.chain.createMarket({
-          marketId: def.slug,
-          question: def.title,
-          category: def.category,
-          oracle,
-          feeBps: def.feeBps,
-          deadlineMs: round.deadlineMs,
-          outcomeKeys: def.outcomes.map((o) => o.key),
-          bondMotes: creationBondMotes(),
-        });
+        addCreatedMarket(def, container.network);
       } catch (err) {
-        console.warn(
-          "[rollover] could not open the next round — skipped this tick, retrying next:",
-          JSON.stringify({ slug: def.slug, round: round.index }),
-          err,
-        );
+        console.warn("[rollover] round already registered:", JSON.stringify(def.slug), err);
         continue;
       }
-    }
 
-    // Register the off-chain mirror only AFTER the chain accepted it, so a reverted create can
-    // never leave a round that looks bettable but has no escrow behind it.
-    try {
-      addCreatedMarket(def, container.network);
-    } catch (err) {
-      console.warn("[rollover] round already registered:", JSON.stringify(def.slug), err);
-      continue;
+      actions.push(
+        appendAction({
+          agent: "Genesis",
+          kind: "market_created",
+          marketId: `${container.network}:${def.slug}`,
+          marketTitle: def.title,
+          narration: `Round ${round.index} of "${parent.title}" is open — bets close at ${def.deadlineIso}.`,
+          deployHash: receipt?.deployHash,
+          explorerUrl: receipt?.explorerUrl,
+          simulated: receipt === null,
+        }),
+      );
     }
-
-    actions.push(
-      appendAction({
-        agent: "Genesis",
-        kind: "market_created",
-        marketId: `${container.network}:${def.slug}`,
-        marketTitle: def.title,
-        narration: `Round ${round.index} of "${parent.title}" is open — bets close at ${def.deadlineIso}.`,
-        deployHash: receipt?.deployHash,
-        explorerUrl: receipt?.explorerUrl,
-        simulated: receipt === null,
-      }),
-    );
   }
   return actions;
 }

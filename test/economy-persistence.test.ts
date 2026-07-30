@@ -783,22 +783,34 @@ describe("merge-on-persist — two writers must not clobber each other", () => {
     expect(isQuarantined("coin-flip-5m")).toBe(true);
   });
 
-  it("KV GET failure fails open to a plain last-writer-wins SET — downtime never blocks the flush", async () => {
+  it("KV GET failure writes NOTHING — a store you could not read is a store you may not overwrite", async () => {
+    // The old behaviour here — fail open to a plain last-writer-wins SET — wiped production on
+    // 2026-07-31: a cold instance's persist-time GET timed out and the floor overwrote the whole
+    // envelope (rev 127) with its fresh demo seed. Downtime now defers the flush instead.
     appendAction({ agent: "Momentum", kind: "bet_placed", marketId: MARKET_ID });
     stubKvEnv();
     const writes: string[] = [];
+    let kvDown = true;
     const fetchImpl = (async (url: unknown, init?: RequestInit) => {
-      if (String(url).includes("/get/")) throw new Error("KV read path is down");
-      const cmd = JSON.parse(String(init?.body)) as [string, string, string];
+      if (String(url).includes("/get/")) {
+        if (kvDown) throw new Error("KV read path is down");
+        return new Response(JSON.stringify({ result: null }), { status: 200 });
+      }
+      const cmd = JSON.parse(String(init?.body)) as [string, ...string[]];
       writes.push(cmd[0]);
-      expect(cmd[0]).toBe("SET");
-      const envelope = JSON.parse(cmd[2]) as { activity: { actions: { agent: string }[] } };
+      const payload = cmd[0] === "SET" ? cmd[2] : cmd[5];
+      const envelope = JSON.parse(String(payload)) as { activity: { actions: { agent: string }[] } };
       expect(envelope.activity.actions.some((a) => a.agent === "Momentum")).toBe(true);
-      return new Response(JSON.stringify({ result: "OK" }), { status: 200 });
+      return new Response(JSON.stringify({ result: 1 }), { status: 200 });
     }) as typeof fetch;
 
     await expect(persistEconomyState(fetchImpl)).resolves.toBeUndefined();
-    expect(writes).toEqual(["SET"]);
+    expect(writes).toEqual([]); // nothing written while the store is unreadable
+
+    // The mutation is still owed to KV: the next persist (store readable again) lands it.
+    kvDown = false;
+    await expect(persistEconomyState(fetchImpl)).resolves.toBeUndefined();
+    expect(writes.length).toBeGreaterThan(0);
   });
 
   it("compare-and-retry: a writer landing between GET and SET is re-read and re-merged, not clobbered", async () => {
