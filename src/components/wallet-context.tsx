@@ -7,6 +7,8 @@ import {
   casperWalletInjected,
   connectorForConnectAttempt,
   csprClickAppIdRejection,
+  csprClickConnector,
+  demoConnector,
   probeCsprClickAppId,
   type SendTransactionOutcome,
   type WalletAccountLike,
@@ -96,7 +98,7 @@ function persistAccount(account: WalletAccount | null): void {
   }
 }
 
-function subscribe(callback: () => void): () => void {
+export function subscribe(callback: () => void): () => void {
   listeners.add(callback);
   window.addEventListener("storage", callback);
   return () => {
@@ -183,12 +185,35 @@ function serverRejectionSnapshot(): string | null {
  * null signer) until they touched something. `notifyCsprClickArrived` below is the emit that
  * makes this snapshot move.
  */
-function readConnectorId(): WalletConnector["id"] {
+export function readConnectorId(): WalletConnector["id"] {
   return typeof window === "undefined" ? "demo" : activeConnector().id;
 }
 
 function serverConnectorId(): WalletConnector["id"] {
   return "demo";
+}
+
+/**
+ * Turn the snapshot back into behaviour. The connector object MUST be derived from `connectorId`
+ * and never by calling `activeConnector()` again while rendering — that is the second half of the
+ * same bug, and the half that survived the first fix.
+ *
+ * This app builds with `reactCompiler: true`, which memoizes render-time expressions against their
+ * *reactive* inputs. `activeConnector()` has none, so the compiled `useWallet` cached the connector
+ * — and the `signAndSend` derived from it — in a memo slot filled on the very first render, when
+ * the `afterInteractive` CSPR.click bundle has not installed `window.csprclick` yet. Verbatim from
+ * the shipped chunk:
+ *
+ *     o[0]===Symbol.for("react.memo_cache_sentinel") ? (e=I(), o[0]=e) : e=o[0]
+ *
+ * An emit re-rendered every consumer and changed nothing: `signAndSend` came back out of that same
+ * frozen slot. On prod, with the SDK loaded and the app id accepted, /create told a connected
+ * visitor to "Connect a Casper wallet" over a disabled button, and the bet panel silently kept the
+ * operator-escrow route. Reading `connectorId` here makes the derivation a function of a store
+ * value, which the compiler must — and now provably does — re-run when it changes.
+ */
+function connectorFor(id: WalletConnector["id"]): WalletConnector {
+  return id === "csprclick" ? csprClickConnector : demoConnector;
 }
 
 /**
@@ -324,8 +349,9 @@ export function useWallet(): WalletContextValue {
     emit();
     void activeConnector().disconnect();
   }, []);
-  const connector = typeof window === "undefined" ? null : activeConnector();
-  const send = connector?.sendTransaction;
+  // Derived from the SNAPSHOT, never from a fresh `activeConnector()` call — see `connectorFor`.
+  const connector = connectorFor(connectorId);
+  const send = connector.sendTransaction;
   return {
     account,
     connected: account !== null,
@@ -335,7 +361,7 @@ export function useWallet(): WalletContextValue {
     connectState,
     cancelConnect,
     connectError: connectState.phase === "error" ? connectState.message : null,
-    signAndSend: send ? (json, publicKey) => send.call(connector, json, publicKey) : null,
+    signAndSend: send ? (json: string, publicKey: string) => send.call(connector, json, publicKey) : null,
     signingDisabledReason,
   };
 }
