@@ -85,6 +85,8 @@ describe("the composer files a community market by its resolver", () => {
   });
 
   it("only a drand market earns the provably-fair label", async () => {
-    expect((await compose("drand", "randomness")).category).toBe("provably-fair");
+    // drand_parity, not the invented "randomness": composition now rejects metrics no source
+    // serves (they opened markets the Arbiter could never resolve).
+    expect((await compose("drand", "drand_parity")).category).toBe("provably-fair");
   });
 });
