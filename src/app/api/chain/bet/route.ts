@@ -24,8 +24,20 @@ import { NextResponse } from "next/server";
 import { createContainer } from "@/lib/container";
 import { validateBetRequest } from "@/lib/bet-request";
 import { betTicketSecret, signBetTicket } from "@/lib/bet-ticket";
-import { isSimulated } from "@/config/chain-mode";
+import { isSimulated, chainMode } from "@/config/chain-mode";
 import { persistEconomyState } from "@/adapters/persist/economy-state";
+import { cooldown, TRIGGER_LAST_RUN } from "@/lib/abuse-guards";
+import { motesToCspr } from "@/core/types";
+
+/**
+ * Real-mode guards for THIS route only. Operator custody means the operator's key signs and the
+ * operator's purse pays gas + stake for whoever asks — unauthenticated and, on testnet, uncapped,
+ * a curl loop could drain the treasury. The wallet-signed path (`prepare`/`confirm`) needs
+ * neither: it spends the caller's own funds. Both are demo-grade (per-instance memory), which
+ * moves the attack from "free" to "throttled per instance" without adding auth to a public demo.
+ */
+const OPERATOR_CUSTODY_MAX_CSPR = 25;
+const OPERATOR_CUSTODY_COOLDOWN_MS = 15_000;
 
 export async function POST(req: Request): Promise<Response> {
   let body: Record<string, unknown>;
@@ -42,6 +54,27 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ error: validated.rejection.error }, { status: validated.rejection.status });
   }
   const { network, market, outcomeKey, amountMotes, bettor } = validated.request;
+
+  if (chainMode() === "real") {
+    if (motesToCspr(amountMotes) > OPERATOR_CUSTODY_MAX_CSPR) {
+      return NextResponse.json(
+        {
+          error: `operator-custody bets are capped at ${OPERATOR_CUSTODY_MAX_CSPR} CSPR — sign larger stakes from your own wallet via /api/chain/bet/prepare`,
+        },
+        { status: 400 },
+      );
+    }
+    const ip = (req.headers.get("x-forwarded-for") ?? "unknown").split(",")[0].trim();
+    const waitMs = cooldown(`chain-bet:${ip}`, Date.now(), OPERATOR_CUSTODY_COOLDOWN_MS, TRIGGER_LAST_RUN);
+    if (waitMs > 0) {
+      const retryAfterSec = Math.ceil(waitMs / 1000);
+      return NextResponse.json(
+        { error: `operator-custody bet cooldown: retry in ${retryAfterSec}s` },
+        { status: 429, headers: { "retry-after": String(retryAfterSec) } },
+      );
+    }
+  }
+
   const container = createContainer(network);
   const input = { marketId: market.id, outcomeKey, amountMotes, bettor };
 

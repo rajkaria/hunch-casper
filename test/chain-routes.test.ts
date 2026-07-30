@@ -1,9 +1,16 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { POST as betPOST } from "@/app/api/chain/bet/route";
 import { POST as resolvePOST } from "@/app/api/chain/resolve/route";
 import { __resetLedger } from "@/adapters/mock/settlement-ledger";
+import { __resetAbuseGuards } from "@/lib/abuse-guards";
 
-beforeEach(__resetLedger);
+beforeEach(() => {
+  __resetLedger();
+  __resetAbuseGuards();
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function post(handler: (req: Request) => Promise<Response>, url: string, body: unknown): Promise<Response> {
   return handler(
@@ -17,6 +24,51 @@ function post(handler: (req: Request) => Promise<Response>, url: string, body: u
 
 const BET_URL = "http://localhost/api/chain/bet";
 const RESOLVE_URL = "http://localhost/api/chain/resolve";
+
+describe("POST /api/chain/bet — real-mode operator-custody guards", () => {
+  // The operator's purse pays gas + stake for whoever asks on this route; unauthenticated and
+  // (on testnet) uncapped, a curl loop drained runway. Both guards sit BEFORE any chain call.
+  it("caps the operator-escrowed stake and points larger bets at the wallet-signed path", async () => {
+    vi.stubEnv("CASPER_CHAIN_MODE", "real");
+    const res = await post(betPOST, BET_URL, {
+      network: "testnet",
+      marketId: "testnet:coin-flip-5m",
+      outcomeKey: "heads",
+      amountMotes: "26000000000",
+      bettor: "01aa",
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("capped");
+  });
+
+  it("cools down repeat callers from the same address", async () => {
+    vi.stubEnv("CASPER_CHAIN_MODE", "real");
+    const body = {
+      network: "testnet",
+      marketId: "testnet:coin-flip-5m",
+      outcomeKey: "heads",
+      amountMotes: "1000000000",
+      bettor: "01aa",
+    };
+    const first = await betPOST(
+      new Request(BET_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.9" },
+        body: JSON.stringify(body),
+      }),
+    );
+    expect(first.status).not.toBe(429); // proceeds past the guard (chain may still refuse)
+    const second = await betPOST(
+      new Request(BET_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.9" },
+        body: JSON.stringify(body),
+      }),
+    );
+    expect(second.status).toBe(429);
+    expect(second.headers.get("retry-after")).toBeTruthy();
+  });
+});
 
 describe("POST /api/chain/bet", () => {
   it("places a bet through the container and returns a deploy hash + explorer URL", async () => {
