@@ -32,6 +32,8 @@ import { exportActivityState } from "@/adapters/mock/activity-log";
 import { createContainer } from "@/lib/container";
 import { PROPHETS } from "@/core/prophet-strategies";
 import { prophetTurnCostMotes } from "@/agent/prophet";
+import { perRoundTreasuryCostMotes } from "@/agent/economy";
+import { OPERATOR_AGENT_ID } from "@/adapters/casper/fleet-keys";
 import { breakerSnapshot } from "@/agent/bet-breaker";
 import { quarantinedMarkets } from "@/agent/market-quarantine";
 
@@ -114,6 +116,34 @@ function loopLiveness(nowMs: number): LoopLivenessInput {
  * the doubled conviction bet, so a purse could read funded and still be throttled out.
  */
 export const fleetTurnFloorMotes = prophetTurnCostMotes;
+
+/**
+ * The operator treasury's account and balance — the purse that signs and funds every escrow,
+ * creation, and seed, and the one `fleetBalances` deliberately does not cover. Read through the
+ * same WalletPort as the agents (`OPERATOR_AGENT_ID` resolves to `CASPER_BETTOR_KEY`). A failed
+ * read reports `"0"`, which fails the treasury check — the safe direction: a dry-looking purse
+ * screams, a hidden one reverts escrows agents already paid for. Real mode only; nothing costs
+ * the treasury anything in mock.
+ */
+async function treasuryBalance(network: CasperNetwork): Promise<HealthInputs["treasury"]> {
+  if (chainMode() !== "real") return undefined;
+  const { wallet } = createContainer(network);
+  const perRoundCostMotes = perRoundTreasuryCostMotes();
+  try {
+    const [account, balanceMotes] = await Promise.all([
+      wallet.accountFor(OPERATOR_AGENT_ID),
+      wallet.balanceOf(OPERATOR_AGENT_ID),
+    ]);
+    return {
+      account: account.publicKeyHex,
+      accountHash: account.accountHash,
+      balanceMotes,
+      perRoundCostMotes,
+    };
+  } catch {
+    return { account: "unavailable", accountHash: "unavailable", balanceMotes: "0", perRoundCostMotes };
+  }
+}
 
 /**
  * Every agent's account and balance, read in parallel. A wallet that throws (unconfigured key,
@@ -214,9 +244,10 @@ export async function gatherHealth(
   // whichever instance happened to serve the probe.
   await hydrateEconomyState();
   const configuredAppId = resolveCsprClickAppId(network, csprClickAppIdsFromEnv());
-  const [persistence, fleet, appIdCheck] = await Promise.all([
+  const [persistence, fleet, treasury, appIdCheck] = await Promise.all([
     probePersistence(opts.fetchImpl),
     fleetBalances(network),
+    treasuryBalance(network),
     csprClickAppIdCheck(configuredAppId, opts.fetchImpl, opts.siteOrigin),
   ]);
   const inputs: HealthInputs = {
@@ -267,6 +298,7 @@ export async function gatherHealth(
     })(),
     quarantinedMarkets: quarantinedMarkets().map((m) => ({ slug: m.slug, reason: m.reason })),
     fleetMinBalanceMotes: fleetTurnFloorMotes(),
+    treasury,
     now: opts.now ?? Date.now(),
   };
   return buildHealthReport(inputs);

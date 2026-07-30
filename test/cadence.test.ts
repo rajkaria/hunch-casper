@@ -79,10 +79,23 @@ describe("planCadence — the degradation ladder", () => {
     expect(plan.allowHouseSeeding).toBe(true);
     expect(plan.allowMarketCreation).toBe(true);
     expect(plan.allowProphetBets).toBe(false);
-    // …and vice versa: a full fleet cannot mask an empty treasury.
+  });
+
+  it("a rich fleet cannot mask an empty treasury — escrow is treasury-funded, so betting pauses too", () => {
+    // This inverse case shipped as "betting stays on": the fleet kept paying x402 while every
+    // treasury-funded escrow reverted "Insufficient funds", tripping the paid-not-placed breaker.
     const inverse = planCadence(withRunway(0, BETTING_FLOOR_ROUNDS * 100));
     expect(inverse.allowMarketCreation).toBe(false);
-    expect(inverse.allowProphetBets).toBe(true);
+    expect(inverse.allowProphetBets).toBe(false);
+    expect(inverse.cadence).toBe("paused");
+    expect(inverse.reason).toContain("treasury runway 0");
+  });
+
+  it("names the binding purse when betting is off: fleet when the fleet is short, treasury when the treasury is", () => {
+    const fleetShort = planCadence(withRunway(SEEDING_FLOOR_ROUNDS * 100, BETTING_FLOOR_ROUNDS - 1));
+    expect(fleetShort.reason).toContain("fleet runway");
+    const treasuryShort = planCadence(withRunway(BETTING_FLOOR_ROUNDS - 1, BETTING_FLOOR_ROUNDS * 100));
+    expect(treasuryShort.reason).toContain("treasury runway");
   });
 
   it("treats a balance exactly at a floor as affordable", () => {

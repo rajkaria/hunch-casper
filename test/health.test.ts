@@ -47,6 +47,13 @@ function healthyReal(): HealthInputs {
     breaker: { consecutiveFailures: 0, trippedAt: null },
     quarantinedMarkets: [],
     fleetMinBalanceMotes: "3200000000",
+    treasury: {
+      account: "01cc",
+      accountHash: "account-hash-cc",
+      // 200 rounds of runway at 5 CSPR/round — comfortably above every cadence floor.
+      balanceMotes: "1000000000000",
+      perRoundCostMotes: "5000000000",
+    },
     now: NOW,
   };
 }
@@ -226,6 +233,44 @@ describe("buildHealthReport — fleet funding", () => {
   it("skips when no fleet wallet is wired", () => {
     const r = buildHealthReport({ ...healthyReal(), fleet: [] });
     expect(statusOf(r, "fleet")).toBe("skip");
+  });
+});
+
+describe("buildHealthReport — operator treasury funding", () => {
+  // The purse the fleet check does not cover: it signs and funds every escrow, and it ran to
+  // zero in production while `fleet` read green — three bets paid for and never placed.
+  it("is ok with runway above every cadence floor", () => {
+    const r = buildHealthReport(healthyReal());
+    expect(statusOf(r, "treasury")).toBe("ok");
+  });
+
+  it("fails below the betting floor and names the account to refill", () => {
+    const base = healthyReal();
+    const r = buildHealthReport({
+      ...base,
+      treasury: { ...base.treasury!, balanceMotes: "0" },
+    });
+    expect(statusOf(r, "treasury")).toBe("fail");
+    expect(r.status).toBe("degraded");
+    expect(r.checks.find((c) => c.name === "treasury")?.detail).toContain("01cc");
+  });
+
+  it("warns between the betting floor and full cadence — bets fund, creation/seeding throttle", () => {
+    const base = healthyReal();
+    // 20 rounds: above BETTING_FLOOR_ROUNDS (12), below CREATION_FLOOR_ROUNDS (48).
+    const r = buildHealthReport({
+      ...base,
+      treasury: { ...base.treasury!, balanceMotes: "100000000000" },
+    });
+    expect(statusOf(r, "treasury")).toBe("warn");
+    expect(r.status).toBe("ok");
+  });
+
+  it("skips when the balance was not read, and in mock mode is absent entirely", () => {
+    const noRead = buildHealthReport({ ...healthyReal(), treasury: undefined });
+    expect(statusOf(noRead, "treasury")).toBe("skip");
+    const mock = buildHealthReport({ ...healthyReal(), chainMode: "mock", treasury: undefined });
+    expect(mock.checks.find((c) => c.name === "treasury")).toBeUndefined();
   });
 });
 

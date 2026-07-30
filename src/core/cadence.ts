@@ -75,15 +75,20 @@ export function planCadence(input: CadenceInput): CadencePlan {
   const treasuryRounds = roundsOfRunway(input.treasuryMotes, input.perRoundTreasuryCostMotes);
   const fleetRounds = roundsOfRunway(input.minFleetBalanceMotes, input.perRoundAgentCostMotes);
 
-  // Seeding and creation are treasury-funded; betting is agent-funded. Each capability is gated
-  // by the purse that actually pays for it, so a rich treasury never masks a starving fleet.
+  // Seeding and creation are treasury-funded. Betting spends from BOTH purses: the agent pays
+  // the x402 stake, but the escrow that turns that payment into a bet is signed and funded by
+  // the treasury (the two-transaction model). Gating bets on the fleet alone let a rich fleet
+  // keep paying a dry treasury — every escrow reverted "Insufficient funds", the paid-not-placed
+  // breaker tripped, and the agents had bought nothing. Both purses must have runway.
   const allowHouseSeeding = treasuryRounds >= SEEDING_FLOOR_ROUNDS;
   const allowMarketCreation = treasuryRounds >= CREATION_FLOOR_ROUNDS;
-  const allowProphetBets = fleetRounds >= BETTING_FLOOR_ROUNDS;
+  const allowProphetBets = fleetRounds >= BETTING_FLOOR_ROUNDS && treasuryRounds >= BETTING_FLOOR_ROUNDS;
 
+  // Betting off is never "full": before this ranked, a starving fleet with a rich treasury
+  // reported full cadence while placing nothing.
   let cadence: EconomyCadence;
   if (!allowProphetBets && !allowMarketCreation) cadence = "paused";
-  else if (!allowMarketCreation) cadence = "minimal";
+  else if (!allowProphetBets || !allowMarketCreation) cadence = "minimal";
   else if (!allowHouseSeeding) cadence = "reduced";
   else cadence = "full";
 
@@ -93,7 +98,12 @@ export function planCadence(input: CadenceInput): CadencePlan {
       : [
           !allowHouseSeeding && `house seeding off (treasury runway ${treasuryRounds} < ${SEEDING_FLOOR_ROUNDS})`,
           !allowMarketCreation && `market creation off (treasury runway ${treasuryRounds} < ${CREATION_FLOOR_ROUNDS})`,
-          !allowProphetBets && `prophet betting off (fleet runway ${fleetRounds} < ${BETTING_FLOOR_ROUNDS})`,
+          !allowProphetBets &&
+            `prophet betting off (${
+              fleetRounds < BETTING_FLOOR_ROUNDS
+                ? `fleet runway ${fleetRounds}`
+                : `treasury runway ${treasuryRounds}`
+            } < ${BETTING_FLOOR_ROUNDS})`,
         ]
           .filter(Boolean)
           .join("; ") + " — refill to restore full cadence";

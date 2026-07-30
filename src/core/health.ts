@@ -15,6 +15,13 @@
  *   `fail`  — this deployment cannot do its job; overall status becomes `degraded`.
  */
 
+import {
+  BETTING_FLOOR_ROUNDS,
+  CREATION_FLOOR_ROUNDS,
+  SEEDING_FLOOR_ROUNDS,
+  roundsOfRunway,
+} from "@/core/cadence";
+
 export type CheckStatus = "ok" | "warn" | "fail" | "skip";
 
 export interface HealthCheck {
@@ -90,6 +97,20 @@ export interface HealthInputs {
    * whole fleet goes quiet.
    */
   fleetMinBalanceMotes: string;
+  /**
+   * The operator treasury — the ONE purse the fleet check does not cover, and the one that
+   * actually signs and funds every escrow, creation, and seed. It ran to zero in production
+   * while `fleet` read green: agents kept paying it over x402 and every escrow reverted
+   * "Insufficient funds" until the breaker tripped. Optional so mock-mode callers and older
+   * tests are unchanged.
+   */
+  treasury?: {
+    account: string;
+    accountHash: string;
+    balanceMotes: string;
+    /** What one tick's escrows cost this purse — the same figure the cadence planner throttles on. */
+    perRoundCostMotes: string;
+  };
   /**
    * Loop-liveness facts. Optional: a caller that omits it gets today's subsystem-only report.
    * Supplied, it answers the question none of the other checks do — is the economy actually
@@ -380,6 +401,37 @@ function fleetCheck(i: HealthInputs, unfunded: FleetBalance[]): HealthCheck {
 }
 
 /**
+ * Operator treasury funding. Betting is throttled off below `BETTING_FLOOR_ROUNDS` of runway
+ * (`core/cadence.ts` gates on the same numbers), so below that this purse is a `fail`: the next
+ * escrow either reverts "Insufficient funds" after an agent has already paid, or the planner has
+ * silently paused the whole economy — both look like a quiet fleet unless this check says why.
+ */
+function treasuryCheck(i: HealthInputs): HealthCheck | null {
+  if (i.chainMode !== "real") return null;
+  const t = i.treasury;
+  if (!t) return check("treasury", "skip", "operator treasury balance not read on this instance");
+  const rounds = roundsOfRunway(t.balanceMotes, t.perRoundCostMotes);
+  const cspr = (Number(BigInt(t.balanceMotes) / 10_000_000n) / 100).toFixed(2);
+  if (rounds < BETTING_FLOOR_ROUNDS) {
+    return check(
+      "treasury",
+      "fail",
+      `operator treasury is down to ${cspr} CSPR (~${rounds} escrow round(s) of runway) — this purse funds every escrow, creation, and seed, and below the betting floor the economy pauses (or reverts bets agents already paid for); refill ${t.account}`,
+    );
+  }
+  if (rounds < SEEDING_FLOOR_ROUNDS) {
+    return check(
+      "treasury",
+      "warn",
+      `operator treasury holds ${cspr} CSPR (~${rounds} escrow rounds of runway) — betting is funded, but ${
+        rounds < CREATION_FLOOR_ROUNDS ? "market creation and house seeding are" : "house seeding is"
+      } throttled off; top up ${t.account} to restore full cadence`,
+    );
+  }
+  return check("treasury", "ok", `operator treasury holds ${cspr} CSPR (~${rounds} escrow rounds of runway)`);
+}
+
+/**
  * The paid-but-not-placed breaker. A TRIPPED breaker is a `fail`, not a warning: agents paid the
  * treasury and got nothing back, and the fleet has stopped betting to keep that from repeating.
  * It needs a human — nothing clears it on its own but a bet that lands.
@@ -529,6 +581,7 @@ export function buildHealthReport(i: HealthInputs): HealthReport {
     signalsCheck(i),
     ...(i.wallet ? [walletCheck(i.wallet.posture, i.wallet.appIdCheck)] : []),
     fleetCheck(i, unfunded),
+    ...((c) => (c ? [c] : []))(treasuryCheck(i)),
     breakerCheck(i),
     quarantineCheck(i),
     economyCheck(i),

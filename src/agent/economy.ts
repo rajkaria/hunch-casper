@@ -57,11 +57,17 @@ export interface EconomyTickReport {
 
 /**
  * What one round costs the operator treasury: the gas to escrow every Prophet's bet, since escrow
- * is operator-funded (see the two-transaction model in the decision journal). Creation and seeding
- * are charged to the same purse but happen on their own cadence, so they are not in the per-round
- * figure — the floors in `core/cadence.ts` carry enough margin to cover them.
+ * is operator-funded (see the two-transaction model in the decision journal). Gas, not
+ * gas + stake, even though the escrow attaches the full stake from the operator purse: the
+ * Prophet's x402 payment is awaited to on-chain execution BEFORE the escrow submits
+ * (`agent/prophet.ts`), so the stake has already landed back in the treasury and the escrow's net
+ * debit is the gas. That makes `prior balance >= gas` the real per-escrow requirement — which is
+ * exactly what a zeroed treasury fails, reverting every escrow "Insufficient funds" while the
+ * fleet purses read healthy. Creation and seeding are charged to the same purse but happen on
+ * their own cadence, so they are not in the per-round figure — the floors in `core/cadence.ts`
+ * carry enough margin to cover them.
  */
-function perRoundTreasuryCostMotes(): string {
+export function perRoundTreasuryCostMotes(): string {
   // Charge for the Prophets that ACTUALLY act this round, not the whole roster. Real mode sends
   // one Prophet per tick by default (`prophetsPerTick`), so billing the round at four escrows
   // understated the treasury's runway ~4× — enough to throttle house seeding off against a purse
