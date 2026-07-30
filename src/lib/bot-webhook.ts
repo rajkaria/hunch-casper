@@ -18,6 +18,7 @@ import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/eco
 import { createWebhookTransport } from "@/adapters/bots/webhook-transport";
 import type { BotPlatform } from "@/ports/bot-transport";
 import { DEFAULT_NETWORK, isCasperNetwork } from "@/config/network";
+import { chainMode } from "@/config/chain-mode";
 
 interface WebhookOptions {
   /** Env var holding an optional shared secret; when set, the request must present it. */
@@ -31,10 +32,13 @@ const OPTIONS: Record<BotPlatform, WebhookOptions> = {
   x: { secretEnv: "X_WEBHOOK_SECRET", secretHeader: "x-webhook-secret" },
 };
 
-/** Constant-time-ish secret check: only enforced when a secret is configured. */
+/** Constant-time-ish secret check. Open without a secret only in the credential-free demo — in
+ * real mode an unset secret fails closed, the same posture as the runner routes: an open webhook
+ * with an attacker-controlled reply target and bettor identity is a spam relay waiting on one
+ * config flip. */
 function secretOk(req: Request, opts: WebhookOptions): boolean {
   const expected = process.env[opts.secretEnv];
-  if (!expected) return true; // no secret configured → open (demo default)
+  if (!expected) return chainMode() !== "real";
   return req.headers.get(opts.secretHeader) === expected;
 }
 
