@@ -5,6 +5,8 @@ import { useNetwork } from "@/components/network-context";
 import { useMarkets } from "@/components/use-markets";
 import type { MarketCategory } from "@/core/types";
 import { MarketCard, countLiveMarkets } from "@/components/market-card";
+import { FeaturedMarket } from "@/components/featured-market";
+import { partitionFeatured } from "@/core/featured";
 
 const FILTERS: { key: MarketCategory | "all"; label: string }[] = [
   { key: "all", label: "All" },
@@ -25,6 +27,8 @@ export default function MarketsPage() {
     [markets, filter],
   );
   const live = useMemo(() => countLiveMarkets(shown), [shown]);
+  // The pin comes out of the grid entirely — rendered once as the headline, never twice.
+  const { featured, rest } = useMemo(() => partitionFeatured(shown, filter), [shown, filter]);
 
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-12 sm:px-6">
@@ -82,11 +86,14 @@ export default function MarketsPage() {
       ) : shown.length === 0 ? (
         <p className="text-sm text-muted">No markets in this category on {network}.</p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {shown.map((m) => (
-            <MarketCard key={m.id} market={m} />
-          ))}
-        </div>
+        <>
+          {featured && <FeaturedMarket market={featured} />}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {rest.map((m) => (
+              <MarketCard key={m.id} market={m} />
+            ))}
+          </div>
+        </>
       )}
     </main>
   );

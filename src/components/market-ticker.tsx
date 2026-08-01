@@ -7,6 +7,7 @@ import { marketHref } from "@/components/market-card";
 import { computeOdds, formatProbability } from "@/core/parimutuel-odds";
 import { motesToCspr } from "@/core/types";
 import { isWideField } from "@/core/field-board";
+import { featuredFirst } from "@/core/featured";
 import type { Market } from "@/core/types";
 
 /**
@@ -50,7 +51,9 @@ export function MarketTicker() {
   const { markets, loading } = useMarkets(network);
 
   if (loading || markets.length === 0) return null;
-  const shown = markets.slice(0, 14);
+  // The pinned market leads the tape too — the tape is capped at 14 entries, and the board's
+  // headline market falling off the end of it reads as two different front pages.
+  const shown = featuredFirst(markets).slice(0, 14);
 
   return (
     <div className="marquee border-y border-border bg-surface/60" aria-label="Live market odds">

@@ -4,7 +4,7 @@ import { motesToCspr } from "@/core/types";
 import { computeOdds, formatProbability } from "@/core/parimutuel-odds";
 import { fieldSummary, isWideField } from "@/core/field-board";
 
-const CATEGORY_META: Record<MarketCategory, { label: string; className: string; color: string }> = {
+export const CATEGORY_META: Record<MarketCategory, { label: string; className: string; color: string }> = {
   "casper-native": { label: "Casper-native", className: "text-accent", color: "var(--accent)" },
   "provably-fair": { label: "Provably fair", className: "text-gold", color: "var(--gold)" },
   rwa: { label: "RWA", className: "text-up", color: "var(--up)" },
