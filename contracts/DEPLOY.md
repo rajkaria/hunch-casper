@@ -196,6 +196,21 @@ cargo run --bin contracts_catalogue -- \
 and resolving early closes betting the instant the outcome is public. If the announcement names
 co-winners with no single first place, void instead (every stake refunds in full).
 
+**Measured on the 2026-08-01 testnet run** (net = consumed + 25% of the unused limit). The live
+testnet FieldMarket is `hash-dd4c2a59183c251a9654ea79130916ff6ae9c06b7159910745f12c2b79a7930e`,
+holding the 177-finalist field frozen at commitment `59f84e52a4a6271220dee52c2353a9435e584fedec049353cf533d1b79b81e7b`:
+
+| call | measured cost (CSPR) | tx |
+|---|---|---|
+| `FieldMarket` install (331,421-byte wasm, limit 450) | 354.10 net | `4f802fa1…` |
+| `register_candidates` × 40 keys (limit 10) | 7.458 net | `be19ce69…`, `e7d49510…`, `96966f9d…`, `4bc237d2…` |
+| `register_candidates` × 17 keys (limit 10) | 4.734 net | `42abda06…` |
+| `freeze_field` (limit 10) | 2.942 net | `9d476f58…` |
+| **whole deploy, install → open for betting** | **391.61** | — |
+
+Registration is ~0.186 CSPR per candidate and flat in the field width, which is the dictionary
+paying off: the same 177 outcomes in a `Vec`-backed market would be re-serialised on every read.
+
 **Budget.** Sized from the measured v1 install (299.023 consumed at a 400 limit): the install
 limit is 450 CSPR and must be affordable *up front* — testnet holds the full limit at acceptance
 and refunds 75% of the unused part. Five registration batches plus the freeze are budgeted at 10

@@ -1039,8 +1039,20 @@ fn manifest_candidates(m: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
+/// Package hashes reach this driver in two spellings — `hash-<64hex>` (what the app env vars and
+/// every other command use) and `contract-package-<64hex>` (what Odra's own
+/// `Address::to_formatted_string` prints). Only the first parses, so normalise rather than make the
+/// operator retype a 64-character hash they just copied out of the deploy output.
+fn field_address(package: &str) -> Address {
+    let normalised = match package.strip_prefix("contract-package-") {
+        Some(hex) => format!("hash-{hex}"),
+        None => package.to_string(),
+    };
+    Address::from_str(&normalised).expect("bad FieldMarket package hash")
+}
+
 fn load_field(env: &HostEnv, package: &str) -> FieldMarketHostRef {
-    FieldMarket::load(env, Address::from_str(package).expect("bad FieldMarket package hash"))
+    FieldMarket::load(env, field_address(package))
 }
 
 /// Install the contract. Deliberately does NOT register any candidate: a 177-key field does not
@@ -1088,7 +1100,15 @@ fn field_deploy(env: &HostEnv, manifest_path: &str, slug: &str) {
         },
     );
     println!("HUNCH_GAS field_install motes={}", before - env.balance_of(&caller));
-    println!("HUNCH_FIELD_MARKET {}", market.address().to_formatted_string());
+    // Printed in the `hash-` spelling the app env var and the follow-up commands take, not Odra's
+    // `contract-package-` formatting: the operator copies this line straight into both.
+    println!(
+        "HUNCH_FIELD_MARKET {}",
+        market
+            .address()
+            .to_formatted_string()
+            .replace("contract-package-", "hash-")
+    );
     println!("HUNCH_STEP next field-register");
 }
 
