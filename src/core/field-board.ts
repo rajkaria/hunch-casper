@@ -126,9 +126,10 @@ export interface FieldSummary {
   /** True once anything at all is staked on the market. */
   staked: boolean;
   /**
-   * The leaders, longest-staked first — empty while nothing is staked. An unbet field has no
-   * podium, and printing the first N candidates at 0% would promote catalogue order to a
-   * favourite that does not exist.
+   * The leaders, most-staked first — only candidates someone actually backed, so it is empty on
+   * an unbet field and shorter than `limit` on a thinly-backed one. An unbet pool is not a
+   * standing: padding the podium out to `limit` with 0% rows would promote catalogue order to a
+   * ranking that does not exist.
    */
   leaders: FieldRow[];
   /** Candidates not shown as leaders — the "+N more" tail. */
@@ -144,7 +145,11 @@ export interface FieldSummary {
  */
 export function fieldSummary(market: Market, limit: number): FieldSummary {
   const staked = BigInt(market.totalStakedMotes) > 0n;
-  const leaders = staked ? fieldRows(market).slice(0, Math.max(0, limit)) : [];
+  const leaders = staked
+    ? fieldRows(market)
+        .filter((r) => BigInt(r.stakeMotes) > 0n)
+        .slice(0, Math.max(0, limit))
+    : [];
   return {
     candidates: market.outcomes.length,
     backed: backedCount(market),

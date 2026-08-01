@@ -238,8 +238,22 @@ describe("field card summary", () => {
     expect(s.rest).toBe(174);
   });
 
+  /**
+   * The one-backed case, which is what the live board actually looked like after its first bet:
+   * one candidate at 100% and four joint-second rows at 0% is not a standing, it is padding.
+   */
+  it("shows only candidates someone backed, however big the limit", () => {
+    const s = fieldSummary(market({ "46696": "1000000000" }), 5);
+    expect(s.leaders.map((r) => r.outcome.key)).toEqual(["46696"]);
+    expect(s.backed).toBe(1);
+    expect(s.rest).toBe(176);
+  });
+
   it("never shows more leaders than the field holds", () => {
-    const s = fieldSummary(market({ "46696": "1000000000" }), 500);
+    const pools = Object.fromEntries(
+      definition!.outcomes.map((o, i) => [o.key, String((i + 1) * 1_000_000)]),
+    );
+    const s = fieldSummary(market(pools), 500);
     expect(s.leaders).toHaveLength(177);
     expect(s.rest).toBe(0);
   });
