@@ -17,14 +17,22 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { TEST_NOW_MS } from "./setup/frozen-clock";
 
 const CREATOR = `01${"aa".repeat(32)}`;
 const ORACLE = `account-hash-${"cc".repeat(32)}`;
 const VAULT_V2 = `hash-${"ce".repeat(32)}`;
 const SECRET = "test-creation-ticket-secret";
 
-/** ~90 days out — inside the vault's 180-day public-creation horizon. */
-const DEADLINE_ISO = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+/**
+ * ~90 days out — inside the vault's 180-day public-creation horizon.
+ *
+ * Measured from the suite's frozen now, not the wall clock: this const is evaluated at module load,
+ * before `setupFiles` freezes `Date` for the test body, so a wall-clock reading would put the
+ * deadline 90 days past the REAL today while the route checks it against 2026-07-31 — a gap that
+ * grows by a day every day until it crosses 180 and this file starts failing on the calendar.
+ */
+const DEADLINE_ISO = new Date(TEST_NOW_MS + 90 * 24 * 60 * 60 * 1000).toISOString();
 
 function specBody(over: Record<string, unknown> = {}) {
   return {
