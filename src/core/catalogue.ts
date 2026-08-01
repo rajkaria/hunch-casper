@@ -731,7 +731,12 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       metric: "prophet_pnl",
       description: "The Prophet with the highest realized PnL over the weekly window.",
     },
-    deadlineIso: "2026-08-03T00:00:00.000Z",
+    // A recurring parent's literal is its FIRST round's boundary — `effectiveDeadlineMs` derives
+    // every real round from the cadence — but it still decides the PARENT row's own status, and a
+    // parent in the past reads as a locked market that refuses the bets placed against it. Carried
+    // to a true weekly boundary past Nov 1 for the same reason the two daily parents were
+    // (f619fd7), and on the grid so the first round is not shorter than every round after it.
+    deadlineIso: "2026-11-05T00:00:00.000Z",
     seedPoolMotes: {
       momentum: "620000000000",
       contrarian: "410000000000",
@@ -756,7 +761,12 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       metric: "prophet_pnl",
       description: "Whichever of Momentum or Contrarian posts the higher realized weekly PnL.",
     },
-    deadlineIso: "2026-08-03T00:00:00.000Z",
+    // A recurring parent's literal is its FIRST round's boundary — `effectiveDeadlineMs` derives
+    // every real round from the cadence — but it still decides the PARENT row's own status, and a
+    // parent in the past reads as a locked market that refuses the bets placed against it. Carried
+    // to a true weekly boundary past Nov 1 for the same reason the two daily parents were
+    // (f619fd7), and on the grid so the first round is not shorter than every round after it.
+    deadlineIso: "2026-11-05T00:00:00.000Z",
     seedPoolMotes: { momentum: "560000000000", contrarian: "440000000000" },
   },
   {
@@ -775,7 +785,12 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       comparator: "gte",
       description: "Arbiter's on-chain resolution accuracy over the week at or above 95%.",
     },
-    deadlineIso: "2026-08-03T00:00:00.000Z",
+    // A recurring parent's literal is its FIRST round's boundary — `effectiveDeadlineMs` derives
+    // every real round from the cadence — but it still decides the PARENT row's own status, and a
+    // parent in the past reads as a locked market that refuses the bets placed against it. Carried
+    // to a true weekly boundary past Nov 1 for the same reason the two daily parents were
+    // (f619fd7), and on the grid so the first round is not shorter than every round after it.
+    deadlineIso: "2026-11-05T00:00:00.000Z",
     seedPoolMotes: { yes: "1180000000000", no: "220000000000" },
   },
 
