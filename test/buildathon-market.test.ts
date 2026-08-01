@@ -16,6 +16,7 @@ import {
   backedCount,
   fieldRowFor,
   fieldRows,
+  fieldSummary,
   isWideField,
   searchOutcomes,
 } from "@/core/field-board";
@@ -208,6 +209,39 @@ describe("field standings", () => {
 
   it("has no row for a key outside the field", () => {
     expect(fieldRowFor(market(), "00000")).toBeUndefined();
+  });
+});
+
+/**
+ * The board card. One 177-row card in a three-column grid stretched its whole row and pushed the
+ * neighbouring markets off the screen, so the card summarises the field instead of listing it.
+ */
+describe("field card summary", () => {
+  it("shows no leaders while nothing is staked — the whole field is the tail", () => {
+    const s = fieldSummary(market(), 3);
+    expect(s.staked).toBe(false);
+    expect(s.leaders).toEqual([]);
+    expect(s.candidates).toBe(177);
+    expect(s.backed).toBe(0);
+    expect(s.rest).toBe(177);
+  });
+
+  it("caps the podium at the limit and counts the rest", () => {
+    const s = fieldSummary(
+      market({ "46696": "3000000000", "46015": "7000000000", "44012": "1000000000" }),
+      3,
+    );
+    expect(s.leaders.map((r) => r.outcome.key)).toEqual(["46015", "46696", "44012"]);
+    expect(s.leaders.map((r) => r.rank)).toEqual([1, 2, 3]);
+    expect(s.leaders[0]!.impliedProbability).toBeCloseTo(7 / 11, 6);
+    expect(s.backed).toBe(3);
+    expect(s.rest).toBe(174);
+  });
+
+  it("never shows more leaders than the field holds", () => {
+    const s = fieldSummary(market({ "46696": "1000000000" }), 500);
+    expect(s.leaders).toHaveLength(177);
+    expect(s.rest).toBe(0);
   });
 });
 
