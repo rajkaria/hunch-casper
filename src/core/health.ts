@@ -40,7 +40,15 @@ export interface HealthInputs {
     oracleRegistry?: string;
     vault?: string;
     vaultV2?: string;
+    /** `NEXT_PUBLIC_*_FIELD_MARKET` — the only legal target for a wide-field slug. */
+    fieldMarket?: string;
   };
+  /**
+   * How many catalogue markets are wide fields (the 177-finalist buildathon market is one). They
+   * route to `contracts.fieldMarket` and NOWHERE else, so an unset variable is a live market with
+   * no bet path — invisible to every other check, which sees a healthy vault and a routable board.
+   */
+  fieldMarketCount?: number;
   /** Count of per-market package hashes in `NEXT_PUBLIC_*_MARKET_ADDRS`. */
   marketAddressCount: number;
   persistence: { configured: boolean; reachable: boolean; status?: number; latencyMs?: number; rev?: number };
@@ -206,6 +214,25 @@ function contractChecks(i: HealthInputs): HealthCheck[] {
       ? check("contracts.marketFactory", "ok", "MarketFactory wired")
       : check("contracts.marketFactory", "warn", "MarketFactory not wired — the on-chain market registry is unreadable"),
   );
+  // Only reported when the board actually carries a wide field: a deployment without one has
+  // nothing to route there, and a permanent warn nobody can action is noise.
+  const fields = i.fieldMarketCount ?? 0;
+  if (fields > 0) {
+    out.push(
+      i.contracts.fieldMarket
+        ? check(
+            "contracts.fieldMarket",
+            "ok",
+            `FieldMarket wired — ${fields} wide-field market(s) have a bet path`,
+          )
+        : check(
+            "contracts.fieldMarket",
+            "fail",
+            `FieldMarket not wired — ${fields} wide-field market(s) are open on the board with no contract to bet into; ` +
+              "set NEXT_PUBLIC_<NETWORK>_FIELD_MARKET (the vault cannot take them: its outcome cap is 8)",
+          ),
+    );
+  }
   return out;
 }
 

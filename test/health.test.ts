@@ -31,8 +31,10 @@ function healthyReal(): HealthInputs {
       oracleRegistry: "hash-" + "26".repeat(32),
       vault: "hash-" + "c6".repeat(32),
       vaultV2: "hash-" + "ce".repeat(32),
+      fieldMarket: "hash-" + "dd".repeat(32),
     },
     marketAddressCount: 6,
+    fieldMarketCount: 1,
     persistence: { configured: true, reachable: true, status: 200, latencyMs: 12 },
     x402: { payToConfigured: true, legacyOptIn: false },
     signer: { bettorKeyConfigured: true, oracleKeyConfigured: true },
@@ -122,6 +124,32 @@ describe("buildHealthReport — the failures that actually stop the economy", ()
     const r = buildHealthReport({ ...healthyReal(), contracts: {}, marketAddressCount: 0 });
     expect(statusOf(r, "contracts.routing")).toBe("fail");
     expect(r.status).toBe("degraded");
+  });
+
+  /**
+   * The silent one: the vault caps a market at 8 outcomes, so a 177-candidate market that loses
+   * its own package has no bet path at all — while routing, vault, and factory all stay green.
+   */
+  it("fails when a wide field is on the board with no FieldMarket package", () => {
+    const base = healthyReal();
+    const r = buildHealthReport({
+      ...base,
+      contracts: { ...base.contracts, fieldMarket: undefined },
+    });
+    expect(statusOf(r, "contracts.fieldMarket")).toBe("fail");
+    expect(statusOf(r, "contracts.routing")).toBe("ok");
+    expect(r.status).toBe("degraded");
+  });
+
+  it("says nothing about FieldMarket on a board with no wide field", () => {
+    const base = healthyReal();
+    const r = buildHealthReport({
+      ...base,
+      fieldMarketCount: 0,
+      contracts: { ...base.contracts, fieldMarket: undefined },
+    });
+    expect(r.checks.some((c) => c.name === "contracts.fieldMarket")).toBe(false);
+    expect(r.status).toBe("ok");
   });
 
   it("fails when KV is configured but unreachable — the rotated-token trap", () => {

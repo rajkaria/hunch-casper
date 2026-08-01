@@ -27,6 +27,8 @@ import {
   type LoopLivenessInput,
 } from "@/core/health";
 import { baseSlug } from "@/core/round-id";
+import { buildCatalogue } from "@/core/catalogue";
+import { isWideField } from "@/core/field-board";
 import { hydrateEconomyState, probePersistence } from "@/adapters/persist/economy-state";
 import { exportActivityState } from "@/adapters/mock/activity-log";
 import { createContainer } from "@/lib/container";
@@ -258,8 +260,12 @@ export async function gatherHealth(
       oracleRegistry: cfg.contracts.oracleRegistry,
       vault: cfg.contracts.vault,
       vaultV2: cfg.contracts.vaultV2,
+      fieldMarket: cfg.contracts.fieldMarket,
     },
     marketAddressCount: Object.keys(cfg.marketAddresses).length,
+    // Counted off the catalogue, not the env: the question is whether anything on THIS board needs
+    // the FieldMarket package, and the board is what the visitor is looking at.
+    fieldMarketCount: buildCatalogue(network).filter(isWideField).length,
     persistence: {
       configured: persistence.configured,
       reachable: persistence.reachable,
