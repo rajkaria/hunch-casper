@@ -40,7 +40,10 @@ export interface HealthInputs {
     oracleRegistry?: string;
     vault?: string;
     vaultV2?: string;
+    fieldMarket?: string;
   };
+  /** How many catalogue slugs need a `FieldMarket` package (`FIELD_MARKET_SLUGS`). */
+  fieldMarketSlugCount: number;
   /** Count of per-market package hashes in `NEXT_PUBLIC_*_MARKET_ADDRS`. */
   marketAddressCount: number;
   persistence: { configured: boolean; reachable: boolean; status?: number; latencyMs?: number; rev?: number };
@@ -186,6 +189,24 @@ function contractChecks(i: HealthInputs): HealthCheck[] {
           "fail",
           "real mode with no vault and no per-market addresses — every bet and resolve has nowhere to go",
         ),
+  );
+  // The wide-field market is its own package and CANNOT fall back to the vault (its field is far
+  // past the vault's 8-outcome cap), so an unset address is a market that silently cannot take a
+  // bet — surfaced here rather than discovered by the first visitor who tries.
+  out.push(
+    i.fieldMarketSlugCount === 0
+      ? check("contracts.fieldMarket", "skip", "no wide-field markets in this catalogue")
+      : i.contracts.fieldMarket
+        ? check(
+            "contracts.fieldMarket",
+            "ok",
+            `FieldMarket wired — ${i.fieldMarketSlugCount} wide-field market(s) route to their own package`,
+          )
+        : check(
+            "contracts.fieldMarket",
+            "fail",
+            `${i.fieldMarketSlugCount} wide-field market(s) have no contract — set NEXT_PUBLIC_*_FIELD_MARKET or they cannot take a bet`,
+          ),
   );
   out.push(
     i.contracts.vaultV2

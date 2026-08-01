@@ -31,8 +31,10 @@ function healthyReal(): HealthInputs {
       oracleRegistry: "hash-" + "26".repeat(32),
       vault: "hash-" + "c6".repeat(32),
       vaultV2: "hash-" + "ce".repeat(32),
+      fieldMarket: "hash-" + "dd".repeat(32),
     },
     marketAddressCount: 6,
+    fieldMarketSlugCount: 1,
     persistence: { configured: true, reachable: true, status: 200, latencyMs: 12 },
     x402: { payToConfigured: true, legacyOptIn: false },
     signer: { bettorKeyConfigured: true, oracleKeyConfigured: true },
@@ -580,5 +582,36 @@ describe("creation health", () => {
     expect(creationCheck({ ...healthyReal(), chainMode: "mock" })?.status).toBe("skip");
     const withoutCreation = { ...healthyReal(), creation: undefined };
     expect(creationCheck(withoutCreation)).toBeUndefined();
+  });
+});
+
+describe("the wide-field market's own contract", () => {
+  /**
+   * A wide-field market cannot fall back to the vault — its field is far past the vault's
+   * 8-outcome cap — so an unset address is a market that silently cannot take a bet. Health has to
+   * say so; the alternative is the first visitor discovering it at the moment they sign.
+   */
+  it("fails when a wide-field market has no FieldMarket package", () => {
+    const inputs = healthyReal();
+    const report = buildHealthReport({
+      ...inputs,
+      contracts: { ...inputs.contracts, fieldMarket: undefined },
+    });
+    const check = report.checks.find((c) => c.name === "contracts.fieldMarket");
+    expect(check?.status).toBe("fail");
+    expect(check?.detail).toMatch(/FIELD_MARKET/);
+    expect(report.status).not.toBe("ok");
+  });
+
+  it("passes when it is wired", () => {
+    const report = buildHealthReport(healthyReal());
+    const check = report.checks.find((c) => c.name === "contracts.fieldMarket");
+    expect(check?.status).toBe("ok");
+    expect(check?.detail).toMatch(/1 wide-field market/);
+  });
+
+  it("skips the check for a catalogue with no wide-field markets", () => {
+    const report = buildHealthReport({ ...healthyReal(), fieldMarketSlugCount: 0 });
+    expect(report.checks.find((c) => c.name === "contracts.fieldMarket")?.status).toBe("skip");
   });
 });
