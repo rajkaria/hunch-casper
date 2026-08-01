@@ -162,7 +162,7 @@ export function FeaturedMarket({ market, now: fixedNow }: { market: Market; now?
           </div>
 
           {staked ? (
-            <div className="mt-3 flex flex-col gap-2.5">
+            <div className="mt-3 flex flex-1 flex-col gap-2.5">
               {summary.leaders.map((row) => (
                 <div key={row.outcome.key} className="flex flex-col gap-1">
                   <div className="flex items-center justify-between gap-2 text-xs">
@@ -195,6 +195,14 @@ export function FeaturedMarket({ market, now: fixedNow }: { market: Market; now?
                 <span className="font-mono text-[10px] text-muted-2">
                   +{summary.rest} more in the field
                 </span>
+              )}
+              {/* A one- or two-name podium is a thin book, not a verdict. Say so, rather than
+                  leaving a 100% bar to look like a settled question. */}
+              {summary.leaders.length < 3 && (
+                <p className="mt-auto pt-3 text-xs leading-relaxed text-muted">
+                  Thinly backed so far — {summary.candidates - summary.backed} pools are still at
+                  zero, so a single bet moves this line a long way.
+                </p>
               )}
             </div>
           ) : (
