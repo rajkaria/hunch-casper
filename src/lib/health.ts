@@ -27,7 +27,8 @@ import {
   type LoopLivenessInput,
 } from "@/core/health";
 import { baseSlug } from "@/core/round-id";
-import { FIELD_MARKET_SLUGS } from "@/core/buildathon-field";
+import { buildCatalogue } from "@/core/catalogue";
+import { isWideField } from "@/core/field-board";
 import { hydrateEconomyState, probePersistence } from "@/adapters/persist/economy-state";
 import { exportActivityState } from "@/adapters/mock/activity-log";
 import { createContainer } from "@/lib/container";
@@ -262,7 +263,9 @@ export async function gatherHealth(
       fieldMarket: cfg.contracts.fieldMarket,
     },
     marketAddressCount: Object.keys(cfg.marketAddresses).length,
-    fieldMarketSlugCount: FIELD_MARKET_SLUGS.length,
+    // Counted off the catalogue, not the env: the question is whether anything on THIS board needs
+    // the FieldMarket package, and the board is what the visitor is looking at.
+    fieldMarketCount: buildCatalogue(network).filter(isWideField).length,
     persistence: {
       configured: persistence.configured,
       reachable: persistence.reachable,

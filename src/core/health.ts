@@ -40,10 +40,15 @@ export interface HealthInputs {
     oracleRegistry?: string;
     vault?: string;
     vaultV2?: string;
+    /** `NEXT_PUBLIC_*_FIELD_MARKET` — the only legal target for a wide-field slug. */
     fieldMarket?: string;
   };
-  /** How many catalogue slugs need a `FieldMarket` package (`FIELD_MARKET_SLUGS`). */
-  fieldMarketSlugCount: number;
+  /**
+   * How many catalogue markets are wide fields (the 177-finalist buildathon market is one). They
+   * route to `contracts.fieldMarket` and NOWHERE else, so an unset variable is a live market with
+   * no bet path — invisible to every other check, which sees a healthy vault and a routable board.
+   */
+  fieldMarketCount?: number;
   /** Count of per-market package hashes in `NEXT_PUBLIC_*_MARKET_ADDRS`. */
   marketAddressCount: number;
   persistence: { configured: boolean; reachable: boolean; status?: number; latencyMs?: number; rev?: number };
@@ -190,24 +195,6 @@ function contractChecks(i: HealthInputs): HealthCheck[] {
           "real mode with no vault and no per-market addresses — every bet and resolve has nowhere to go",
         ),
   );
-  // The wide-field market is its own package and CANNOT fall back to the vault (its field is far
-  // past the vault's 8-outcome cap), so an unset address is a market that silently cannot take a
-  // bet — surfaced here rather than discovered by the first visitor who tries.
-  out.push(
-    i.fieldMarketSlugCount === 0
-      ? check("contracts.fieldMarket", "skip", "no wide-field markets in this catalogue")
-      : i.contracts.fieldMarket
-        ? check(
-            "contracts.fieldMarket",
-            "ok",
-            `FieldMarket wired — ${i.fieldMarketSlugCount} wide-field market(s) route to their own package`,
-          )
-        : check(
-            "contracts.fieldMarket",
-            "fail",
-            `${i.fieldMarketSlugCount} wide-field market(s) have no contract — set NEXT_PUBLIC_*_FIELD_MARKET or they cannot take a bet`,
-          ),
-  );
   out.push(
     i.contracts.vaultV2
       ? check("contracts.vaultV2", "ok", "HunchVault v2 wired — new markets are cheap state entries")
@@ -227,6 +214,25 @@ function contractChecks(i: HealthInputs): HealthCheck[] {
       ? check("contracts.marketFactory", "ok", "MarketFactory wired")
       : check("contracts.marketFactory", "warn", "MarketFactory not wired — the on-chain market registry is unreadable"),
   );
+  // Only reported when the board actually carries a wide field: a deployment without one has
+  // nothing to route there, and a permanent warn nobody can action is noise.
+  const fields = i.fieldMarketCount ?? 0;
+  if (fields > 0) {
+    out.push(
+      i.contracts.fieldMarket
+        ? check(
+            "contracts.fieldMarket",
+            "ok",
+            `FieldMarket wired — ${fields} wide-field market(s) have a bet path`,
+          )
+        : check(
+            "contracts.fieldMarket",
+            "fail",
+            `FieldMarket not wired — ${fields} wide-field market(s) are open on the board with no contract to bet into; ` +
+              "set NEXT_PUBLIC_<NETWORK>_FIELD_MARKET (the vault cannot take them: its outcome cap is 8)",
+          ),
+    );
+  }
   return out;
 }
 

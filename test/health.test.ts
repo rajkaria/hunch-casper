@@ -34,7 +34,7 @@ function healthyReal(): HealthInputs {
       fieldMarket: "hash-" + "dd".repeat(32),
     },
     marketAddressCount: 6,
-    fieldMarketSlugCount: 1,
+    fieldMarketCount: 1,
     persistence: { configured: true, reachable: true, status: 200, latencyMs: 12 },
     x402: { payToConfigured: true, legacyOptIn: false },
     signer: { bettorKeyConfigured: true, oracleKeyConfigured: true },
@@ -124,6 +124,32 @@ describe("buildHealthReport — the failures that actually stop the economy", ()
     const r = buildHealthReport({ ...healthyReal(), contracts: {}, marketAddressCount: 0 });
     expect(statusOf(r, "contracts.routing")).toBe("fail");
     expect(r.status).toBe("degraded");
+  });
+
+  /**
+   * The silent one: the vault caps a market at 8 outcomes, so a 177-candidate market that loses
+   * its own package has no bet path at all — while routing, vault, and factory all stay green.
+   */
+  it("fails when a wide field is on the board with no FieldMarket package", () => {
+    const base = healthyReal();
+    const r = buildHealthReport({
+      ...base,
+      contracts: { ...base.contracts, fieldMarket: undefined },
+    });
+    expect(statusOf(r, "contracts.fieldMarket")).toBe("fail");
+    expect(statusOf(r, "contracts.routing")).toBe("ok");
+    expect(r.status).toBe("degraded");
+  });
+
+  it("says nothing about FieldMarket on a board with no wide field", () => {
+    const base = healthyReal();
+    const r = buildHealthReport({
+      ...base,
+      fieldMarketCount: 0,
+      contracts: { ...base.contracts, fieldMarket: undefined },
+    });
+    expect(r.checks.some((c) => c.name === "contracts.fieldMarket")).toBe(false);
+    expect(r.status).toBe("ok");
   });
 
   it("fails when KV is configured but unreachable — the rotated-token trap", () => {
@@ -582,36 +608,5 @@ describe("creation health", () => {
     expect(creationCheck({ ...healthyReal(), chainMode: "mock" })?.status).toBe("skip");
     const withoutCreation = { ...healthyReal(), creation: undefined };
     expect(creationCheck(withoutCreation)).toBeUndefined();
-  });
-});
-
-describe("the wide-field market's own contract", () => {
-  /**
-   * A wide-field market cannot fall back to the vault — its field is far past the vault's
-   * 8-outcome cap — so an unset address is a market that silently cannot take a bet. Health has to
-   * say so; the alternative is the first visitor discovering it at the moment they sign.
-   */
-  it("fails when a wide-field market has no FieldMarket package", () => {
-    const inputs = healthyReal();
-    const report = buildHealthReport({
-      ...inputs,
-      contracts: { ...inputs.contracts, fieldMarket: undefined },
-    });
-    const check = report.checks.find((c) => c.name === "contracts.fieldMarket");
-    expect(check?.status).toBe("fail");
-    expect(check?.detail).toMatch(/FIELD_MARKET/);
-    expect(report.status).not.toBe("ok");
-  });
-
-  it("passes when it is wired", () => {
-    const report = buildHealthReport(healthyReal());
-    const check = report.checks.find((c) => c.name === "contracts.fieldMarket");
-    expect(check?.status).toBe("ok");
-    expect(check?.detail).toMatch(/1 wide-field market/);
-  });
-
-  it("skips the check for a catalogue with no wide-field markets", () => {
-    const report = buildHealthReport({ ...healthyReal(), fieldMarketSlugCount: 0 });
-    expect(report.checks.find((c) => c.name === "contracts.fieldMarket")?.status).toBe("skip");
   });
 });

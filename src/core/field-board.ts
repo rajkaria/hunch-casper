@@ -117,6 +117,43 @@ export function fieldRows(market: Market): FieldRow[] {
   });
 }
 
+/** Everything a board card shows about a wide field, without the 177 rows behind it. */
+export interface FieldSummary {
+  /** How many candidates are in the field. */
+  candidates: number;
+  /** How many of them have any stake at all. */
+  backed: number;
+  /** True once anything at all is staked on the market. */
+  staked: boolean;
+  /**
+   * The leaders, longest-staked first — empty while nothing is staked. An unbet field has no
+   * podium, and printing the first N candidates at 0% would promote catalogue order to a
+   * favourite that does not exist.
+   */
+  leaders: FieldRow[];
+  /** Candidates not shown as leaders — the "+N more" tail. */
+  rest: number;
+}
+
+/**
+ * Card-sized view of a wide field: the shape of the field plus at most `limit` leaders.
+ *
+ * Split out of the card component so the "no leaders until something is staked" rule is a tested
+ * fact rather than JSX. A 177-outcome market rendered through the normal card body stretched its
+ * whole grid row; this is what the card renders instead.
+ */
+export function fieldSummary(market: Market, limit: number): FieldSummary {
+  const staked = BigInt(market.totalStakedMotes) > 0n;
+  const leaders = staked ? fieldRows(market).slice(0, Math.max(0, limit)) : [];
+  return {
+    candidates: market.outcomes.length,
+    backed: backedCount(market),
+    staked,
+    leaders,
+    rest: market.outcomes.length - leaders.length,
+  };
+}
+
 /** The row for one candidate, or `undefined` if the key is not in this market's field. */
 export function fieldRowFor(market: Market, outcomeKey: string): FieldRow | undefined {
   return fieldRows(market).find((r) => r.outcome.key === outcomeKey);

@@ -6,6 +6,7 @@ import { useMarkets } from "@/components/use-markets";
 import { marketHref } from "@/components/market-card";
 import { computeOdds, formatProbability } from "@/core/parimutuel-odds";
 import { motesToCspr } from "@/core/types";
+import { isWideField } from "@/core/field-board";
 import type { Market } from "@/core/types";
 
 /**
@@ -20,6 +21,10 @@ function TickerEntry({ market, focusable }: { market: Market; focusable: boolean
   const top = odds.reduce((a, b) => (b.impliedProbability > a.impliedProbability ? b : a), odds[0]);
   const label = market.outcomes.find((o) => o.key === top?.outcomeKey)?.label ?? top?.outcomeKey ?? "";
   const staked = motesToCspr(market.totalStakedMotes);
+  // An unbet wide field has no favourite: every pool is zero, so the "top" outcome is whichever
+  // candidate happens to be listed first. The tape says how wide the field is instead of
+  // promoting an alphabetical accident to leader.
+  const openField = isWideField(market) && staked === 0;
 
   return (
     <Link
@@ -30,7 +35,7 @@ function TickerEntry({ market, focusable }: { market: Market; focusable: boolean
     >
       <span className="text-muted transition-colors group-hover:text-foreground">{market.title}</span>
       <span className="num font-semibold text-up">
-        {label} {top ? formatProbability(top.impliedProbability) : ""}
+        {openField ? `${market.outcomes.length} candidates · open field` : `${label} ${top ? formatProbability(top.impliedProbability) : ""}`}
       </span>
       <span className="num text-muted-2">{staked >= 1000 ? `${(staked / 1000).toFixed(1)}k` : staked.toFixed(0)} CSPR</span>
       <span aria-hidden="true" className="pl-2 text-border-strong">
