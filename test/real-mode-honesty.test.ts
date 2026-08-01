@@ -28,11 +28,14 @@ import { createMockChain } from "@/adapters/mock/mock-chain";
 import { computeAgentLeaderboard } from "@/core/agent-leaderboard";
 import type { MarketDefinition } from "@/core/catalogue";
 
+// The cron passes `now + window`, so a Genesis trigger's deadline is always in the FUTURE — a
+// market that opens already past its deadline is locked on arrival and can never be bet into.
+// Moved off 2026-08-01 (which arrived) onto the catalogue's current one-shot horizon.
 const TRIGGER = {
   metric: "cspr_usd",
   value: "0.0421",
   unitLabel: "$",
-  deadlineIso: "2026-08-01T00:00:00.000Z",
+  deadlineIso: "2026-11-01T00:00:00.000Z",
   seq: 0,
 };
 
@@ -176,7 +179,9 @@ describe("house seeding", () => {
       comparator: "gte",
       description: "fixture",
     },
-    deadlineIso: "2026-08-01T00:00:00.000Z",
+    // Must stay in the future: seeding is a real bet, and a market past its deadline is locked,
+    // so a stale literal here would silently turn every seed below into a refused stake.
+    deadlineIso: "2026-11-01T00:00:00.000Z",
     seedPoolMotes: { yes: "1200000000000", no: "800000000000" },
   };
 
@@ -215,8 +220,15 @@ describe("house seeding", () => {
   it("keeps house liquidity off the agent PnL board", async () => {
     stubRealMode();
     const container = realModeContainer();
-    await seedMarketPools(container, DEF, "testnet:house-seed-fixture");
-    const board = computeAgentLeaderboard(await container.store.settledEntries("testnet"));
+    // Register + settle, or the seed is refused and the board is empty for the wrong reason —
+    // an exclusion test that passes on an empty ledger proves nothing about the exclusion.
+    addCreatedMarket(DEF);
+    expect(await seedMarketPools(container, DEF, "testnet:house-seed-fixture")).toHaveLength(2);
+    await container.store.settle("testnet:house-seed-fixture", "yes");
+
+    const entries = await container.store.settledEntries("testnet");
+    expect(entries.some((e) => e.stakesByBettor[HOUSE_BETTOR])).toBe(true); // it DID reach settlement
+    const board = computeAgentLeaderboard(entries);
     expect(board.some((row) => row.agent === HOUSE_BETTOR)).toBe(false);
   });
 

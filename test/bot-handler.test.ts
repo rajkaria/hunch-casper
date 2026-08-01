@@ -12,7 +12,11 @@ beforeEach(() => {
   __resetConsumedNonces();
 });
 
-const SLUG = "cspr-price-05-aug";
+// The Aug 1 CSPR price market matured and is retired; its Nov 1 successor is the live one. Unlike
+// the retired market it opens with an EMPTY book (seedPoolMotes 0/0), so the pool a bet lands in
+// is exactly the stakes this test placed — hence the bare-stake expectations below.
+const SLUG = "cspr-price-0025-nov";
+const STAKE_MOTES = 5_000_000_000n; // the 5 CSPR every `inbound()` bet stakes
 
 function inbound(over: Partial<InboundMessage> = {}): InboundMessage {
   return {
@@ -49,7 +53,7 @@ describe("bot handler — bet round trip", () => {
     expect(h.transport.outbox[0].text).toContain("5 CSPR");
     // The bet actually moved the pool in the read model.
     const market = await h.container.store.get(SLUG, "testnet");
-    expect(BigInt(market!.poolByOutcomeMotes.yes)).toBe(1200000000000n + 5000000000n);
+    expect(BigInt(market!.poolByOutcomeMotes.yes)).toBe(STAKE_MOTES);
   });
 
   it("attributes the bet to the platform sender identity", async () => {
@@ -58,7 +62,7 @@ describe("bot handler — bet round trip", () => {
     const entries = await h.container.store.settledEntries?.("testnet");
     // Not settled yet, but the bet is recorded against the sender in the market store's ledger.
     const market = await h.container.store.get(SLUG, "testnet");
-    expect(market!.totalStakedMotes).toBe((BigInt("2000000000000") + 5000000000n).toString());
+    expect(market!.totalStakedMotes).toBe(STAKE_MOTES.toString());
     expect(Array.isArray(entries)).toBe(true);
   });
 });
@@ -94,7 +98,7 @@ describe("bot handler — idempotency by mention id", () => {
     const placedCount = [a, b].filter((r) => r.placed).length;
     expect(placedCount).toBe(1);
     const market = await h.container.store.get(SLUG, "testnet");
-    expect(BigInt(market!.poolByOutcomeMotes.yes)).toBe(1200000000000n + 5000000000n);
+    expect(BigInt(market!.poolByOutcomeMotes.yes)).toBe(STAKE_MOTES);
   });
 
   it("distinct mention ids each place their own bet", async () => {
@@ -102,7 +106,7 @@ describe("bot handler — idempotency by mention id", () => {
     await h.run(inbound({ mentionId: "telegram:a", sender: "telegram:1" }));
     await h.run(inbound({ mentionId: "telegram:b", sender: "telegram:2" }));
     const market = await h.container.store.get(SLUG, "testnet");
-    expect(BigInt(market!.poolByOutcomeMotes.yes)).toBe(1200000000000n + 2n * 5000000000n);
+    expect(BigInt(market!.poolByOutcomeMotes.yes)).toBe(2n * STAKE_MOTES);
   });
 });
 
@@ -122,11 +126,14 @@ describe("bot handler — reads and errors", () => {
 
   it("shows odds for a real market and errors helpfully for an unknown one", async () => {
     const h = harness();
+    // The successor opens with an empty book, so stake it first — otherwise every outcome quotes
+    // 0% and the reply would satisfy a "%" check without any odds math having happened.
+    await h.run(inbound({ mentionId: "telegram:o0" }));
     await h.run(inbound({ text: `odds ${SLUG}`, mentionId: "telegram:o1" }));
-    expect(h.transport.outbox[0].text).toContain("%");
+    expect(h.transport.outbox[1].text).toContain("100%"); // the whole pool is on YES
 
     await h.run(inbound({ text: "odds no-such-market", mentionId: "telegram:o2" }));
-    expect(h.transport.outbox[1].text.toLowerCase()).toContain("no market");
+    expect(h.transport.outbox[2].text.toLowerCase()).toContain("no market");
   });
 
   it("rejects a malformed command with the grammar hint", async () => {

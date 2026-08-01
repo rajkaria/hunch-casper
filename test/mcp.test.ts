@@ -66,25 +66,51 @@ describe("MCP server (/api/mcp)", () => {
     expect(data.accuracyBps).toBe(9609);
   });
 
+  // btc-150k-aug matured on Aug 1 and is retired history now — betting against it is refused, so
+  // the bet paths below run against its live successor, btc-70k-nov.
   it("quote_bet returns an x402 requirement + payout preview (no proof needed)", async () => {
+    // The successor carries no seed liquidity, and a payout preview against an empty book is just
+    // the stake handed back. Stake the other side first so the quote prices a real pool.
+    const other = parseContent(
+      await callTool("place_bet", {
+        network: "testnet",
+        marketId: "testnet:btc-70k-nov",
+        outcomeKey: "no",
+        amountMotes: "3000000000",
+        bettor: "agent:contrarian",
+      }),
+    );
+    const otherPlaced = parseContent(
+      await callTool("place_bet", {
+        network: "testnet",
+        marketId: "testnet:btc-70k-nov",
+        outcomeKey: "no",
+        amountMotes: "3000000000",
+        bettor: "agent:contrarian",
+        paymentProof: { scheme: "casper-x402", deployHash: "opposing", nonce: other.requirement.nonce },
+      }),
+    );
+    expect(otherPlaced.status).toBe("placed");
+
     const data = parseContent(
       await callTool("quote_bet", {
         network: "testnet",
-        marketId: "testnet:btc-150k-aug",
+        marketId: "testnet:btc-70k-nov",
         outcomeKey: "yes",
         amountMotes: "1000000000",
       }),
     );
     expect(data.status).toBe("payment_required");
     expect(data.requirement.nonce).toBeTruthy();
-    expect(BigInt(data.previewPayoutMotes) >= 1000000000n).toBe(true);
+    // Sole backer of yes against a 3 CSPR no pool: the stake back plus the losing pool net of fee.
+    expect(BigInt(data.previewPayoutMotes) > 1000000000n).toBe(true);
   });
 
   it("place_bet is gated: returns the requirement without a proof, places with one", async () => {
     const quote = parseContent(
       await callTool("place_bet", {
         network: "testnet",
-        marketId: "testnet:btc-150k-aug",
+        marketId: "testnet:btc-70k-nov",
         outcomeKey: "yes",
         amountMotes: "1000000000",
         bettor: "agent:momentum",
@@ -95,7 +121,7 @@ describe("MCP server (/api/mcp)", () => {
     const placed = parseContent(
       await callTool("place_bet", {
         network: "testnet",
-        marketId: "testnet:btc-150k-aug",
+        marketId: "testnet:btc-70k-nov",
         outcomeKey: "yes",
         amountMotes: "1000000000",
         bettor: "agent:momentum",
@@ -111,7 +137,7 @@ describe("MCP server (/api/mcp)", () => {
     const quote = parseContent(
       await callTool("place_bet", {
         network: "testnet",
-        marketId: "testnet:btc-150k-aug",
+        marketId: "testnet:btc-70k-nov",
         outcomeKey: "yes",
         amountMotes: "1000000000",
         bettor: "agent:momentum",
@@ -123,7 +149,7 @@ describe("MCP server (/api/mcp)", () => {
     const placed = parseContent(
       await callTool("place_bet", {
         network: "testnet",
-        marketId: "testnet:btc-150k-aug",
+        marketId: "testnet:btc-70k-nov",
         outcomeKey: "yes",
         amountMotes: "1000000000",
         bettor: "agent:momentum",

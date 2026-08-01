@@ -25,6 +25,28 @@ function post(handler: (req: Request) => Promise<Response>, url: string, body: u
 const BET_URL = "http://localhost/api/chain/bet";
 const RESOLVE_URL = "http://localhost/api/chain/resolve";
 
+// The RWA market these cases exercise. `btc-150k-aug` matured on 2026-08-01 and is retired, so it
+// is locked and refuses every bet; `btc-70k-nov` is its live successor. Successors ship with NO
+// seed liquidity, so any case that needs a pool stakes it below rather than inheriting one.
+const RWA_MARKET = "testnet:btc-70k-nov";
+
+/** Give `RWA_MARKET` a pool on each side, so a resolve has something to settle. */
+async function stakeBothSides(): Promise<void> {
+  for (const [outcomeKey, bettor] of [
+    ["yes", "agent:momentum"],
+    ["no", "agent:contrarian"],
+  ]) {
+    const res = await post(betPOST, BET_URL, {
+      network: "testnet",
+      marketId: RWA_MARKET,
+      outcomeKey,
+      amountMotes: "1000000000",
+      bettor,
+    });
+    expect(res.status).toBe(200);
+  }
+}
+
 describe("POST /api/chain/bet — real-mode operator-custody guards", () => {
   // The operator's purse pays gas + stake for whoever asks on this route; unauthenticated and
   // (on testnet) uncapped, a curl loop drained runway. Both guards sit BEFORE any chain call.
@@ -100,16 +122,27 @@ describe("POST /api/chain/bet", () => {
   });
 
   it("records the bet into live pools", async () => {
+    // The standing liquidity is staked here, not inherited from a catalogue seed, so the bet under
+    // test is still measured as an ADDITION to a non-empty pool.
+    const opening = await post(betPOST, BET_URL, {
+      network: "testnet",
+      marketId: RWA_MARKET,
+      outcomeKey: "yes",
+      amountMotes: "700000000000", // 700 CSPR of standing liquidity
+      bettor: "house",
+    });
+    expect(opening.status).toBe(200);
+
     const res = await post(betPOST, BET_URL, {
       network: "testnet",
-      marketId: "testnet:btc-150k-aug",
+      marketId: RWA_MARKET,
       outcomeKey: "yes",
       amountMotes: "1000000000000", // 1000 CSPR
       bettor: "agent:momentum",
     });
     expect(res.status).toBe(200);
     const json = await res.json();
-    // seed yes=700 CSPR + 1000 CSPR bet = 1700 CSPR on yes.
+    // standing yes=700 CSPR + 1000 CSPR bet = 1700 CSPR on yes.
     expect(json.poolByOutcomeMotes.yes).toBe("1700000000000");
   });
 
@@ -121,15 +154,15 @@ describe("POST /api/chain/bet", () => {
     // id, and this route has no poll to guard against in the first place.
     const body = {
       network: "testnet",
-      marketId: "testnet:btc-150k-aug",
+      marketId: RWA_MARKET,
       outcomeKey: "yes",
       amountMotes: "1000000000", // 1 CSPR, twice
       bettor: "agent:momentum",
     };
     await post(betPOST, BET_URL, body);
     const second = await (await post(betPOST, BET_URL, body)).json();
-    // seed yes=700 CSPR + 1 + 1.
-    expect(second.poolByOutcomeMotes.yes).toBe("702000000000");
+    // The market opens empty, so the pool IS the two stakes: a dropped second bet reads 1 CSPR.
+    expect(second.poolByOutcomeMotes.yes).toBe("2000000000");
   });
 
   it("rejects a bet on an unknown market or a bad outcome", async () => {
@@ -143,7 +176,7 @@ describe("POST /api/chain/bet", () => {
     expect(unknown.status).toBe(400);
     const badOutcome = await post(betPOST, BET_URL, {
       network: "testnet",
-      marketId: "testnet:btc-150k-aug",
+      marketId: RWA_MARKET,
       outcomeKey: "maybe",
       amountMotes: "5",
       bettor: "x",
@@ -187,7 +220,7 @@ describe("POST /api/chain/bet", () => {
 
     const under = await post(betPOST, BET_URL, {
       network: "mainnet",
-      marketId: "mainnet:btc-150k-aug",
+      marketId: "mainnet:btc-70k-nov",
       outcomeKey: "yes",
       amountMotes: "20000000000", // 20 CSPR
       bettor: "x",
@@ -218,9 +251,12 @@ describe("POST /api/chain/resolve", () => {
   });
 
   it("defaults the oracle id to 'arbiter' when omitted", async () => {
+    // Staked first so this is a genuine resolution: a market with an empty winning pool settles
+    // VOID, which would exercise a different branch than the one this case is about.
+    await stakeBothSides();
     const res = await post(resolvePOST, RESOLVE_URL, {
       network: "testnet",
-      marketId: "testnet:btc-150k-aug",
+      marketId: RWA_MARKET,
       winningOutcomeKey: "yes",
     });
     expect(res.status).toBe(200);
@@ -238,17 +274,18 @@ describe("POST /api/chain/resolve", () => {
   it("rejects an outcome that isn't part of the market", async () => {
     const res = await post(resolvePOST, RESOLVE_URL, {
       network: "testnet",
-      marketId: "testnet:btc-150k-aug",
+      marketId: RWA_MARKET,
       winningOutcomeKey: "maybe",
     });
     expect(res.status).toBe(400);
   });
 
   it("is idempotent: a second resolve returns the first settlement, not a new one", async () => {
+    await stakeBothSides(); // a winner needs a winning pool, or the market settles void instead
     const first = await (
       await post(resolvePOST, RESOLVE_URL, {
         network: "testnet",
-        marketId: "testnet:btc-150k-aug",
+        marketId: RWA_MARKET,
         winningOutcomeKey: "yes",
       })
     ).json();
@@ -257,7 +294,7 @@ describe("POST /api/chain/resolve", () => {
     // Re-resolve with a DIFFERENT winner — must not re-settle or echo the new winner.
     const second = await post(resolvePOST, RESOLVE_URL, {
       network: "testnet",
-      marketId: "testnet:btc-150k-aug",
+      marketId: RWA_MARKET,
       winningOutcomeKey: "no",
     });
     expect(second.status).toBe(200);

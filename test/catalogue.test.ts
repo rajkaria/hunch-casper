@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { MARKET_DEFINITIONS, buildCatalogue, findDefinition } from "@/core/catalogue";
+import { effectiveDeadlineMs } from "@/core/market-generator";
 import type { ResolverBinding } from "@/core/types";
 
 describe("catalogue", () => {
@@ -47,8 +48,12 @@ describe("catalogue", () => {
 
   it("authors the original seven Casper-native markets plus the S27 public-good feeds", () => {
     const casperNative = MARKET_DEFINITIONS.filter((d) => d.category === "casper-native");
-    // 7 original + 3 public-good feeds (Condor upgrade, validator health, grant milestones).
-    expect(casperNative.length).toBe(10);
+    // 7 original + 3 public-good feeds (Condor upgrade, validator health, grant milestones). Nine
+    // matured on Aug 1 and are retired; the recurring daily up/down round never expires, and nine
+    // successors carry the questions forward.
+    expect(casperNative.filter((d) => d.retired).length).toBe(9);
+    expect(casperNative.filter((d) => !d.retired).length).toBe(10);
+    expect(casperNative.length).toBe(19);
     const metrics = new Set(casperNative.map((d) => d.resolver.metric));
     for (const m of [
       "cspr_usd",
@@ -76,6 +81,44 @@ describe("catalogue", () => {
     const meta = MARKET_DEFINITIONS.filter((d) => d.category === "meta");
     expect(meta.length).toBe(3);
     expect(meta.every((d) => d.resolver.source === "internal")).toBe(true);
+  });
+
+  /**
+   * The tripwire the board did not have. Every one-shot deadline is a fixed literal (deterministic
+   * tests, reproducible demos), so the catalogue rots by the calendar rather than by a code change:
+   * on 2026-08-01 all fourteen of the first cohort matured at once and the board had nothing live
+   * on it. Nothing failed — which was the problem. This case fails the day the live board runs
+   * out of runway, which is the only warning that arrives before a visitor notices.
+   *
+   * Retired definitions are settled history and are exempt: their deadlines are in the past because
+   * they already resolved, and their on-chain twins carry the same instant immutably.
+   */
+  it("keeps every live market's deadline in the future — the board must never run out of runway", () => {
+    const now = Date.now();
+    const stale = MARKET_DEFINITIONS.filter(
+      (d) => !d.retired && effectiveDeadlineMs(d, now) <= now,
+    ).map((d) => d.slug);
+    expect(
+      stale,
+      `these markets have matured and nothing replaced them — retire them and author successors ` +
+        `(see the Nov 1 cohort in catalogue.ts): ${stale.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("retires a market rather than moving its deadline — a matured market is settled history", () => {
+    for (const d of MARKET_DEFINITIONS.filter((x) => x.retired)) {
+      expect(Date.parse(d.deadlineIso)).toBeLessThan(Date.now());
+    }
+    // And every retired question has a live successor asking it again, so no feed goes dark.
+    const liveMetrics = new Set(
+      MARKET_DEFINITIONS.filter((d) => !d.retired).map((d) => d.resolver.metric),
+    );
+    const orphaned = MARKET_DEFINITIONS.filter(
+      (d) => d.retired && !liveMetrics.has(d.resolver.metric),
+    ).map((d) => `${d.slug} (${d.resolver.metric})`);
+    // `condor_activation_height` is deliberately not carried forward: Casper 2.0 shipped, so the
+    // question is settled for good. Its slot asks about chain height instead.
+    expect(orphaned).toEqual(["casper-condor-upgrade-ships-aug (condor_activation_height)"]);
   });
 
   it("gives every definition a valid fee, cadence and deadline", () => {

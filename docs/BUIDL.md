@@ -74,7 +74,7 @@ adds a 25 CSPR per-bet cap and an unaudited-build disclosure).
 - **MCP Server** — `POST /api/mcp`, JSON-RPC 2.0, 8 tools (list / get / odds / quote / place_bet /
   oracle-reputation / leaderboard / agent-reputation). The Prophets dogfood the same public surface
   third-party agents use.
-- **Odra Framework** — nine original contracts: `MarketFactory` (registry), `ParimutuelMarket`
+- **Odra Framework** — ten original contracts: `MarketFactory` (registry), `ParimutuelMarket`
   (payable escrow + pull-style `claim()`), `OracleRegistry` (staked oracle reputation), the
   singleton `HunchVault`, `AgentRegistry`, `DisputePanel`, `ResolutionHook`, `LmsrMarket`, and
   `CopyBetting`. All covered on OdraVM in CI.
@@ -84,7 +84,7 @@ adds a 25 CSPR per-bet cap and an unaudited-build disclosure).
 
 ### What's real (transparency)
 
-**Real:** nine original Odra/Rust contracts (95 OdraVM tests in CI), the testnet deployment + real
+**Real:** ten original Odra/Rust contracts (116 OdraVM tests in CI), the testnet deployment + real
 transaction receipts on cspr.live (below), the x402 handshake with on-chain CSPR transfer
 verification in real mode, the live chain signals Genesis reads, the MCP server, and the payout math
 (mirrors the contract's `claim()` exactly). The live testnet deployment runs in **real chain mode**:
@@ -113,7 +113,7 @@ this repository is original and newly written for this buildathon.**
 
 ## Deployed contract packages (Casper testnet)
 
-Four of the nine original Odra/Rust contracts are installed on testnet — the four the live money
+Five of the ten original Odra/Rust contracts are installed on testnet — the five the live money
 path needs. The other five (`AgentRegistry`, `DisputePanel`, `ResolutionHook`, `LmsrMarket`,
 `CopyBetting`) ship in the repo under OdraVM test coverage and are not yet installed on chain.
 Click any hash to open the contract package on cspr.live.
@@ -174,7 +174,7 @@ The full step-by-step is in the
 
 ## Tech stack
 
-Next.js 16 + TypeScript (strict) on Vercel · Odra 2.8 / Rust contracts · Vitest (1367 TS tests) +
+Next.js 16 + TypeScript (strict) on Vercel · Odra 2.8 / Rust contracts · Vitest (1888 TS tests) +
 OdraVM (95 contract tests) behind a `typecheck / lint / test / build` CI gate · ports & adapters so
 the deterministic mock and the real `casper-js-sdk` adapter satisfy the same contract tests.
 

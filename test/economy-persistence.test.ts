@@ -79,11 +79,17 @@ const CREATED: MarketDefinition = {
     comparator: "gte",
     description: "Round-trip fixture — never resolved.",
   },
-  deadlineIso: "2026-08-01T00:00:00.000Z",
+  // Deadline rides with the live catalogue cohort: a fixture whose deadline has passed is a
+  // silently locked market, and the next case that tries to bet on it would fail for a reason
+  // that has nothing to do with persistence.
+  deadlineIso: "2026-11-01T00:00:00.000Z",
   seedPoolMotes: { yes: "1000000000", no: "1000000000" },
 };
 
-const MARKET_ID = "testnet:cspr-staking-apy-11";
+// The market these cases bet on must be OPEN — `cspr-staking-apy-11` matured on 2026-08-01 and is
+// retired, so this follows it to its successor. Note the successor ships with no seed liquidity:
+// every pool below is built purely from the bets each case places.
+const MARKET_ID = "testnet:cspr-staking-apy-8-nov";
 
 /** Base epoch for merge fixtures — far enough in the past that a live Date.now() always outranks it. */
 const T0 = 1_753_000_000_000;
@@ -706,7 +712,7 @@ describe("merge-on-persist — two writers must not clobber each other", () => {
   });
 
   it("unions oracle resolutions by id and keeps the strongest reputation", async () => {
-    const M2 = "testnet:cspr-price-05-aug";
+    const M2 = "testnet:cspr-price-0025-nov"; // successor of the retired cspr-price-05-aug
     oracleRecordResolution("arbiter", MARKET_ID, false); // remote: 129 resolved / 123 accurate
     const remote = serializeEconomyState();
     resetAllState();

@@ -18,7 +18,9 @@ afterEach(() => {
   process.env = { ...savedEnv };
 });
 
-const SLUG = "cspr-price-05-aug";
+// Repointed to the live Nov 1 successor — the Aug 1 market matured and is retired, so a bet on it
+// is refused as locked and the webhook rails would never reach the money path.
+const SLUG = "cspr-price-0025-nov";
 
 function tgPost(body: unknown, headers: Record<string, string> = {}): Promise<Response> {
   return telegramPOST(

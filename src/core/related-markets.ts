@@ -10,7 +10,7 @@ import type { Market } from "@/core/types";
 
 const STOPWORDS = new Set([
   "the", "a", "an", "by", "or", "and", "of", "to", "is", "in", "on", "at", "for",
-  "above", "below", "this", "week", "hour", "aug", "count",
+  "above", "below", "this", "week", "hour", "aug", "nov", "count",
 ]);
 
 /** Significant lowercase tokens from a market's title — the subject fingerprint. */

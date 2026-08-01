@@ -15,9 +15,20 @@ function post(body: unknown, paymentProof?: unknown): Promise<Response> {
   return betPOST(new Request(URL, { method: "POST", headers, body: JSON.stringify(body) }));
 }
 
+/**
+ * One full x402 exchange (challenge → pay → present proof). Unlike the retired Aug catalogue, the
+ * Nov successors open with EMPTY pools, so a test that needs liquidity stakes it for real through
+ * the same rail instead of inheriting a seed.
+ */
+async function placePaidBet(bet: Record<string, unknown>, deployHash: string): Promise<Response> {
+  const nonce = (await (await post(bet)).json()).accepts[0].nonce;
+  return post(bet, { scheme: "casper-x402", deployHash, nonce });
+}
+
+// btc-150k-aug matured and retired on 2026-08-01; btc-70k-nov is its live successor.
 const BET = {
   network: "testnet",
-  marketId: "testnet:btc-150k-aug",
+  marketId: "testnet:btc-70k-nov",
   outcomeKey: "yes",
   amountMotes: "1000000000",
   bettor: "agent:momentum",
@@ -25,6 +36,14 @@ const BET = {
 
 describe("x402 REST bet (/api/agent/v1/bet)", () => {
   it("returns 402 with an x402 requirement when unpaid", async () => {
+    // Price the preview against a live counter-pool: the assertion below is about a payout quoted
+    // from real opposing stake, which the unseeded successor only has once someone bets it.
+    const counter = await placePaidBet(
+      { ...BET, outcomeKey: "no", bettor: "agent:counterparty", amountMotes: "2300000000000" },
+      "counter-stake-tx",
+    );
+    expect(counter.status).toBe(200);
+
     const res = await post(BET);
     expect(res.status).toBe(402);
     const json = await res.json();
@@ -36,6 +55,10 @@ describe("x402 REST bet (/api/agent/v1/bet)", () => {
   });
 
   it("places the bet once a valid proof is presented, returning X-PAYMENT-RESPONSE", async () => {
+    // The pool this bet lands on top of is staked here rather than inherited from a seed.
+    const seed = await placePaidBet({ ...BET, bettor: "agent:liquidity", amountMotes: "700000000000" }, "seed-yes-tx");
+    expect(seed.status).toBe(200);
+
     const challenge = await (await post(BET)).json();
     const nonce = challenge.accepts[0].nonce;
     const proof = { scheme: "casper-x402", deployHash: "settlement-tx", nonce };
@@ -45,7 +68,7 @@ describe("x402 REST bet (/api/agent/v1/bet)", () => {
     expect(res.headers.get("X-PAYMENT-RESPONSE")).toBeTruthy();
     const json = await res.json();
     expect(json.deployHash).toHaveLength(64);
-    expect(json.poolByOutcomeMotes.yes).toBe("701000000000"); // seed 700 CSPR + 1 CSPR bet
+    expect(json.poolByOutcomeMotes.yes).toBe("701000000000"); // staked 700 CSPR + 1 CSPR bet
   });
 
   it("rejects an invalid payment proof", async () => {
@@ -86,7 +109,7 @@ describe("x402 REST bet (/api/agent/v1/bet)", () => {
   it("enforces the mainnet bet cap on the agent rail", async () => {
     const over = await post({
       network: "mainnet",
-      marketId: "mainnet:btc-150k-aug",
+      marketId: "mainnet:btc-70k-nov",
       outcomeKey: "yes",
       amountMotes: "26000000000", // 26 CSPR > 25 cap
       bettor: "agent:whale",

@@ -44,14 +44,34 @@ describe("Agent SDK", () => {
 
   it("filters markets by category", async () => {
     const rwa = await client().listMarkets("rwa");
-    expect(rwa.length).toBe(5);
+    // 5 live Nov-1 markets plus the 5 retired Aug-1 originals — retired markets stay on the board
+    // as settled history, so discovery still lists them.
+    expect(rwa.length).toBe(10);
+    expect(rwa.every((m) => m.category === "rwa")).toBe(true);
   });
 
   it("gets a market and its odds", async () => {
-    const m = await client().getMarket("btc-150k-aug");
-    expect(m?.slug).toBe("btc-150k-aug");
-    const odds = await client().getOdds("btc-150k-aug");
+    // btc-150k-aug matured on Aug 1; btc-70k-nov is its successor. Successors ship with empty
+    // pools, so the odds this reads back are the ones we stake into it here.
+    const c = client();
+    await c.placeBet({
+      marketId: "testnet:btc-70k-nov",
+      outcomeKey: "yes",
+      amountMotes: "1000000000",
+      bettor: "agent:momentum",
+    });
+    await c.placeBet({
+      marketId: "testnet:btc-70k-nov",
+      outcomeKey: "no",
+      amountMotes: "3000000000",
+      bettor: "agent:contrarian",
+    });
+
+    const m = await c.getMarket("btc-70k-nov");
+    expect(m?.slug).toBe("btc-70k-nov");
+    const odds = await c.getOdds("btc-70k-nov");
     expect(odds.reduce((s, o) => s + o.impliedProbability, 0)).toBeCloseTo(1, 6);
+    expect(odds.find((o) => o.outcomeKey === "yes")?.impliedProbability).toBeCloseTo(0.25, 6);
   });
 
   it("reads the oracle reputation", async () => {
@@ -61,14 +81,24 @@ describe("Agent SDK", () => {
   });
 
   it("places a bet end-to-end through the x402 exchange", async () => {
-    const receipt = await client().placeBet({
-      marketId: "testnet:btc-150k-aug",
+    const c = client();
+    // The receipt must report the pool the bet joined, not just the bet. btc-70k-nov (successor to
+    // the retired btc-150k-aug) opens empty, so stake the 700 CSPR of prior liquidity ourselves.
+    await c.placeBet({
+      marketId: "testnet:btc-70k-nov",
+      outcomeKey: "yes",
+      amountMotes: "700000000000",
+      bettor: "agent:contrarian",
+    });
+
+    const receipt = await c.placeBet({
+      marketId: "testnet:btc-70k-nov",
       outcomeKey: "yes",
       amountMotes: "2000000000",
       bettor: "agent:momentum",
     });
     expect(receipt.deployHash).toHaveLength(64);
     expect(receipt.indexed).toBe(true);
-    expect(receipt.poolByOutcomeMotes?.yes).toBe("702000000000"); // seed 700 + 2 CSPR
+    expect(receipt.poolByOutcomeMotes?.yes).toBe("702000000000"); // 700 already staked + 2 CSPR
   });
 });

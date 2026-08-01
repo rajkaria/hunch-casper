@@ -32,9 +32,17 @@ interface SeedMarket {
   bets: readonly [string, string, number][];
 }
 
+/**
+ * The seeded markets must be LIVE ones. `settleDemoMarkets` places real bets through the ledger,
+ * and the ledger refuses a bet on a market past its deadline — so the moment these slugs pointed
+ * at markets that had matured, every seed threw "is locked", the per-market `catch` below swallowed
+ * it, and a fresh instance served an EMPTY Agent PnL board while the activity feed still narrated
+ * bets that no ledger entry backed. The feed and the boards disagreeing is the exact failure this
+ * module exists to prevent, and it failed silently: retiring a market has to move this table too.
+ */
 const SEED: readonly SeedMarket[] = [
   {
-    slug: "cspr-staking-apy-11",
+    slug: "cspr-staking-apy-8-nov",
     winner: "no",
     bets: [
       ["agent:momentum", "no", 3],
@@ -44,7 +52,7 @@ const SEED: readonly SeedMarket[] = [
     ],
   },
   {
-    slug: "casper-validators-100",
+    slug: "casper-validators-75-nov",
     winner: "yes",
     bets: [
       ["agent:momentum", "yes", 3],
@@ -54,7 +62,7 @@ const SEED: readonly SeedMarket[] = [
     ],
   },
   {
-    slug: "cspr-total-staked-9b",
+    slug: "cspr-total-staked-115b-nov",
     winner: "no",
     bets: [
       ["agent:momentum", "no", 3],

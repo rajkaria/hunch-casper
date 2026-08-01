@@ -95,10 +95,20 @@ describe("POST /api/agent/arbiter/run", () => {
   });
 
   it("sweeps when no target is given (nothing matured now → 0 resolved)", async () => {
-    const res = await arbiterPOST(post({ network: "testnet" }));
-    const json = await res.json();
-    expect(res.status).toBe(200);
-    expect(json.resolved).toBe(0); // seed deadlines are in the future
+    // "Nothing matured" has to be pinned to a clock now: the fourteen retired Aug-1 markets stay
+    // in the catalogue as settled history, so at the wall clock the sweep legitimately finds them
+    // and resolves 14. Freeze a moment when every catalogue deadline — retired Aug-1, the Aug-3
+    // meta-markets, the Nov-1 successors — is still ahead.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-31T00:00:00.000Z"));
+    try {
+      const res = await arbiterPOST(post({ network: "testnet" }));
+      const json = await res.json();
+      expect(res.status).toBe(200);
+      expect(json.resolved).toBe(0); // every deadline is in the future at this instant
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

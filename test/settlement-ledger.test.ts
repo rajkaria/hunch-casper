@@ -7,14 +7,41 @@ import {
 } from "@/adapters/mock/settlement-ledger";
 
 const store = createMockMarketStore();
-const BTC = "testnet:btc-150k-aug"; // seed: yes 700 CSPR, no 2300 CSPR, deadline 2026-08-01
+// btc-150k-aug matured on 2026-08-01 and is retired (a deadline is immutable on chain, so the row
+// could only be succeeded, not extended). Its successor asks the same question of the same feed
+// with a 2026-11-01 deadline, which keeps these cases testing what they meant to test: a LIVE book.
+const BTC = "testnet:btc-70k-nov"; // deadline 2026-11-01, opens with empty pools
+
+/**
+ * Escrow the house launch liquidity the retired predecessor carried in its catalogue seed
+ * (700 CSPR YES / 2300 CSPR NO). The successor cohort ships unseeded, so a case that needs a book
+ * has to place it — which is what a faithful deployment does anyway (`MarketDeployPlan.seedBets`
+ * escrows the house bets on chain at launch), and it keeps `house:liquidity` the ordinary staker
+ * the payout engine settles it as.
+ */
+async function escrowHouseLiquidity(): Promise<void> {
+  await store.recordBet({
+    marketId: BTC,
+    bettor: "house:liquidity",
+    outcomeKey: "yes",
+    amountMotes: "700000000000",
+  });
+  await store.recordBet({
+    marketId: BTC,
+    bettor: "house:liquidity",
+    outcomeKey: "no",
+    amountMotes: "2300000000000",
+  });
+}
 
 beforeEach(__resetLedger);
 afterEach(() => vi.useRealTimers());
 
 describe("settlement store — recording bets", () => {
+  beforeEach(escrowHouseLiquidity);
+
   it("grows the outcome pool and the total on a bet", async () => {
-    const before = await store.get("btc-150k-aug", "testnet");
+    const before = await store.get("btc-70k-nov", "testnet");
     expect(before!.poolByOutcomeMotes.yes).toBe("700000000000");
 
     const after = await store.recordBet({
@@ -24,9 +51,9 @@ describe("settlement store — recording bets", () => {
       amountMotes: "300000000000", // +300 CSPR
     });
     expect(after.poolByOutcomeMotes.yes).toBe("1000000000000");
-    expect(after.totalStakedMotes).toBe("3300000000000"); // 3000 seed + 300
+    expect(after.totalStakedMotes).toBe("3300000000000"); // 3000 house + 300
 
-    const live = await store.get("btc-150k-aug", "testnet");
+    const live = await store.get("btc-70k-nov", "testnet");
     expect(live!.poolByOutcomeMotes.yes).toBe("1000000000000");
   });
 
@@ -97,8 +124,10 @@ describe("settlement store — recording bets", () => {
 });
 
 describe("settlement store — settling through the payout engine", () => {
+  beforeEach(escrowHouseLiquidity);
+
   it("pays the winning bettor and is conservation-correct with seed liquidity", async () => {
-    // Alice adds 300 CSPR on YES (seed already 700 YES / 2300 NO).
+    // Alice adds 300 CSPR on YES (house already 700 YES / 2300 NO).
     await store.recordBet({ marketId: BTC, bettor: "alice", outcomeKey: "yes", amountMotes: "300000000000" });
     const record = await store.settle(BTC, "yes");
 
@@ -144,7 +173,7 @@ describe("settlement store — settling through the payout engine", () => {
 
   it("marks the market resolved with the winning outcome in the read model", async () => {
     await store.settle(BTC, "no");
-    const live = await store.get("btc-150k-aug", "testnet");
+    const live = await store.get("btc-70k-nov", "testnet");
     expect(live!.status).toBe("resolved");
     expect(live!.resolvedOutcomeKey).toBe("no");
   });
@@ -152,11 +181,11 @@ describe("settlement store — settling through the payout engine", () => {
 
 describe("settlement store — deadline lock", () => {
   it("locks the market and rejects bets once past the deadline (mirrors the vault)", async () => {
-    // Freeze the clock a day after btc-150k-aug's 2026-08-01 deadline.
+    // Freeze the clock a day after btc-70k-nov's 2026-11-01 deadline.
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-08-02T00:00:00.000Z"));
+    vi.setSystemTime(new Date("2026-11-02T00:00:00.000Z"));
 
-    const live = await store.get("btc-150k-aug", "testnet");
+    const live = await store.get("btc-70k-nov", "testnet");
     expect(live!.status).toBe("locked");
     await expect(
       store.recordBet({ marketId: BTC, bettor: "late", outcomeKey: "yes", amountMotes: "1" }),
@@ -165,8 +194,8 @@ describe("settlement store — deadline lock", () => {
 
   it("stays open before the deadline", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
-    const live = await store.get("btc-150k-aug", "testnet");
+    vi.setSystemTime(new Date("2026-10-01T00:00:00.000Z"));
+    const live = await store.get("btc-70k-nov", "testnet");
     expect(live!.status).toBe("open");
   });
 });

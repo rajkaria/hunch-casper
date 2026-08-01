@@ -15,8 +15,17 @@ beforeEach(() => {
 function follow(over: Partial<FollowConfig> = {}): FollowConfig {
   return { follower: "f1", agentId: "agent:momentum", scaleBps: 5000, perBetCapMotes: "10000000000", active: true, ...over };
 }
+/**
+ * The mirror has to land on an OPEN market: a locked one refuses the stake in the ledger, so the
+ * copy rail under test never gets exercised. `cspr-price-05-aug` matured on 2026-08-01 and is
+ * retired history now — its successor asks the same question of the same feed, so these cases keep
+ * testing what they meant to. It opens with no seed liquidity, hence the pool assertions below are
+ * deltas rather than absolutes.
+ */
+const LIVE_SLUG = "cspr-price-0025-nov";
+
 function position(over: Partial<AgentPosition> = {}): AgentPosition {
-  return { marketId: "testnet:cspr-price-05-aug", category: "casper-native", outcomeKey: "yes", agentStakeMotes: "4000000000", ...over };
+  return { marketId: `testnet:${LIVE_SLUG}`, category: "casper-native", outcomeKey: "yes", agentStakeMotes: "4000000000", ...over };
 }
 
 describe("planMirror — sizing + guardrails", () => {
@@ -81,7 +90,7 @@ describe("splitCopyFee — conservation (agent + platform == fee)", () => {
 describe("mirror settles through the full money path", () => {
   it("places a mirrored bet through x402 and moves the pool", async () => {
     const container = createContainer("testnet");
-    const before = await container.store.get("cspr-price-05-aug", "testnet");
+    const before = await container.store.get(LIVE_SLUG, "testnet");
     const poolBefore = BigInt(before!.poolByOutcomeMotes.yes);
 
     const res = await placeMirror(container, follow(), position({ agentStakeMotes: "4000000000" }), true);
@@ -89,7 +98,7 @@ describe("mirror settles through the full money path", () => {
     expect(res.placed).toBeDefined();
     expect(res.placed!.amountMotes).toBe("2000000000");
 
-    const after = await container.store.get("cspr-price-05-aug", "testnet");
+    const after = await container.store.get(LIVE_SLUG, "testnet");
     expect(BigInt(after!.poolByOutcomeMotes.yes)).toBe(poolBefore + 2000000000n);
   });
 

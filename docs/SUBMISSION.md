@@ -47,8 +47,8 @@ scores itself.
 
 ## What's real (transparency)
 
-We label the line honestly, in the UI itself. **Real:** the nine Odra contracts (original Rust,
-95 OdraVM tests in CI), the testnet deployment and its transaction receipts (the "Live on Casper"
+We label the line honestly, in the UI itself. **Real:** the ten Odra contracts (original Rust,
+116 OdraVM tests in CI), the testnet deployment and its transaction receipts (the "Live on Casper"
 section links contract packages and real txs to cspr.live), the x402 handshake (with on-chain CSPR
 transfer verification in real mode), the live chain signals Genesis reads (CSPR.cloud validators,
 node-RPC block height — subtitles name the source), the MCP server, and the payout math (mirrors
@@ -60,7 +60,7 @@ its `demo` pill — is what a visitor gets on a deployment where CSPR.click is n
 
 ## Tech stack & the Casper toolkit
 
-Next.js 16 + TypeScript (strict) on Vercel; Odra 2.8 / Rust for the contracts; Vitest (1367 TS
+Next.js 16 + TypeScript (strict) on Vercel; Odra 2.8 / Rust for the contracts; Vitest (1888 TS
 tests) + OdraVM (95 contract tests) behind a `typecheck / lint / test / build` CI gate; ports &
 adapters so the deterministic mock and the real `casper-js-sdk` adapter satisfy the same contract
 tests. Every Casper toolkit item is load-bearing:
@@ -73,7 +73,7 @@ tests. Every Casper toolkit item is load-bearing:
   surface third-party agents use.
 - **CSPR.cloud APIs** — the live signal Genesis opens markets from: active-validator count with an
   API key, keyless node-RPC block height as fallback. Market subtitles carry the true source label.
-- **Odra Framework** — nine original contracts: `MarketFactory` (registry), `ParimutuelMarket`
+- **Odra Framework** — ten original contracts: `MarketFactory` (registry), `ParimutuelMarket`
   (payable escrow + pull-style `claim()` with pure pool math), `OracleRegistry` (staked oracle
   reputation), the singleton `HunchVault` (a market becomes a 3.74 CSPR state entry instead of a
   324 CSPR install), `AgentRegistry` (bonded third-party identity), `DisputePanel` (optimistic

@@ -43,6 +43,13 @@ export interface MarketDefinition {
   /** Seed pool per outcome key, in motes — deterministic starting liquidity for demos. */
   seedPoolMotes: Record<string, string>;
   /**
+   * Settled history — a market that has already matured and been resolved. It stays in the
+   * catalogue so the board keeps its record (and so the ledger keeps its copy), but it is not a
+   * live market and the freshness guard in `catalogue.test.ts` does not hold it to a future
+   * deadline. Live definitions leave this unset.
+   */
+  retired?: boolean;
+  /**
    * The network a runtime-created market was born on. Catalogue definitions leave this unset —
    * they exist on every network by design. Created/round/user definitions are one-network facts:
    * without this, a testnet-born round was mirrored onto the mainnet board as a "locked" market
@@ -64,7 +71,25 @@ const UP_DOWN: MarketOutcome[] = [
 /** Default parimutuel fee (2%), mirroring the live Hunch product and the vault's primary test. */
 const FEE_BPS = 200;
 
+/**
+ * The first cohort's deadline. Every market bound to it matured on 2026-08-01 and was settled by
+ * the Arbiter, so it stays exactly where it is: these definitions are the board's settled history,
+ * and their on-chain twins in `HunchVault` carry the same instant. Moving it would not reopen
+ * anything — `create_market` writes a market's deadline once and the vault has no entry point to
+ * change it, so the chain would go on rejecting every bet the app offered.
+ */
 const AUG_1 = "2026-08-01T00:00:00.000Z";
+
+/**
+ * The successor cohort's deadline — three months out, comfortably past the buildathon finals and
+ * any judging slippage, so nothing on the live board expires mid-review.
+ *
+ * Successors rather than edits, for the reason above: a matured market is settled history, and the
+ * only honest way to keep asking its question is to ask it again, as a new market, with a target
+ * that is a real question at today's readings rather than one the world left behind. Every target
+ * below is anchored to a value measured on 2026-08-01 and the measurement is stated beside it.
+ */
+const NOV_1 = "2026-11-01T00:00:00.000Z";
 
 export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
   // ── Casper-native (read via CSPR.cloud / CoinGecko) ────────────────────────────────────
@@ -85,6 +110,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "CSPR spot price at or above $0.05 at the Aug 1 snapshot.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "1200000000000", no: "800000000000" },
   },
   {
@@ -104,6 +130,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "CSPR circulating market cap at or above $1,000,000,000 at the snapshot.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "640000000000", no: "1360000000000" },
   },
   {
@@ -125,7 +152,12 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       metric: "cspr_usd",
       description: "CSPR close versus the day's open — flat rounds void and refund.",
     },
-    deadlineIso: "2026-08-01T01:00:00.000Z",
+    // A recurring parent's literal is its FIRST round's boundary, and `effectiveDeadlineMs`
+    // ignores it entirely once rounds are rolling (`currentRound` derives them from the cadence
+    // against the clock). What the literal still decides is the PARENT row's own status — and a
+    // parent in the past reads as "locked", i.e. a template that looks like a dead market and
+    // refuses the bets the tests and the bot place against it. Kept in the future for that reason.
+    deadlineIso: "2026-11-01T01:00:00.000Z",
     seedPoolMotes: { up: "540000000000", down: "460000000000" },
   },
   {
@@ -145,6 +177,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "On-chain deploy count for the settlement day at or above 30,000.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "300000000000", no: "700000000000" },
   },
   {
@@ -164,6 +197,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "Active validator slots at or above 100 at the snapshot era.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "820000000000", no: "480000000000" },
   },
   {
@@ -183,6 +217,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "Network staking APY at or above 11% at the snapshot.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "410000000000", no: "590000000000" },
   },
   {
@@ -202,6 +237,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "Total CSPR bonded across validators at or above 9,000,000,000 CSPR.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "700000000000", no: "500000000000" },
   },
 
@@ -227,7 +263,9 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       metric: "drand_parity",
       description: "Parity of the committed drand beacon round — Tie on the rare exact split.",
     },
-    deadlineIso: "2026-08-01T00:05:00.000Z",
+    // First-round boundary; kept in the future so the parent row is a live template, not a
+    // locked one (see `cspr-hourly-updown` above).
+    deadlineIso: "2026-11-01T00:05:00.000Z",
     seedPoolMotes: { heads: "480000000000", tails: "480000000000", tie: "40000000000" },
   },
 
@@ -249,6 +287,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "US 3-month Treasury bill yield at or above 4.5% at the snapshot.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "900000000000", no: "1100000000000" },
   },
   {
@@ -268,6 +307,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "Spot gold at or above $3,500 per troy ounce at the snapshot.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "560000000000", no: "840000000000" },
   },
   {
@@ -287,6 +327,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "Bitcoin spot at or above $150,000 at the snapshot.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "700000000000", no: "2300000000000" },
   },
   {
@@ -306,6 +347,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "Ether spot at or above $6,000 at the snapshot.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "820000000000", no: "1180000000000" },
   },
   {
@@ -325,6 +367,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "Aggregate stablecoin circulating supply at or above $300,000,000,000.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "1000000000000", no: "1000000000000" },
   },
 
@@ -348,6 +391,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "The Condor protocol upgrade has activated on mainnet (activation height recorded) by the deadline.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "900000000000", no: "500000000000" },
   },
   {
@@ -367,6 +411,7 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "Mean active-validator uptime at or above 90% over the window ending at the snapshot.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "820000000000", no: "380000000000" },
   },
   {
@@ -386,7 +431,284 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
       description: "Count of ecosystem grant milestones marked complete at or above 10 at the snapshot.",
     },
     deadlineIso: AUG_1,
+    retired: true,
     seedPoolMotes: { yes: "600000000000", no: "600000000000" },
+  },
+
+  // ── The live cohort (successors to the settled Aug 1 markets) ──────────────────────────
+  //
+  // Same metrics, same feeds, same resolvers — new questions. Each target is set against a
+  // reading taken on 2026-08-01 so the market is a genuine question rather than a foregone
+  // conclusion: the retired cohort asked whether CSPR would clear $0.05 when it trades at
+  // $0.0019, and a market nobody can be wrong about teaches the board nothing.
+  //
+  // No seed pools. Every one of these opens at zero on both sides, so the first real bet sets the
+  // line and nothing on the board is house money wearing a bettor's clothes.
+  {
+    slug: "cspr-price-0025-nov",
+    title: "CSPR above $0.0025 by Nov 1?",
+    subtitle: "Casper-native · CoinGecko close",
+    category: "casper-native",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "coingecko",
+      metric: "cspr_usd",
+      target: "0.0025",
+      comparator: "gte",
+      description: "CSPR spot price at or above $0.0025 at the Nov 1 snapshot (spot was $0.00192 when this market opened).",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "cspr-mcap-40m-nov",
+    title: "CSPR market cap above $40M by Nov 1?",
+    subtitle: "Casper-native · CoinGecko market cap",
+    category: "casper-native",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "coingecko",
+      metric: "cspr_mcap_usd",
+      target: "40000000",
+      comparator: "gte",
+      description: "CSPR circulating market cap at or above $40,000,000 at the snapshot (it was $32.0M when this market opened).",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "casper-daily-tx-4k-nov",
+    title: "Casper daily transaction count above 4,000 by Nov 1?",
+    subtitle: "Casper-native · CSPR.cloud",
+    category: "casper-native",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "cspr_cloud",
+      metric: "daily_deploys",
+      target: "4000",
+      comparator: "gte",
+      description: "On-chain transaction count for the settlement day at or above 4,000 (mainnet ran ~3,226/day, measured across 30 blocks at 8.03s each, when this market opened).",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "casper-validators-75-nov",
+    title: "Casper active validators above 75 by Nov 1?",
+    subtitle: "Casper-native · CSPR.cloud",
+    category: "casper-native",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "cspr_cloud",
+      metric: "active_validators",
+      target: "75",
+      comparator: "gte",
+      description: "Active validator slots at or above 75 at the snapshot era (70 of the auction's slots were filled when this market opened).",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "cspr-staking-apy-8-nov",
+    title: "Casper staking APY above 8% by Nov 1?",
+    subtitle: "Casper-native · CSPR.cloud",
+    category: "casper-native",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "cspr_cloud",
+      metric: "staking_apy_pct",
+      target: "8",
+      comparator: "gte",
+      description: "Network staking APY at or above 8% at the snapshot — a live question at 11.34B CSPR bonded, where the reward rate sits close to the threshold either way.",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "cspr-total-staked-115b-nov",
+    title: "Total CSPR staked above 11.5B by Nov 1?",
+    subtitle: "Casper-native · CSPR.cloud",
+    category: "casper-native",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "cspr_cloud",
+      metric: "total_staked_cspr",
+      target: "11500000000",
+      comparator: "gte",
+      description: "Total CSPR bonded across validators at or above 11,500,000,000 (11.339B was bonded, summed across the era's validator weights, when this market opened).",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "casper-block-94m-nov",
+    title: "Casper mainnet past block 9,400,000 by Nov 1?",
+    subtitle: "Casper-native · chain height",
+    category: "casper-native",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "cspr_cloud",
+      metric: "latest_block_height",
+      target: "9400000",
+      comparator: "gte",
+      description: "Mainnet block height at or above 9,400,000 at the snapshot. A knife-edge by construction: height 8,454,000 at 8.03s/block projects to ~9,439,912 by Nov 1, so block-time variance decides it.",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "casper-validator-health-95-nov",
+    title: "Casper validator-set health above 95% by Nov 1?",
+    subtitle: "Casper-native · validator uptime",
+    category: "casper-native",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "cspr_cloud",
+      metric: "validator_uptime_pct",
+      target: "95",
+      comparator: "gte",
+      description: "Share of the active validator set meeting the uptime bar, at or above 95% at the snapshot.",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "casper-grant-milestones-15-nov",
+    title: "At least 15 ecosystem grant milestones completed by Nov 1?",
+    subtitle: "Casper-native · public-goods funding",
+    category: "casper-native",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "cspr_cloud",
+      metric: "grant_milestones_completed",
+      target: "15",
+      comparator: "gte",
+      description: "Count of ecosystem grant milestones marked complete at or above 15 at the snapshot.",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "tbill-yield-35-nov",
+    title: "3-month T-bill yield above 3.5% by Nov 1?",
+    subtitle: "RWA · macro feed",
+    category: "rwa",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "macro_feed",
+      metric: "tbill_3m_yield_pct",
+      target: "3.5",
+      comparator: "gte",
+      description: "US 3-month Treasury bill yield at or above 3.5% at the snapshot (it printed 3.69% on the last session before this market opened).",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "gold-4200-nov",
+    title: "Gold above $4,200/oz by Nov 1?",
+    subtitle: "RWA · macro feed",
+    category: "rwa",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "macro_feed",
+      metric: "gold_usd_oz",
+      target: "4200",
+      comparator: "gte",
+      description: "Spot gold at or above $4,200 per troy ounce at the snapshot (spot was $4,043.70 when this market opened).",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "stablecoin-supply-320b-nov",
+    title: "Total stablecoin supply above $320B by Nov 1?",
+    subtitle: "RWA · macro feed",
+    category: "rwa",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "macro_feed",
+      metric: "stablecoin_supply_usd",
+      target: "320000000000",
+      comparator: "gte",
+      description: "Aggregate stablecoin circulating supply at or above $320,000,000,000 at the snapshot ($306.8B across 413 assets when this market opened).",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "btc-70k-nov",
+    title: "BTC above $70k by Nov 1?",
+    subtitle: "RWA · CoinGecko close",
+    category: "rwa",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "coingecko",
+      metric: "btc_usd",
+      target: "70000",
+      comparator: "gte",
+      description: "BTC spot at or above $70,000 at the snapshot (spot was $63,016 when this market opened).",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
+  },
+  {
+    slug: "eth-2k-nov",
+    title: "ETH above $2,000 by Nov 1?",
+    subtitle: "RWA · CoinGecko close",
+    category: "rwa",
+    outcomes: YES_NO,
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "threshold",
+      source: "coingecko",
+      metric: "eth_usd",
+      target: "2000",
+      comparator: "gte",
+      description: "ETH spot at or above $2,000 at the snapshot (spot was $1,868 when this market opened).",
+    },
+    deadlineIso: NOV_1,
+    seedPoolMotes: { yes: "0", no: "0" },
   },
 
   // ── Meta / agent-performance (the novelty) ─────────────────────────────────────────────

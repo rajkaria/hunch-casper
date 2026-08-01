@@ -147,7 +147,7 @@ pnpm typecheck && pnpm lint && pnpm test && pnpm build   # TypeScript app gate (
 cd contracts && cargo odra test                          # Odra/Rust contract tests
 ```
 
-**Expected:** the TS gate passes (1367+ Vitest tests) and the contract suite passes (95 OdraVM
+**Expected:** the TS gate passes (1888 Vitest tests) and the contract suite passes (116 OdraVM
 tests). CI runs both on every push.
 
 ---

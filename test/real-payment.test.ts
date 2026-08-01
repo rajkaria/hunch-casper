@@ -266,7 +266,9 @@ describe("createRealPayment", () => {
 
 describe("real-mode agent rail gating (container + agent-bet)", () => {
   const BET = {
-    marketId: "testnet:btc-150k-aug",
+    // btc-150k-aug matured and retired on 2026-08-01; btc-70k-nov is its live successor, and the
+    // gate under test only opens on a market that is still open.
+    marketId: "testnet:btc-70k-nov",
     outcomeKey: "yes",
     amountMotes: "1000000000",
     bettor: PAYER,

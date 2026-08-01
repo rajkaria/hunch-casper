@@ -48,14 +48,25 @@ describe("the loop closes", () => {
     const roundSlug = roundMarketId("cspr-hourly-updown", round.index);
     expect(opened.rolloverActions.some((a) => a.marketId.includes(roundSlug))).toBe(true);
 
-    // 2. Bet it across several rounds while it is open.
-    for (let seq = 2; seq < 12; seq++) await runEconomyTick(container, { seq });
+    // 2. Bet it across several rounds while it is open. The fleet trades ONE market per tick and
+    //    strides across the open book, so this loop has to run until the stride reaches the round:
+    //    with the Nov successor markets live there are sixteen other open books ahead of it, and a
+    //    fixed ten ticks never bets it at all.
+    let seq = 2;
+    const betMarketIds: string[] = [];
+    while (seq < 40 && !betMarketIds.some((id) => id.includes(roundSlug))) {
+      const tick = await runEconomyTick(container, { seq: seq++ });
+      betMarketIds.push(...tick.prophetActions.map((a) => a.marketId));
+    }
+    // Pinned explicitly: an unbet round still resolves at step 4, so without this the only symptom
+    // of "the fleet never traded the round" is an empty board at step 5 — the wrong failure.
+    expect(betMarketIds.some((id) => id.includes(roundSlug))).toBe(true);
 
     // 3. Advance past the round's deadline. Nothing else changes.
     clock.set(round.deadlineMs + 1);
 
     // 4. The next tick must resolve the matured round — this is the step that never happened.
-    const afterMaturity = await runEconomyTick(container, { seq: 12 });
+    const afterMaturity = await runEconomyTick(container, { seq });
     expect(afterMaturity.arbiterActions.length).toBeGreaterThan(0);
 
     // 5. ...and the settled result must reach the board the meta-markets score against.
