@@ -158,6 +158,18 @@ export async function composeMarket(
     };
   }
 
+  // `attested` settles on the Arbiter's word plus a published evidence bundle rather than on a
+  // datum anyone can fetch. Letting the public mint one would let a creator open a market only
+  // the platform's oracle can settle — and then argue about the settlement. The curated
+  // catalogue carries the one attested market there is; everything else must name a real feed.
+  if (input.source === "attested") {
+    return {
+      ok: false,
+      reason: "invalid-input",
+      message: "the 'attested' source is reserved for curated markets resolved from a published announcement",
+    };
+  }
+
   // Vault cap on the fee, mirrored (the admin key skips `MAX_PUBLIC_FEE_BPS` on chain).
   if (input.feeBps !== undefined) {
     if (!Number.isInteger(input.feeBps) || input.feeBps < 0 || input.feeBps > MAX_FEE_BPS) {

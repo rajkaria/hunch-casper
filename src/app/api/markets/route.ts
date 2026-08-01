@@ -15,7 +15,7 @@ import { ensureDemoSeed } from "@/adapters/mock/demo-seed";
 import { refreshEconomyState } from "@/adapters/persist/economy-state";
 import type { MarketCategory } from "@/core/types";
 
-const CATEGORIES: readonly MarketCategory[] = ["casper-native", "provably-fair", "rwa", "meta"];
+const CATEGORIES: readonly MarketCategory[] = ["casper-native", "provably-fair", "rwa", "meta", "community"];
 
 function isCategory(v: unknown): v is MarketCategory {
   return typeof v === "string" && (CATEGORIES as readonly string[]).includes(v);

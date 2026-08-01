@@ -8,6 +8,7 @@ const CATEGORY_META: Record<MarketCategory, { label: string; className: string; 
   "provably-fair": { label: "Provably fair", className: "text-gold", color: "var(--gold)" },
   rwa: { label: "RWA", className: "text-up", color: "var(--up)" },
   meta: { label: "Meta", className: "text-accent-2", color: "var(--accent-2)" },
+  community: { label: "Community", className: "text-gold", color: "var(--gold)" },
 };
 
 function formatCspr(motes: string): string {
@@ -42,7 +43,7 @@ export function countLiveMarkets(markets: Market[]): number {
 
 /** Live (open) market count per category — drives copy that must never contradict the board. */
 export function liveCountsByCategory(markets: Market[]): Record<MarketCategory, number> {
-  const counts: Record<MarketCategory, number> = { "casper-native": 0, "provably-fair": 0, rwa: 0, meta: 0 };
+  const counts: Record<MarketCategory, number> = { "casper-native": 0, "provably-fair": 0, rwa: 0, meta: 0, community: 0 };
   for (const m of markets) {
     if (m.status === "open") counts[m.category] += 1;
   }

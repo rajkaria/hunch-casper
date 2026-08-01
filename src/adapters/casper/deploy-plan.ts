@@ -137,6 +137,8 @@ export interface MarketCallTarget {
  * Resolve which deployed contract a market lives at, v1 and v2 aware. Routing order —
  * pure + offline-tested, because a mis-routed bet is a money bug:
  *
+ *   0. `fieldMarketSlugs` — a wide-field market pins to its own `FieldMarket` package and
+ *      never falls through to a later rule (see the rule itself for why that matters).
  *   1. `marketAddresses` (`NEXT_PUBLIC_*_MARKET_ADDRS`) — the five legacy per-market
  *      `ParimutuelMarket` packages deployed before S16 stay routable exactly as before.
  *   2. `vaultV2` (`NEXT_PUBLIC_*_VAULT_V2`) — every other slug is a state entry in the
@@ -145,10 +147,28 @@ export interface MarketCallTarget {
  */
 export function resolveMarketTarget(
   marketId: string,
-  opts: { marketAddresses?: Record<string, string>; vaultV2?: string; fallback?: string },
+  opts: {
+    marketAddresses?: Record<string, string>;
+    vaultV2?: string;
+    fallback?: string;
+    fieldMarket?: string;
+    fieldMarketSlugs?: readonly string[];
+  },
 ): MarketCallTarget {
   const colon = marketId.indexOf(":");
   const slug = colon >= 0 ? marketId.slice(colon + 1) : marketId;
+  // 0. A wide-field market routes to its own `FieldMarket` package and must NEVER fall through.
+  //    The vault caps a market at 8 outcomes, so a 177-candidate slug landing there would submit
+  //    a real stake at a market that cannot exist — a revert if we are lucky, and a support
+  //    ticket about a missing bet either way. Failing here says exactly what is unset instead.
+  if (opts.fieldMarketSlugs?.includes(slug)) {
+    if (!opts.fieldMarket) {
+      throw new Error(
+        `market '${slug}' lives on a FieldMarket contract (its field is wider than the vault's 8-outcome cap) — set NEXT_PUBLIC_*_FIELD_MARKET`,
+      );
+    }
+    return { contract: opts.fieldMarket };
+  }
   const legacy = opts.marketAddresses?.[slug];
   if (legacy) {
     return { contract: legacy };

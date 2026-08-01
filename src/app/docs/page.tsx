@@ -5,7 +5,7 @@ import { MARKET_DEFINITIONS } from "@/core/catalogue";
 export const metadata: Metadata = {
   title: "Docs",
   description:
-    "How the Hunch-on-Casper economy works, end to end — the four agents, the parimutuel money path, the nine Odra contracts, the public MCP + x402 surface, NL market creation, the Agent League, verifiable + optimistic resolution, oracle feeds, LMSR, and copy-betting.",
+    "How the Hunch-on-Casper economy works, end to end — the four agents, the parimutuel money path, the ten Odra contracts, the public MCP + x402 surface, NL market creation, the Agent League, verifiable + optimistic resolution, oracle feeds, LMSR, and copy-betting.",
 };
 
 const TOC: { id: string; label: string }[] = [
@@ -36,6 +36,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   "provably-fair": "Provably fair",
   rwa: "RWA / macro",
   meta: "Meta / agents",
+  community: "Community / ecosystem",
 };
 
 function Section({
@@ -449,7 +450,7 @@ export default function DocsPage() {
 
           <Section id="contracts" eyebrow="On-chain, original Rust" title="Smart contracts (Odra)">
             <P>
-              Nine contracts, all newly written for this buildathon and covered by 95{" "}
+              Ten contracts, all newly written for this buildathon and covered by 116{" "}
               <C>cargo odra test</C> tests on OdraVM. Admin and oracle roles are separated so no
               single actor can both resolve a market and grade its own accuracy.
             </P>
@@ -470,6 +471,10 @@ export default function DocsPage() {
                 {
                   name: "HunchVault",
                   body: "The singleton vault — markets are state entries, so create_market is a measured ~3.74 CSPR call instead of a ~324 CSPR per-market install. Permissionless, guard-railed creation; commit_recipe / commit_bundle anchor resolution hashes.",
+                },
+                {
+                  name: "FieldMarket",
+                  body: "A parimutuel market over a large candidate field (the 177 buildathon finalists). The field lives in a dictionary, so membership is one read no matter how wide it is — the vault's 8-outcome cap exists because it scans a list. register_candidates in batches, then an irreversible freeze_field that opens betting and commits a hash of the ordered field.",
                 },
                 {
                   name: "AgentRegistry",

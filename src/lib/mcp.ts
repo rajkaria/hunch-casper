@@ -36,7 +36,7 @@ export const MCP_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...NETWORK_PROP,
-        category: { type: "string", enum: ["casper-native", "provably-fair", "rwa", "meta"] },
+        category: { type: "string", enum: ["casper-native", "provably-fair", "rwa", "meta", "community"] },
       },
     },
   },

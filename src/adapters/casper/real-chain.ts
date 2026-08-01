@@ -67,6 +67,7 @@ import {
   getNetworkConfig,
   NATIVE_TRANSFER_MINIMUM_MOTES,
 } from "@/config/network";
+import { FIELD_MARKET_SLUGS } from "@/core/buildathon-field";
 import { TRANSFER_PAYMENT_MOTES } from "./real-wallet";
 import {
   buildBetPlan,
@@ -120,6 +121,8 @@ export interface RealChainOptions {
   marketAddresses?: Record<string, string>;
   /** The singleton `HunchVault` v2 **package** hash — slugs not in `marketAddresses` route here. */
   vaultV2PackageHash?: string;
+  /** The `FieldMarket` **package** hash — the only valid target for a `FIELD_MARKET_SLUGS` slug. */
+  fieldMarketPackageHash?: string;
   /** Filesystem path to Odra's `proxy_caller_with_return.wasm` (required for payable bets). */
   proxyWasmPath: string;
   /**
@@ -139,12 +142,18 @@ export function realChainOptionsFromEnv(
   marketPackageHash: string | undefined,
   marketAddresses?: Record<string, string>,
   vaultV2PackageHash?: string,
+  fieldMarketPackageHash?: string,
 ): RealChainOptions {
   const bettorKey = process.env.CASPER_BETTOR_KEY;
   if (!bettorKey) {
     throw new CasperConfigError("CASPER_BETTOR_KEY is required to submit real Casper transactions");
   }
-  if (!marketPackageHash && !vaultV2PackageHash && Object.keys(marketAddresses ?? {}).length === 0) {
+  if (
+    !marketPackageHash &&
+    !vaultV2PackageHash &&
+    !fieldMarketPackageHash &&
+    Object.keys(marketAddresses ?? {}).length === 0
+  ) {
     throw new CasperConfigError(
       "no market contracts configured for this network (set NEXT_PUBLIC_*_VAULT_V2, NEXT_PUBLIC_*_VAULT or NEXT_PUBLIC_*_MARKET_ADDRS)",
     );
@@ -157,6 +166,7 @@ export function realChainOptionsFromEnv(
     marketPackageHash: marketPackageHash ?? "",
     marketAddresses,
     vaultV2PackageHash,
+    fieldMarketPackageHash,
     proxyWasmPath,
   };
 }
@@ -288,6 +298,8 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
       marketAddresses: opts.marketAddresses,
       vaultV2: opts.vaultV2PackageHash,
       fallback: opts.marketPackageHash || undefined,
+      fieldMarket: opts.fieldMarketPackageHash,
+      fieldMarketSlugs: FIELD_MARKET_SLUGS,
     });
 
   /**

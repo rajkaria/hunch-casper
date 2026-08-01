@@ -90,7 +90,7 @@ settle against the economy's own leaderboards — a recursive economy that never
 | x402 Micropayments | Settlement rail for every agent bet — a real HTTP-402 handshake with payer-bound, single-use proofs. In real mode (`CASPER_X402_PAYTO`) each proof is verified against an actual on-chain CSPR transfer: payer, target, amount, success. |
 | MCP Server | A live JSON-RPC MCP server (`POST /api/mcp`, 8 tools) — the same public surface the Prophet fleet uses. Any agent joins in one command (below). |
 | CSPR.cloud APIs | The live chain signal Genesis opens markets from — active-validator count with `CSPR_CLOUD_API_KEY`, keyless node-RPC block height as fallback. Market subtitles carry the true source label. |
-| Odra Framework | Nine Rust contracts — `MarketFactory`, `ParimutuelMarket`, `OracleRegistry`, the S16 singleton `HunchVault` (markets as state entries — a measured 3.74 CSPR `create_market` call instead of a measured 324 CSPR per-market install), `AgentRegistry` (bonded identity), `DisputePanel` (optimistic resolution), `ResolutionHook` (oracle-as-a-service), `LmsrMarket` (continuous liquidity), and `CopyBetting` (mirrored-fee split) — with 95 OdraVM tests in CI. |
+| Odra Framework | Ten Rust contracts — `MarketFactory`, `ParimutuelMarket`, `FieldMarket` (a parimutuel market over a 177-candidate field, membership in a dictionary so the bet path never scans a list), `OracleRegistry`, the S16 singleton `HunchVault` (markets as state entries — a measured 3.74 CSPR `create_market` call instead of a measured 324 CSPR per-market install), `AgentRegistry` (bonded identity), `DisputePanel` (optimistic resolution), `ResolutionHook` (oracle-as-a-service), `LmsrMarket` (continuous liquidity), and `CopyBetting` (mirrored-fee split) — with 116 OdraVM tests in CI. |
 | Wallet UX (CSPR.click connector shipped) | The CSPR.click connector is in the build behind a `window.csprclick` seam — the operator enables real signing with a script tag + app id. Absent, the app falls back to a demo wallet with an honest `demo` pill in the header. |
 | drand Beacon | The public randomness The Flip's resolver binds to — provably fair by construction, no house edge. |
 
@@ -101,7 +101,7 @@ and every real claim is verifiable in one click.
 
 | Real | Verify it |
 |---|---|
-| Nine Odra contracts, original Rust | 95 OdraVM tests (`cargo odra test`) run in CI |
+| Ten Odra contracts, original Rust | 116 OdraVM tests (`cargo odra test`) run in CI |
 | Testnet deployment + tx receipts | The **Live on Casper** section (landing + `/docs#onchain`) links contract package hashes and real transactions to cspr.live |
 | x402 handshake | `curl` the rail — a genuine HTTP 402 challenge; real mode verifies the on-chain transfer |
 | Live chain signals | Genesis market subtitles name their source (CSPR.cloud validators / node-RPC height) |
@@ -192,7 +192,7 @@ src/
   lib/container.ts      Composition root
   components/           Network toggle/context, header, market card, on-chain proof section
   app/                  Landing (/), markets, agents, league, create, embed, docs + the API (REST, x402 rail, MCP)
-contracts/              Odra/Rust: nine contracts (factory, market, oracle, vault, registry, disputes, hooks, LMSR, copy-betting) + deploy CLI
+contracts/              Odra/Rust: ten contracts (factory, market, field market, oracle, vault, registry, disputes, hooks, LMSR, copy-betting) + deploy CLI
 packages/sdk/           The publishable agent SDK (npm: hunch-casper-sdk)
 ```
 

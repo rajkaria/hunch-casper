@@ -25,6 +25,10 @@ export function categoryForResolver(resolver: ResolverShape): MarketCategory {
       return "meta";
     case "macro_feed":
       return "rwa";
+    case "attested":
+      // An announcement the Arbiter attests to — an ecosystem event, not a feed. The shelf is
+      // named for who the market is about rather than for the datum, because there isn't one.
+      return "community";
     case "coingecko":
       // A price feed is only Casper-native when the asset is CSPR itself; BTC/ETH/gold are RWA.
       return /^cspr(_|$)/.test(resolver.metric) ? "casper-native" : "rwa";

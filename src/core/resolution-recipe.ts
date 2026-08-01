@@ -63,7 +63,7 @@ export interface RecipeValidation {
 }
 
 const METHODS: ResolverKind[] = ["threshold", "direction", "nway_winner", "coin_flip", "agent_metric"];
-const SOURCES: ResolverSource[] = ["cspr_cloud", "coingecko", "macro_feed", "drand", "internal"];
+const SOURCES: ResolverSource[] = ["cspr_cloud", "coingecko", "macro_feed", "drand", "internal", "attested"];
 const COMPARATORS: ResolverComparator[] = ["gte", "lte"];
 
 /**
@@ -89,6 +89,11 @@ export const SOURCE_METRICS: Readonly<Record<ResolverSource, readonly string[]>>
   macro_feed: ["tbill_3m_yield_pct", "gold_usd_oz", "stablecoin_supply_usd"],
   drand: ["drand_parity", "beacon"],
   internal: ["prophet_pnl", "arbiter_accuracy_pct"],
+  // One metric, one market: the buildathon's grand prize. Deliberately narrow — an attested
+  // source resolves on the Arbiter's word plus an evidence bundle, so every metric added here is
+  // a new thing the ecosystem is asked to trust, and it should be added one deliberate line at a
+  // time rather than by opening a category.
+  attested: ["buildathon_grand_prize"],
 };
 
 /**

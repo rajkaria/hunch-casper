@@ -26,6 +26,12 @@ export interface ContractAddresses {
    * `marketAddresses` route here (cheap `create_market` calls, no per-market installs).
    */
   vaultV2?: string;
+  /**
+   * FieldMarket — the wide-field parimutuel contract (the 177-candidate buildathon market).
+   * A `FIELD_MARKET_SLUGS` market routes here and NOWHERE else: its field is far past the
+   * vault's `MAX_OUTCOMES`, so falling back would submit a stake at a market that cannot exist.
+   */
+  fieldMarket?: string;
 }
 
 export interface NetworkConfig {
@@ -110,6 +116,7 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
       oracleRegistry: envAddr("NEXT_PUBLIC_TESTNET_ORACLE_REGISTRY"),
       vault: envAddr("NEXT_PUBLIC_TESTNET_VAULT"),
       vaultV2: envAddr("NEXT_PUBLIC_TESTNET_VAULT_V2"),
+      fieldMarket: envAddr("NEXT_PUBLIC_TESTNET_FIELD_MARKET"),
     },
     marketAddresses: parseMarketAddresses(process.env.NEXT_PUBLIC_TESTNET_MARKET_ADDRS),
     guardrails: { maxBetCspr: null, showUnauditedBanner: false },
@@ -126,6 +133,7 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
       oracleRegistry: envAddr("NEXT_PUBLIC_MAINNET_ORACLE_REGISTRY"),
       vault: envAddr("NEXT_PUBLIC_MAINNET_VAULT"),
       vaultV2: envAddr("NEXT_PUBLIC_MAINNET_VAULT_V2"),
+      fieldMarket: envAddr("NEXT_PUBLIC_MAINNET_FIELD_MARKET"),
     },
     marketAddresses: parseMarketAddresses(process.env.NEXT_PUBLIC_MAINNET_MARKET_ADDRS),
     // The static unaudited ceiling; the *effective* cap is the audit-gated ramp in `caps.ts`, which

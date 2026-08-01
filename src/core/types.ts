@@ -7,7 +7,7 @@
 // Relative (not `@/`) so the emitted `.d.ts` resolves inside the published SDK package.
 import type { CasperNetwork } from "../config/network";
 
-export type MarketCategory = "casper-native" | "provably-fair" | "rwa" | "meta";
+export type MarketCategory = "casper-native" | "provably-fair" | "rwa" | "meta" | "community";
 
 export type MarketStatus = "open" | "locked" | "resolved" | "void";
 
@@ -42,7 +42,17 @@ export type ResolverSource =
   /** drand randomness beacon (provably-fair flip). */
   | "drand"
   /** The agent economy's own leaderboards (meta-markets). */
-  | "internal";
+  | "internal"
+  /**
+   * A public announcement the Arbiter attests to, with an evidence bundle (the announcement URL
+   * + its content hash) committed on chain after settlement and a dispute window before payouts
+   * finalise. The escape hatch for a real-world event no feed publishes — a hackathon result, a
+   * grant decision — where the honest options are an attestation anyone can check or no market
+   * at all. Reserved to the admin catalogue: an attested market cannot be minted by the public
+   * (`market-composer.ts`), because its settlement rests on the Arbiter's identity rather than on
+   * a datum a third party can fetch unaided.
+   */
+  | "attested";
 
 export type ResolverComparator = "gte" | "lte";
 

@@ -241,7 +241,9 @@ export async function seedNewMarketByFleet(
   opts: { maxProphets?: number; startSeq?: number } = {},
 ): Promise<AgentAction[]> {
   const market = await container.store.get(slug, container.network);
-  if (!market || market.category === "meta" || market.status !== "open") return [];
+  if (!market || market.category === "meta" || market.category === "community" || market.status !== "open") {
+    return [];
+  }
   const count = Math.min(opts.maxProphets ?? 2, PROPHETS.length);
   const start = opts.startSeq ?? 0;
   const actions: AgentAction[] = [];
@@ -298,13 +300,21 @@ export async function runProphetFleet(
   seq: number,
   opts: FleetOptions = {},
 ): Promise<AgentAction[]> {
-  // Prophets trade only BASE markets — never meta-markets. A meta-market (`prophet-race`,
+  // Prophets trade only BASE markets — never meta-markets, and never the COMMUNITY board.
+  //
+  // The community market (the buildathon field) is the ecosystem's own board, and it ships with
+  // no seeded liquidity on purpose: every number on it is meant to be what people actually staked.
+  // A Prophet's bet is funded from the operator's own purse, so a fleet that traded it would be
+  // house money wearing a bettor's clothes — precisely the thing "no default bets" rules out — and
+  // it would drown the signal the board exists to show.
+  //
+  // A meta-market (`prophet-race`,
   // `momentum-vs-contrarian`, `arbiter-accuracy-95`) resolves against the Prophet PnL / oracle
   // boards, so letting the fleet bet them would let their bets contaminate the very board that
   // scores them (a reflexive loop). Meta-markets are for humans + external agents; excluding them
   // here keeps the self-scoring board honest — the same invariant the economy-loop tests assume.
   const open = (await container.store.list({ network: container.network, status: "open" })).filter(
-    (m) => m.category !== "meta" && !isQuarantined(m.slug),
+    (m) => m.category !== "meta" && m.category !== "community" && !isQuarantined(m.slug),
   );
   if (open.length === 0) return [];
 

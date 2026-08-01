@@ -21,6 +21,7 @@ import { computeAgentLeaderboard } from "@/core/agent-leaderboard";
 import { resolveMetaMarket } from "@/core/meta-resolution";
 import type { EconomyBoards } from "@/core/meta-resolution";
 import { findDefinition } from "@/adapters/mock/market-source";
+import { attestationFor } from "@/config/attestation";
 import { appendAction } from "@/adapters/mock/activity-log";
 import type { AgentAction } from "@/adapters/mock/activity-log";
 import { chainMode } from "@/config/chain-mode";
@@ -53,9 +54,44 @@ interface Decision {
   accurate: boolean;
 }
 
+/**
+ * Thrown when a market cannot be decided YET — not an error in the resolution, an absence of one.
+ * The sweep treats it as "leave this market locked and try again next tick".
+ */
+class NotYetDecidable extends Error {}
+
 /** Decide a market's outcome: internal meta-markets read the boards; everything else the oracle. */
 async function decide(container: Container, market: Market): Promise<Decision> {
   const def = findDefinition(market.slug);
+  // An ATTESTED market settles from a published announcement, never from the OraclePort: the mock
+  // oracle answers any market id with a deterministic pseudo-random outcome, which would declare
+  // the winner of a real contest by hashing a string. No attestation ⇒ no resolution.
+  if (def && def.resolver.source === "attested") {
+    const attestation = attestationFor(market.slug);
+    if (!attestation) {
+      throw new NotYetDecidable(
+        `market '${market.slug}' resolves from a published announcement — set MARKET_ATTESTATIONS before it can settle`,
+      );
+    }
+    const key = attestation.winningOutcomeKey;
+    if (key !== null && !market.outcomes.some((o) => o.key === key)) {
+      throw new NotYetDecidable(
+        `attested winner '${key}' is not an outcome of '${market.slug}' — check the id before resolving`,
+      );
+    }
+    const source = attestation.evidenceUrl ? ` (${attestation.evidenceUrl})` : "";
+    return {
+      winningOutcomeKey: key,
+      rationale:
+        key === null
+          ? `Voided: the published result named no single winner${source}. ${attestation.note ?? ""}`.trim()
+          : `Attested from the published result${source}. ${attestation.note ?? ""}`.trim(),
+      meta: false,
+      // An attestation transcribes a published announcement — there is no external read to be
+      // wrong about, so it neither flatters nor penalises the Arbiter's accuracy.
+      accurate: true,
+    };
+  }
   if (def && def.resolver.source === "internal") {
     const boards = await economyBoards(container);
     const key = resolveMetaMarket(def.resolver, market.outcomes.map((o) => o.key), boards);
@@ -100,7 +136,18 @@ export async function resolveMarket(container: Container, slug: string): Promise
   const existing = await container.store.settlementFor(market.id);
   if (existing) return null;
 
-  const { winningOutcomeKey, rationale, meta, accurate } = await decide(container, market);
+  let decision: Decision;
+  try {
+    decision = await decide(container, market);
+  } catch (err) {
+    if (err instanceof NotYetDecidable) {
+      // Locked and waiting is the correct resting state for a market whose result is not out.
+      console.warn("[arbiter] not resolving", JSON.stringify(slug), "—", err.message);
+      return null;
+    }
+    throw err;
+  }
+  const { winningOutcomeKey, rationale, meta, accurate } = decision;
 
   // Post the resolution on-chain. A void (null) has no winning outcome → no on-chain resolve tx
   // (the vault's `void()` path is a distinct call; off-chain we still refund via the engine).

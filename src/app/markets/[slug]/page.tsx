@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { useParams } from "next/navigation";
 import { useNetwork } from "@/components/network-context";
 import { useMarket } from "@/components/use-markets";
@@ -9,6 +9,8 @@ import type { Market, MarketCategory } from "@/core/types";
 import { motesToCspr } from "@/core/types";
 import { computeOdds, formatProbability } from "@/core/parimutuel-odds";
 import { BetPanel } from "@/components/bet-panel";
+import { FieldBoard } from "@/components/field-board";
+import { isWideField } from "@/core/field-board";
 import { RelatedMarkets } from "@/components/related-markets";
 import { OracleReputation } from "@/components/oracle-reputation";
 import { EvidenceViewer } from "@/components/evidence-viewer";
@@ -18,6 +20,7 @@ const CATEGORY_META: Record<MarketCategory, { label: string; className: string; 
   "provably-fair": { label: "Provably fair", className: "text-gold", color: "var(--gold)" },
   rwa: { label: "RWA", className: "text-up", color: "var(--up)" },
   meta: { label: "Meta", className: "text-accent-2", color: "var(--accent-2)" },
+  community: { label: "Community", className: "text-gold", color: "var(--gold)" },
 };
 
 function formatCspr(motes: string): string {
@@ -28,6 +31,16 @@ function formatCspr(motes: string): string {
 function formatDeadline(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** The candidate a `#<outcome-key>` link is pointing at, decoded; empty when there is no hash. */
+function readHash(): string {
+  return decodeURIComponent(window.location.hash.slice(1));
+}
+
+function subscribeToHash(onChange: () => void): () => void {
+  window.addEventListener("hashchange", onChange);
+  return () => window.removeEventListener("hashchange", onChange);
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -97,6 +110,24 @@ export default function MarketDetailPage() {
   const params = useParams<{ slug: string }>();
   const slug = params.slug;
   const { market, loading, error, refresh, applyPools } = useMarket(network, slug);
+  /**
+   * Which candidate the bet panel is aimed at, for a wide-field market. Lifted to the page so the
+   * searchable board and the panel are the same selection — on a 177-row field the two controls
+   * are metres apart on screen and "Back" has to mean the panel below now bets that project.
+   * Empty until the visitor picks: an unbet field must not default a stake onto whichever project
+   * happens to sort first.
+   */
+  /**
+   * A link from a project page (`/markets/<slug>#46696`) or the /buildathon hub arrives aimed at
+   * one candidate. The hash is read through `useSyncExternalStore` rather than an effect: the
+   * server has no hash, so the server snapshot is empty and React re-renders with the real value
+   * after hydration — no mismatch, and no setState-in-effect. Once the visitor picks a different
+   * project their choice takes over, which is what `selectionOverride` holds.
+   */
+  const hashSelection = useSyncExternalStore(subscribeToHash, readHash, () => "");
+  const [selectionOverride, setSelectionOverride] = useState<string | null>(null);
+  const fieldSelection = selectionOverride ?? hashSelection;
+  const setFieldSelection = setSelectionOverride;
 
   /**
    * A write from the trade panel landed. The response already carries the post-write pools, so the
@@ -139,6 +170,7 @@ export default function MarketDetailPage() {
   }
 
   const cat = CATEGORY_META[market.category];
+  const wideField = isWideField(market);
   // Fee-inclusive: the multiplier beside an outcome must be the number the bet panel's payout
   // preview (and settlement) actually pays, not the gross pool ratio 2 fee-points above it.
   const odds = computeOdds(market, market.feeBps);
@@ -168,7 +200,10 @@ export default function MarketDetailPage() {
       {/* Stat strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Total staked" value={`${formatCspr(market.totalStakedMotes)} CSPR`} />
-        <Stat label="Outcomes" value={String(market.outcomes.length)} />
+        <Stat
+          label={wideField ? "Field" : "Outcomes"}
+          value={wideField ? `${market.outcomes.length} projects` : String(market.outcomes.length)}
+        />
         <Stat label="Closes" value={formatDeadline(market.deadlineIso)} />
         <Stat label="Network" value={market.network} />
       </div>
@@ -183,7 +218,10 @@ export default function MarketDetailPage() {
       </div>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-        {/* Odds */}
+        {/* Odds — a wide field gets the searchable standings instead of 177 stacked bars. */}
+        {wideField ? (
+          <FieldBoard market={market} selectedKey={fieldSelection} onSelect={setFieldSelection} />
+        ) : (
         <div className="card p-5">
           <h3 className="text-sm font-semibold">Pool-implied odds</h3>
           <p className="mt-1 text-xs text-muted">
@@ -214,10 +252,16 @@ export default function MarketDetailPage() {
             })}
           </div>
         </div>
+        )}
 
         {/* Human bet panel (CSPR.click-connected) + the reputation-staked oracle that settles it */}
         <div className="flex flex-col gap-4">
-          <BetPanel market={market} onChainUpdate={onChainUpdate} />
+          <BetPanel
+            market={market}
+            onChainUpdate={onChainUpdate}
+            selectedOutcomeKey={wideField ? fieldSelection : undefined}
+            onSelectOutcome={wideField ? setFieldSelection : undefined}
+          />
           <OracleReputation oracleId="arbiter" variant="inline" />
         </div>
       </div>

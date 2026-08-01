@@ -21,9 +21,9 @@ describe("catalogue", () => {
     }
   });
 
-  it("covers all four market categories", () => {
+  it("covers all five market categories", () => {
     const cats = new Set(buildCatalogue("testnet").map((m) => m.category));
-    expect(cats).toEqual(new Set(["casper-native", "provably-fair", "rwa", "meta"]));
+    expect(cats).toEqual(new Set(["casper-native", "provably-fair", "rwa", "meta", "community"]));
   });
 
   it("has a pool entry for every outcome", () => {

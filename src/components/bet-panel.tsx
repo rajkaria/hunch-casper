@@ -6,6 +6,7 @@ import type { Market } from "@/core/types";
 import type { CasperNetwork } from "@/config/network";
 import { csprToMotes, motesToCspr } from "@/core/types";
 import { previewPayoutMotes } from "@/core/market-payout";
+import { WIDE_FIELD_THRESHOLD } from "@/core/field-board";
 import { exceedsBetCap, maxBetCspr } from "@/config/network";
 import { isDemoAccount, useWallet } from "@/components/wallet-context";
 
@@ -232,6 +233,8 @@ const SHOW_DEMO_RESOLVE = process.env.NEXT_PUBLIC_SHOW_DEMO_RESOLVE === "true";
 export function BetPanel({
   market,
   onChainUpdate,
+  selectedOutcomeKey,
+  onSelectOutcome,
 }: {
   market: Market;
   /**
@@ -241,9 +244,21 @@ export function BetPanel({
    * stake missing from the board they just moved.
    */
   onChainUpdate?: (result: ChainResult) => void;
+  /**
+   * Selection, lifted. A two-outcome market picks its side from the chip row in here; a
+   * 177-candidate field picks it from the searchable board beside the panel, and rendering 177
+   * chips in a betting panel would be neither usable nor honest about what the market is. When
+   * this is passed the panel is CONTROLLED: it shows what is selected and drops the chip row.
+   */
+  selectedOutcomeKey?: string;
+  /** Set when controlled — lets the panel clear or change the selection back at the owner. */
+  onSelectOutcome?: (key: string) => void;
 }) {
   const { account, connected, connect, connectError, signAndSend, signingDisabledReason } = useWallet();
-  const [outcomeKey, setOutcomeKey] = useState(market.outcomes[0]?.key ?? "");
+  const controlled = selectedOutcomeKey !== undefined;
+  const [ownOutcomeKey, setOwnOutcomeKey] = useState(market.outcomes[0]?.key ?? "");
+  const outcomeKey = controlled ? selectedOutcomeKey : ownOutcomeKey;
+  const setOutcomeKey = onSelectOutcome ?? setOwnOutcomeKey;
   const [amount, setAmount] = useState("1");
   const [betting, setBetting] = useState(false);
   const [betResult, setBetResult] = useState<ChainResult | null>(null);
@@ -507,6 +522,8 @@ export function BetPanel({
     }
   }
 
+  const selectedLabel = market.outcomes.find((o) => o.key === outcomeKey)?.label ?? null;
+
   return (
     <div className="card p-5">
       <h3 className="text-sm font-semibold">Place a bet</h3>
@@ -514,23 +531,36 @@ export function BetPanel({
         Stake CSPR on an outcome. Settlement runs through the active chain adapter.
       </p>
 
-      <div className="mt-4 flex flex-wrap gap-2">
-        {market.outcomes.map((o) => {
-          const active = o.key === outcomeKey;
-          return (
-            <button
-              key={o.key}
-              type="button"
-              onClick={() => setOutcomeKey(o.key)}
-              className={`chip px-3 py-1.5 text-xs font-medium transition-colors ${
-                active ? "border-accent/60 text-accent" : "text-muted hover:text-foreground"
-              }`}
-            >
-              {o.label}
-            </button>
-          );
-        })}
-      </div>
+      {controlled ? (
+        <div className="mt-4 rounded-xl border border-border bg-surface-2 px-4 py-3">
+          <div className="font-mono text-[10px] uppercase tracking-wider text-muted-2">Backing</div>
+          {selectedLabel ? (
+            <div className="mt-1 truncate text-sm font-semibold text-foreground" title={selectedLabel}>
+              {selectedLabel}
+            </div>
+          ) : (
+            <div className="mt-1 text-sm text-muted">Pick a project from the field →</div>
+          )}
+        </div>
+      ) : (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {market.outcomes.map((o) => {
+            const active = o.key === outcomeKey;
+            return (
+              <button
+                key={o.key}
+                type="button"
+                onClick={() => setOutcomeKey(o.key)}
+                className={`chip px-3 py-1.5 text-xs font-medium transition-colors ${
+                  active ? "border-accent/60 text-accent" : "text-muted hover:text-foreground"
+                }`}
+              >
+                {o.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div className="mt-4 flex items-center gap-2">
         <div className="flex flex-1 items-center gap-2 rounded-full border border-border bg-surface-2 px-4 py-2 transition-colors focus-within:border-accent/60">
@@ -571,7 +601,7 @@ export function BetPanel({
 
       {amountValid && !overCap && outcomeKey && (
         <p className="mt-2 text-xs text-muted">
-          If <span className="text-foreground">{market.outcomes.find((o) => o.key === outcomeKey)?.label ?? outcomeKey}</span>{" "}
+          If <span className="text-foreground">{selectedLabel ?? outcomeKey}</span>{" "}
           wins, this stake pays ~<span className="font-semibold text-up">{previewCspr.toFixed(2)} CSPR</span>{" "}
           <span className="text-[10px]">(pool-implied, at current odds)</span>
         </p>
@@ -630,21 +660,40 @@ export function BetPanel({
           thin slice — the autonomous Arbiter takes this over in the agent economy.)
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          {market.outcomes.map((o) => {
-            const active = o.key === resolveKey;
-            return (
-              <button
-                key={o.key}
-                type="button"
-                onClick={() => setResolveKey(o.key)}
-                className={`chip px-3 py-1.5 text-xs font-medium transition-colors ${
-                  active ? "border-gold/60 text-gold" : "text-muted hover:text-foreground"
-                }`}
-              >
+          {/* A wide field gets a typed key, not a chip per candidate: 177 chips is not a control. */}
+          {market.outcomes.length > WIDE_FIELD_THRESHOLD ? (
+            <input
+              value={resolveKey}
+              onChange={(e) => setResolveKey(e.target.value.trim())}
+              list="resolve-outcome-keys"
+              placeholder="Winning outcome key"
+              aria-label="Winning outcome key"
+              className="flex-1 rounded-full border border-border bg-surface-2 px-4 py-2 font-mono text-xs outline-none focus:border-gold/60"
+            />
+          ) : (
+            market.outcomes.map((o) => {
+              const active = o.key === resolveKey;
+              return (
+                <button
+                  key={o.key}
+                  type="button"
+                  onClick={() => setResolveKey(o.key)}
+                  className={`chip px-3 py-1.5 text-xs font-medium transition-colors ${
+                    active ? "border-gold/60 text-gold" : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  {o.label}
+                </button>
+              );
+            })
+          )}
+          <datalist id="resolve-outcome-keys">
+            {market.outcomes.map((o) => (
+              <option key={o.key} value={o.key}>
                 {o.label}
-              </button>
-            );
-          })}
+              </option>
+            ))}
+          </datalist>
           <button
             type="button"
             onClick={resolve}

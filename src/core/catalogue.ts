@@ -18,6 +18,7 @@
  */
 
 import type { CasperNetwork } from "@/config/network";
+import { BUILDATHON_FINALISTS, BUILDATHON_MARKET_SLUG } from "@/core/buildathon-field";
 import type {
   Market,
   MarketCadence,
@@ -454,6 +455,33 @@ export const MARKET_DEFINITIONS: readonly MarketDefinition[] = [
     },
     deadlineIso: "2026-08-03T00:00:00.000Z",
     seedPoolMotes: { yes: "1180000000000", no: "220000000000" },
+  },
+
+  // ── Community · the buildathon field ───────────────────────────────────────────────────
+  {
+    slug: BUILDATHON_MARKET_SLUG,
+    title: "Which project wins the Casper Agentic Buildathon 2026?",
+    subtitle: "Community · 177 finalists · no house liquidity",
+    category: "community",
+    // 177 candidates, keyed by DoraHacks BUIDL id. Far past what `HunchVault` can hold
+    // (`MAX_OUTCOMES = 8`), which is why this one market routes to its own `FieldMarket`
+    // contract — see `contracts/src/field_market.rs`.
+    outcomes: BUILDATHON_FINALISTS.map((f) => ({ key: f.id, label: f.name })),
+    feeBps: FEE_BPS,
+    cadence: "one-shot",
+    resolver: {
+      kind: "nway_winner",
+      source: "attested",
+      metric: "buildathon_grand_prize",
+      description:
+        "The BUIDL named grand-prize winner in the organizers' published Casper Agentic Buildathon 2026 results, attested by the Arbiter with the announcement URL + content hash committed on chain.",
+    },
+    // The backstop, not the trigger: the oracle may resolve the moment results are announced,
+    // which closes betting immediately. See `FieldMarket::resolve`.
+    deadlineIso: "2026-08-31T23:59:59.000Z",
+    // No house liquidity. Every one of the 177 pools starts at zero, so the first real bet sets
+    // the line and nothing on the board is the operator's own money wearing a bettor's clothes.
+    seedPoolMotes: Object.fromEntries(BUILDATHON_FINALISTS.map((f) => [f.id, "0"])),
   },
 ];
 

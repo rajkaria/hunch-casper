@@ -75,13 +75,19 @@ function createLazyRealChain(
   marketPackageHash: string | undefined,
   marketAddresses: Record<string, string>,
   vaultV2PackageHash: string | undefined,
+  fieldMarketPackageHash: string | undefined,
 ): CasperChainPort {
   let cached: Promise<CasperChainPort> | null = null;
   const load = (): Promise<CasperChainPort> =>
     (cached ??= import("@/adapters/casper/real-chain").then((mod) =>
       mod.createRealChain(
         network,
-        mod.realChainOptionsFromEnv(marketPackageHash, marketAddresses, vaultV2PackageHash),
+        mod.realChainOptionsFromEnv(
+          marketPackageHash,
+          marketAddresses,
+          vaultV2PackageHash,
+          fieldMarketPackageHash,
+        ),
       ),
     ));
 
@@ -177,7 +183,13 @@ export function createContainer(network: CasperNetwork = DEFAULT_NETWORK): Conta
   const vaultAddress = cfg.contracts.vault ?? "vault-mock-account";
   const chain =
     chainMode() === "real"
-      ? createLazyRealChain(network, cfg.contracts.vault, cfg.marketAddresses, cfg.contracts.vaultV2)
+      ? createLazyRealChain(
+          network,
+          cfg.contracts.vault,
+          cfg.marketAddresses,
+          cfg.contracts.vaultV2,
+          cfg.contracts.fieldMarket,
+        )
       : createMockChain(network);
   // Real mode + a configured treasury (CASPER_X402_PAYTO) upgrades the x402 rail to the
   // transfer-verifying PaymentPort: proofs must map to a real on-chain CSPR transfer to the
@@ -197,6 +209,7 @@ export function createContainer(network: CasperNetwork = DEFAULT_NETWORK): Conta
   // which does exist and carries every argument the boards need.
   const routableContracts = [
     ...Object.values(cfg.marketAddresses ?? {}),
+    cfg.contracts.fieldMarket,
     cfg.contracts.vaultV2,
     cfg.contracts.vault,
   ].filter((h): h is string => typeof h === "string" && h.length > 0);

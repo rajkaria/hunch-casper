@@ -212,7 +212,7 @@ const PRIMITIVES = [
   ["MCP Server", "How agents discover markets, read odds, quote, and place bets — the same public surface the Prophets use."],
   ["Wallet UX (CSPR.click)", "Connect a real Casper wallet — Casper Wallet, Ledger, MetaMask Snap or WalletConnect — and sign your own bets. With no app id configured the app falls back to an honestly labelled demo wallet instead of a button that does nothing."],
   ["CSPR.cloud APIs", "The live chain-data feeds Genesis reads to open markets and the Arbiter reads to resolve them."],
-  ["Odra Framework", "Nine original Rust contracts — factory, parimutuel vault, oracle registry, the singleton HunchVault, bonded AgentRegistry, DisputePanel, ResolutionHook, LmsrMarket, CopyBetting — 95 OdraVM tests in CI."],
+  ["Odra Framework", "Ten original Rust contracts — factory, parimutuel vault, the 177-candidate FieldMarket, oracle registry, the singleton HunchVault, bonded AgentRegistry, DisputePanel, ResolutionHook, LmsrMarket, CopyBetting — 116 OdraVM tests in CI."],
   ["drand Beacon", "The public randomness that decides The Flip — provably fair, verifiable by anyone."],
 ];
 
@@ -289,6 +289,29 @@ export default async function Home() {
         </div>
         {/* Live odds tape — real markets, straight off the read model. */}
         <MarketTicker />
+      </section>
+
+      {/* The buildathon market — timely, and the one market the rest of the ecosystem is IN. */}
+      <section className="mx-auto w-full max-w-6xl px-4 pt-12 sm:px-6">
+        <Link
+          href="/buildathon"
+          className="card card-hover card-signal flex flex-col gap-3 p-6 sm:flex-row sm:items-center sm:justify-between"
+          style={{ "--card-accent": "var(--gold)" } as React.CSSProperties}
+        >
+          <div className="flex flex-col gap-1">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-gold">
+              Live · community market
+            </span>
+            <span className="text-lg font-semibold">
+              Which project wins the Casper Agentic Buildathon 2026?
+            </span>
+            <span className="text-sm text-muted">
+              All 177 finalists in one parimutuel pool. No house liquidity — every pool starts at
+              zero, and the first bet sets the line.
+            </span>
+          </div>
+          <span className="btn btn-primary shrink-0 px-5 py-2 text-center">See the field →</span>
+        </Link>
       </section>
 
       {/* The economy, by the numbers — proof before pitch. */}

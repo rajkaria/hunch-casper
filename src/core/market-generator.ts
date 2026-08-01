@@ -26,6 +26,7 @@ import type { MarketCadence, MarketCategory, ResolverBinding } from "@/core/type
 import type { MarketDefinition } from "@/core/catalogue";
 import { MARKET_DEFINITIONS } from "@/core/catalogue";
 import { currentRound } from "@/core/round-schedule";
+import { FIELD_MARKET_SLUGS, fieldCommitment } from "@/core/buildathon-field";
 
 const BPS_DENOMINATOR = 10_000;
 
@@ -65,6 +66,19 @@ export interface MarketDeployPlan {
    * of the vault (the house is a real staker on both sides, never a dead 0/0 book).
    */
   seedBets: Record<string, string>;
+  /**
+   * Present only for a wide-field market (one that deploys to `FieldMarket` rather than to the
+   * vault). The deploy driver needs three things the ordinary plan does not carry: that this is a
+   * field deploy at all, the commitment it must pass to `freeze_field`, and the candidate count to
+   * verify the registration batches against. Carrying them on the plan keeps the driver reading
+   * one manifest instead of being handed loose arguments that could disagree with it.
+   */
+  field?: {
+    /** `sha256` of the ordered candidate keys — the value `freeze_field` records. */
+    commitment: string;
+    /** How many candidates must be registered before the freeze. */
+    candidateCount: number;
+  };
 }
 
 function deadlineToMs(slug: string, iso: string): number {
@@ -153,6 +167,11 @@ export function buildDeployPlan(def: MarketDefinition): MarketDeployPlan {
       deadlineMs,
     },
     seedBets: { ...def.seedPoolMotes },
+    // A field market's deploy is a different shape — install, register in batches, freeze — and
+    // the driver has to know that from the manifest alone.
+    ...(FIELD_MARKET_SLUGS.includes(def.slug)
+      ? { field: { commitment: fieldCommitment(outcomeKeys), candidateCount: outcomeKeys.length } }
+      : {}),
   };
 }
 

@@ -126,11 +126,12 @@ describe("live counts", () => {
       "provably-fair": 0,
       rwa: 1,
       meta: 0,
+      community: 0,
     });
   });
 
   it("reports zero on an empty board", () => {
     expect(countLiveMarkets([])).toBe(0);
-    expect(Object.values(liveCountsByCategory([]))).toEqual([0, 0, 0, 0]);
+    expect(Object.values(liveCountsByCategory([]))).toEqual([0, 0, 0, 0, 0]);
   });
 });

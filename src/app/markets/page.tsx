@@ -12,6 +12,7 @@ const FILTERS: { key: MarketCategory | "all"; label: string }[] = [
   { key: "provably-fair", label: "Provably fair" },
   { key: "rwa", label: "RWA" },
   { key: "meta", label: "Meta" },
+  { key: "community", label: "Community" },
 ];
 
 export default function MarketsPage() {

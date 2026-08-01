@@ -139,6 +139,70 @@ HUNCH_VAULT_V2=hash-<vault-v2> \
   cargo run --bin contracts_catalogue -- lifecycle-v2
 ```
 
+### 4d. FieldMarket — the wide-field market (177 buildathon finalists)
+
+One market on the board does **not** live in the vault: `casper-buildathon-2026-winner`, whose
+field is the 177 Casper Agentic Buildathon finalists. `HunchVault` caps a market at 8 outcomes
+(`MAX_OUTCOMES`) because it scans the outcome list on every bet, so a 177-candidate market there
+would be rejected at creation — and if the routing ever *did* fall through to the vault, the app
+throws instead of submitting the stake (`resolveMarketTarget`, rule 0).
+
+`FieldMarket` keeps the candidate set in a dictionary (`Mapping<String, bool>`), so membership is
+one read regardless of field width, and exposes the same money-path ABI as `ParimutuelMarket`
+(`bet(outcome)` / `resolve(winning_outcome)` / `claim`) — which is why the app needs no new bet
+path for it. The deploy is three separately retryable steps:
+
+```bash
+# 0. The manifest carries the field: candidate keys, the count, and the sha256 commitment
+#    over the ordered list (markets[].field). Same file as the catalogue deploys.
+curl -s 'https://casper.playhunch.xyz/api/deploy-plan?network=testnet' > /tmp/deploy-plan.json
+
+# 1. Install. Registers NO candidates — 177 keys do not fit in one transaction — and refuses
+#    to start unless the deployer can also afford every registration batch plus the freeze.
+cargo run --bin contracts_catalogue -- \
+  field-deploy /tmp/deploy-plan.json casper-buildathon-2026-winner
+# → HUNCH_FIELD_MARKET hash-<field-market>
+
+# 2. Fill the field, 40 keys per batch, skipping anything already on chain. Safe to re-run:
+#    re-registering an existing key is a no-op on chain, so a lost receipt costs gas, not a
+#    broken deploy.
+cargo run --bin contracts_catalogue -- \
+  field-register hash-<field-market> /tmp/deploy-plan.json casper-buildathon-2026-winner
+
+# 3. Seal it. Betting is CLOSED until this lands (`FieldNotFrozen`) and no candidate can be
+#    added or removed after it. Verifies every manifest key is on chain and that the count
+#    matches before it will freeze, then records the commitment.
+cargo run --bin contracts_catalogue -- \
+  field-freeze hash-<field-market> /tmp/deploy-plan.json casper-buildathon-2026-winner
+
+# Anytime: where the deploy got to, and what the app should be showing.
+cargo run --bin contracts_catalogue -- field-info hash-<field-market>
+```
+
+Wire it into the app with **`NEXT_PUBLIC_TESTNET_FIELD_MARKET=hash-<field-market>`** (§5). Until
+that is set, `/buildathon` says the market is not live rather than offering a bet that cannot be
+placed.
+
+Settlement, once the organizers publish results — the winner is a BUIDL id, and the evidence hash
+is committed in the same command because a resolution whose justification never gets published is
+the thing the evidence bundle exists to prevent:
+
+```bash
+cargo run --bin contracts_catalogue -- \
+  field-resolve hash-<field-market> 46696 <sha256-of-the-announcement>
+```
+
+`resolve` is deliberately **not** deadline-gated: results are announced when they are announced,
+and resolving early closes betting the instant the outcome is public. If the announcement names
+co-winners with no single first place, void instead (every stake refunds in full).
+
+**Budget.** Sized from the measured v1 install (299.023 consumed at a 400 limit): the install
+limit is 450 CSPR and must be affordable *up front* — testnet holds the full limit at acceptance
+and refunds 75% of the unused part. Five registration batches plus the freeze are budgeted at 10
+CSPR of limit each. Have **≈ 500 CSPR** in the deployer before starting; the faucet
+(https://testnet.cspr.live/tools/faucet, human-only) covers it in one request. `field-deploy`
+aborts with `HUNCH_ABORT low-balance` rather than stranding a contract with an unfreezable field.
+
 Two repair/diagnosis commands round out the v2 set. `market-info` is a free read of a deployed
 v1 `ParimutuelMarket` — question, status, outcome keys, pools — i.e. what the package will
 *actually* accept, independent of what the env map claims. `create-v2` force-creates ONE
@@ -178,7 +242,7 @@ unused limit; the testnet vault is
 | `resolve` (fee sweep + bond refund) | 6.74 net (6.317 consumed, limit 8) | `46312a4c…` |
 | `claim` | 4.19 net (2.921 consumed, limit 8) | `1364254c…` |
 
-### 4d. S19 — open permissionless creation
+### 4e. S19 — open permissionless creation
 
 `create_market` is admin-only until the vault's `open_creation` flag is flipped. Opening it
 lets any address (human or agent) mint a market, so the vault enforces guardrails on
@@ -233,6 +297,14 @@ contract (unmapped slugs fall back to `_VAULT`):
 ```bash
 # JSON object keyed by catalogue slug (slugs listed by /api/deploy-plan?network=testnet)
 NEXT_PUBLIC_TESTNET_MARKET_ADDRS={"the-flip":"hash-<...>","cspr-above-5c-aug1":"hash-<...>"}
+```
+
+**Wide-field routing.** The buildathon market has its own contract and its own variable — it is
+NOT an entry in the address map, because a missing entry there falls through to the vault and a
+177-outcome market must never do that (§4d):
+
+```bash
+NEXT_PUBLIC_TESTNET_FIELD_MARKET=hash-<field-market>
 ```
 
 **On-chain proof for judges.** Paste the deploy/bet/resolve tx hashes you just minted into

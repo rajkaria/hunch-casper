@@ -25,6 +25,7 @@ use std::str::FromStr;
 
 use contracts::hunch_vault::HunchVault;
 use contracts::hunch_vault::HunchVaultInitArgs;
+use contracts::field_market::{FieldMarket, FieldMarketHostRef, FieldMarketInitArgs};
 use contracts::market_factory::MarketFactory;
 use contracts::parimutuel_market::{ParimutuelMarket, ParimutuelMarketInitArgs};
 use odra::casper_types::U512;
@@ -69,6 +70,15 @@ const SETTLE_GAS: u64 = 12_000_000_000;
 /// driver prints the measured cost per call (`HUNCH_GAS`) so the docs report what the
 /// chain actually charged.
 const CREATE_GAS: u64 = 8_000_000_000;
+
+/// `register_candidates` — one dictionary write per new candidate plus the batch event. A
+/// 40-key batch is a handful of writes more than a `create_market`, so 10 CSPR is comfortable
+/// headroom; the driver prints what each batch actually consumed (`HUNCH_GAS`).
+const REGISTER_BATCH_GAS: u64 = 10_000_000_000;
+/// How many candidate keys go in one `register_candidates` call. 40 five-character ids is a
+/// small argument payload and keeps a failed batch cheap to retry — re-sending an accepted batch
+/// is a no-op on chain, so the retry costs gas and nothing else.
+const REGISTER_BATCH_SIZE: usize = 40;
 
 /// Aug 1 2026 00:00 UTC — matches the catalogue's one-shot deadlines; far enough that bets
 /// stay open for the demo window (resolve is oracle-gated, not deadline-gated).
@@ -156,6 +166,38 @@ fn main() {
             create_v2(&env, manifest, slug, divisor);
         }
         "lifecycle-v2" => lifecycle_v2(&env),
+        "field-deploy" => {
+            let manifest = args.get(2).expect("usage: field-deploy <deploy-plan.json> <slug>");
+            let slug = args.get(3).expect("missing slug");
+            field_deploy(&env, manifest, slug);
+        }
+        "field-register" => {
+            let package = args
+                .get(2)
+                .expect("usage: field-register <field-market-package-hash> <deploy-plan.json> <slug>");
+            let manifest = args.get(3).expect("missing manifest path");
+            let slug = args.get(4).expect("missing slug");
+            field_register(&env, package, manifest, slug);
+        }
+        "field-freeze" => {
+            let package = args
+                .get(2)
+                .expect("usage: field-freeze <field-market-package-hash> <deploy-plan.json> <slug>");
+            let manifest = args.get(3).expect("missing manifest path");
+            let slug = args.get(4).expect("missing slug");
+            field_freeze(&env, package, manifest, slug);
+        }
+        "field-info" => {
+            let package = args.get(2).expect("usage: field-info <field-market-package-hash>");
+            field_info(&env, package);
+        }
+        "field-resolve" => {
+            let package = args
+                .get(2)
+                .expect("usage: field-resolve <field-market-package-hash> <winning-outcome> [evidence-hash]");
+            let winner = args.get(3).expect("missing winning outcome key");
+            field_resolve(&env, package, winner, args.get(4).map(String::as_str));
+        }
         "list-markets" => list_markets(&env),
         "market-info" => {
             let package = args.get(2).expect("usage: market-info <parimutuel-market-package-hash>");
@@ -201,7 +243,8 @@ fn main() {
             eprintln!(
                 "usage: contracts_catalogue <balance|lifecycle|catalogue|vault-deploy|\
                  catalogue-v2|create-v2|lifecycle-v2|list-markets|market-info|\
-                 approve-oracle|open-creation|fleet-fund|plan-cost> ..."
+                 approve-oracle|open-creation|fleet-fund|plan-cost|\
+                 field-deploy|field-register|field-freeze|field-info|field-resolve> ..."
             );
             std::process::exit(2);
         }
@@ -959,4 +1002,224 @@ fn catalogue(env: &HostEnv, manifest_path: &str, selector: &str, divisor: u64) {
     }
 
     println!("HUNCH_STEP done");
+}
+
+// ── FieldMarket — the wide-field market (177 buildathon finalists) ──────────────────────────
+//
+// A field market does not live in the vault: `HunchVault` caps a market at 8 outcomes because it
+// scans the outcome list on every bet. `FieldMarket` keeps the field in a dictionary instead, so
+// membership is one read no matter how wide it is — and the deploy is a three-step sequence
+// rather than a single call:
+//
+//   1. `field-deploy`   install the contract (question/oracle/treasury/fee/deadline)
+//   2. `field-register` fill the field in batches (idempotent — a lost receipt is safe to retry)
+//   3. `field-freeze`   seal it against the manifest's commitment; betting opens here
+//
+// Split into three commands on purpose: each is separately retryable, and `field-info` between
+// any two of them says exactly where the run got to.
+
+/// Read one market's plan out of the deploy manifest, or die saying which slug is missing.
+fn manifest_market(manifest_path: &str, slug: &str) -> serde_json::Value {
+    let raw = fs::read_to_string(manifest_path).expect("cannot read manifest");
+    let manifest: serde_json::Value = serde_json::from_str(&raw).expect("manifest is not JSON");
+    let markets = manifest["markets"].as_array().expect("manifest has no markets[]");
+    markets
+        .iter()
+        .find(|m| m["slug"].as_str() == Some(slug))
+        .unwrap_or_else(|| panic!("slug '{slug}' not in manifest"))
+        .clone()
+}
+
+fn manifest_candidates(m: &serde_json::Value) -> Vec<String> {
+    m["init"]["outcomeKeys"]
+        .as_array()
+        .expect("init.outcomeKeys")
+        .iter()
+        .map(|o| o.as_str().expect("outcome key").to_string())
+        .collect()
+}
+
+fn load_field(env: &HostEnv, package: &str) -> FieldMarketHostRef {
+    FieldMarket::load(env, Address::from_str(package).expect("bad FieldMarket package hash"))
+}
+
+/// Install the contract. Deliberately does NOT register any candidate: a 177-key field does not
+/// fit in one transaction, and pretending otherwise is how a deploy dies half-done.
+fn field_deploy(env: &HostEnv, manifest_path: &str, slug: &str) {
+    let m = manifest_market(manifest_path, slug);
+    let caller = env.caller();
+    let balance = env.balance_of(&caller);
+    println!("HUNCH_BALANCE start {balance}");
+
+    // The node holds the full limit at acceptance, not the refunded net cost. Require the install
+    // limit plus the whole registration+freeze sequence, so the run cannot strand a contract with
+    // an empty field that can never open.
+    let batches = manifest_candidates(&m).len().div_ceil(REGISTER_BATCH_SIZE) as u64;
+    let required =
+        U512::from(MARKET_GAS) + U512::from(REGISTER_BATCH_GAS) * U512::from(batches + 1);
+    if balance < required {
+        println!("HUNCH_ABORT low-balance have={balance} need={required}");
+        eprintln!(
+            "field-deploy needs {required} motes up front ({MARKET_GAS} install limit + \
+             {batches} registration batches + freeze at {REGISTER_BATCH_GAS} each); the deployer \
+             holds {balance}. Top up at https://testnet.cspr.live/tools/faucet before retrying."
+        );
+        std::process::exit(1);
+    }
+
+    let question = m["init"]["question"].as_str().expect("init.question").to_string();
+    let fee_bps = m["init"]["feeBps"].as_u64().expect("init.feeBps") as u32;
+    let deadline = m["init"]["deadlineMs"].as_u64().expect("init.deadlineMs");
+
+    println!("HUNCH_STEP field-deploy slug={slug}");
+    let before = env.balance_of(&caller);
+    env.set_gas(MARKET_GAS);
+    let market = FieldMarket::deploy(
+        env,
+        FieldMarketInitArgs {
+            question,
+            // The deployer is the oracle: it is the key the Arbiter already resolves with, and the
+            // one approved in the OracleRegistry. Treasury likewise — the 2% fee off the losing
+            // pool goes where every other market's does.
+            oracle: caller,
+            treasury: caller,
+            fee_bps,
+            deadline,
+        },
+    );
+    println!("HUNCH_GAS field_install motes={}", before - env.balance_of(&caller));
+    println!("HUNCH_FIELD_MARKET {}", market.address().to_formatted_string());
+    println!("HUNCH_STEP next field-register");
+}
+
+/// Fill the field in batches, skipping anything already on chain.
+///
+/// The skip is a real read, not an assumption: `is_candidate` is one cheap query per key and it
+/// turns a half-finished run into a resumable one. Re-sending an accepted batch would be a no-op
+/// on chain anyway — this just avoids paying for it.
+fn field_register(env: &HostEnv, package: &str, manifest_path: &str, slug: &str) {
+    let m = manifest_market(manifest_path, slug);
+    let candidates = manifest_candidates(&m);
+    let mut market = load_field(env, package);
+
+    if market.is_frozen() {
+        println!("HUNCH_SKIP_REGISTER field already frozen count={}", market.candidate_count());
+        return;
+    }
+
+    let missing: Vec<String> = candidates
+        .iter()
+        .filter(|key| !market.is_candidate((*key).clone()))
+        .cloned()
+        .collect();
+    println!(
+        "HUNCH_STEP field-register total={} on-chain={} missing={}",
+        candidates.len(),
+        market.candidate_count(),
+        missing.len()
+    );
+
+    let caller = env.caller();
+    for (i, batch) in missing.chunks(REGISTER_BATCH_SIZE).enumerate() {
+        let before = env.balance_of(&caller);
+        env.set_gas(REGISTER_BATCH_GAS);
+        market.register_candidates(batch.to_vec());
+        println!(
+            "HUNCH_GAS register_candidates batch={} keys={} motes={}",
+            i,
+            batch.len(),
+            before - env.balance_of(&caller)
+        );
+    }
+    println!("HUNCH_FIELD_COUNT {}", market.candidate_count());
+}
+
+/// Seal the field against the manifest's commitment. Refuses on any mismatch between what is on
+/// chain and what the app publishes — a market whose field is not the published one must never
+/// open for betting, and this is the last point at which that is still cheap to notice.
+fn field_freeze(env: &HostEnv, package: &str, manifest_path: &str, slug: &str) {
+    let m = manifest_market(manifest_path, slug);
+    let expected_count = m["field"]["candidateCount"]
+        .as_u64()
+        .expect("manifest market has no field.candidateCount — is this a field market?")
+        as u32;
+    let commitment = m["field"]["commitment"]
+        .as_str()
+        .expect("manifest market has no field.commitment")
+        .to_string();
+
+    let mut market = load_field(env, package);
+    if market.is_frozen() {
+        println!("HUNCH_SKIP_FREEZE already frozen hash={}", market.field_hash());
+        return;
+    }
+    let on_chain = market.candidate_count();
+    if on_chain != expected_count {
+        println!("HUNCH_ABORT field-incomplete on-chain={on_chain} expected={expected_count}");
+        eprintln!(
+            "refusing to freeze: {on_chain} candidates on chain, {expected_count} in the manifest. \
+             Run field-register again."
+        );
+        std::process::exit(1);
+    }
+    // Every key in the manifest must genuinely be on chain — the count alone would pass even if a
+    // registration had somehow written a different set of the same size.
+    for key in manifest_candidates(&m) {
+        if !market.is_candidate(key.clone()) {
+            println!("HUNCH_ABORT missing-candidate key={key}");
+            eprintln!("refusing to freeze: candidate '{key}' is not on chain.");
+            std::process::exit(1);
+        }
+    }
+
+    println!("HUNCH_STEP field-freeze slug={slug} count={on_chain}");
+    let caller = env.caller();
+    let before = env.balance_of(&caller);
+    env.set_gas(REGISTER_BATCH_GAS);
+    market.freeze_field(commitment.clone());
+    println!("HUNCH_GAS freeze_field motes={}", before - env.balance_of(&caller));
+    println!("HUNCH_FIELD_HASH {commitment}");
+    println!("HUNCH_STEP done — betting is open");
+}
+
+/// Where a field deploy got to, and what the app should be showing.
+fn field_info(env: &HostEnv, package: &str) {
+    let market = load_field(env, package);
+    println!("HUNCH_FIELD_QUESTION {}", market.question());
+    println!("HUNCH_FIELD_STATUS {}", market.status());
+    println!("HUNCH_FIELD_FROZEN {}", market.is_frozen());
+    println!("HUNCH_FIELD_COUNT {}", market.candidate_count());
+    println!("HUNCH_FIELD_HASH {}", market.field_hash());
+    println!("HUNCH_FIELD_DEADLINE {}", market.deadline());
+    println!("HUNCH_FIELD_FEE_BPS {}", market.fee_bps());
+    println!("HUNCH_FIELD_POOL {}", market.total_pool());
+    println!("HUNCH_FIELD_WINNER {}", market.winning_outcome());
+}
+
+/// Oracle settlement: name the winner, then bind the evidence that justifies it.
+///
+/// The evidence hash is committed in the SAME command rather than left to a follow-up, because a
+/// resolution whose justification never gets published is exactly the thing the evidence bundle
+/// exists to prevent.
+fn field_resolve(env: &HostEnv, package: &str, winner: &str, evidence: Option<&str>) {
+    let mut market = load_field(env, package);
+    if !market.is_candidate(winner.to_string()) {
+        eprintln!("'{winner}' is not a candidate in this field — check the BUIDL id.");
+        std::process::exit(1);
+    }
+    let caller = env.caller();
+    let before = env.balance_of(&caller);
+    println!("HUNCH_STEP field-resolve winner={winner}");
+    env.set_gas(SETTLE_GAS);
+    market.resolve(winner.to_string());
+    println!("HUNCH_GAS field_resolve motes={}", before - env.balance_of(&caller));
+    println!("HUNCH_FIELD_STATUS {}", market.status());
+
+    if let Some(hash) = evidence {
+        env.set_gas(REGISTRY_GAS);
+        market.commit_bundle(hash.to_string());
+        println!("HUNCH_FIELD_EVIDENCE {hash}");
+    } else {
+        println!("HUNCH_WARN no evidence hash committed — run field-resolve again with one");
+    }
 }

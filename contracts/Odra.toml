@@ -1,4 +1,7 @@
 [[contracts]]
+fqn = "field_market::FieldMarket"
+
+[[contracts]]
 fqn = "hunch_vault::HunchVault"
 
 [[contracts]]
