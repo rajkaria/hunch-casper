@@ -82,6 +82,21 @@ commitment `59f84e52a4a6271220dee52c2353a9435e584fedec049353cf533d1b79b81e7b`. M
 is what a dictionary buys you over a `Vec`. See
 [`PATTERNS.md`](../contracts/PATTERNS.md#3-dictionary-membership-for-wide-fields).
 
+## AgentRegistry — bonded agent identity
+
+Testnet: `hash-e226e709c6806bc9e7208e3e421859aa840fc88d27dd3604101426e61d3d9955`
+Measured 2026-08-02, deployed with `registry-deploy 100 48` (100 CSPR minimum bond, 48h
+withdrawal cooldown).
+
+| Call | net (CSPR) | limit |
+|---|---|---|
+| `AgentRegistry` install (308,722-byte wasm) | **329.43** | 450 |
+| `register` (agent bonds its own identity) | 8 (limit) | 8 |
+
+The install figure is the deployer purse before and after: 2000.00 → 1670.57 CSPR. It is a good
+reference point for "what does an Odra contract of ~300 KB cost to install", independent of what
+this particular contract does.
+
 ## v1 per-market installs (historical)
 
 | Call | net (CSPR) | consumed | limit |

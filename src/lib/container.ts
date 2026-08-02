@@ -33,6 +33,8 @@ import { createSystemClock } from "@/adapters/system-clock";
 import type { EvidenceStorePort } from "@/ports/evidence-store";
 import { createMockEvidenceStore } from "@/adapters/mock/mock-evidence-store";
 import { createMockChain } from "@/adapters/mock/mock-chain";
+// Pure, node:crypto-only — safe to import eagerly here, unlike the chain SDK behind `load()`.
+import { canSignAsAgent } from "@/adapters/casper/fleet-keys";
 import { createMockEvents } from "@/adapters/mock/mock-events";
 import { createDeployEvents } from "@/adapters/casper/deploy-events";
 import { createMockWallet } from "@/adapters/mock/mock-wallet";
@@ -76,18 +78,22 @@ function createLazyRealChain(
   marketAddresses: Record<string, string>,
   vaultV2PackageHash: string | undefined,
   fieldMarketPackageHash: string | undefined,
+  agentRegistryPackageHash?: string,
 ): CasperChainPort {
   let cached: Promise<CasperChainPort> | null = null;
   const load = (): Promise<CasperChainPort> =>
     (cached ??= import("@/adapters/casper/real-chain").then((mod) =>
       mod.createRealChain(
         network,
-        mod.realChainOptionsFromEnv(
-          marketPackageHash,
-          marketAddresses,
-          vaultV2PackageHash,
-          fieldMarketPackageHash,
-        ),
+        {
+          ...mod.realChainOptionsFromEnv(
+            marketPackageHash,
+            marketAddresses,
+            vaultV2PackageHash,
+            fieldMarketPackageHash,
+          ),
+          agentRegistryPackageHash,
+        },
       ),
     ));
 
@@ -98,6 +104,17 @@ function createLazyRealChain(
     },
     async placeBet(input: PlaceBetInput): Promise<DeployResult> {
       return (await load()).placeBet(input);
+    },
+    /**
+     * Answered HERE rather than delegated, because it is the one method on this port that must be
+     * SYNCHRONOUS — the cadence planner and the fleet loop branch on it before any await.
+     * Delegating would mean returning a Promise, and every `=== true` check against a Promise is
+     * false, which would silently disable self-custody in exactly the deployment that has it
+     * configured. `canSignAsAgent` is pure and pulls in no chain SDK, so both this proxy and the
+     * real adapter can answer identically without loading anything.
+     */
+    canSelfSign(bettor: string): boolean {
+      return canSignAsAgent(bettor);
     },
     async submitBet(input: PlaceBetInput): Promise<DeployResult> {
       const chain = await load();
@@ -122,6 +139,18 @@ function createLazyRealChain(
         throw new Error("this chain cannot build unsigned create_market transactions");
       }
       return chain.buildCreateMarketTransaction(input);
+    },
+    async buildAgentRegistrationTransaction(input: {
+      name: string;
+      metadataUri: string;
+      bondMotes: string;
+      agentPublicKeyHex: string;
+    }): Promise<UnsignedTransaction> {
+      const chain = await load();
+      if (!chain.buildAgentRegistrationTransaction) {
+        throw new Error("this chain cannot build unsigned agent registrations");
+      }
+      return chain.buildAgentRegistrationTransaction(input);
     },
     async confirmTransaction(transactionHash: string): Promise<DeployResult> {
       const chain = await load();
@@ -189,6 +218,7 @@ export function createContainer(network: CasperNetwork = DEFAULT_NETWORK): Conta
           cfg.marketAddresses,
           cfg.contracts.vaultV2,
           cfg.contracts.fieldMarket,
+          cfg.contracts.agentRegistry,
         )
       : createMockChain(network);
   // Real mode + a configured treasury (CASPER_X402_PAYTO) upgrades the x402 rail to the

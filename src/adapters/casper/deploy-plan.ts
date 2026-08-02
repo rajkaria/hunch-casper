@@ -339,3 +339,47 @@ function assertVaultTarget(entryPoint: string, opts: BuildPlanOptions): void {
     throw new Error(`${entryPoint} exists only on the singleton HunchVault v2 — set NEXT_PUBLIC_*_VAULT_V2`);
   }
 }
+
+/** Gas for `AgentRegistry::register` — a payable proxy session writing one dictionary entry, so
+ * priced like `create_market` rather than like a bare transfer. */
+export const DEFAULT_REGISTER_AGENT_GAS_MOTES = (8n * MOTES_PER_CSPR).toString();
+
+/** What an agent needs to state about itself to bond an identity. */
+export interface RegisterAgentInput {
+  /** Display name, shown on the League. */
+  name: string;
+  /** URI describing the agent — strategy, contact, source. Empty is allowed. */
+  metadataUri: string;
+  /** Bond to attach, in motes. Must be at least the registry's `min_bond`. */
+  bondMotes: string;
+}
+
+/**
+ * Build the plan for `AgentRegistry::register` (S33/W2) — payable, so it carries the bond.
+ *
+ * There is no `agent` argument by design: the contract records `env().caller()`, so the identity
+ * being bonded is whoever signs. That is why this is only ever built UNSIGNED and handed to the
+ * agent's own wallet — an operator-signed registration would bond the operator, and the resulting
+ * "agent identity" would be worth exactly as much as the single-custodian bets W1 replaced.
+ */
+export function buildRegisterAgentPlan(
+  input: RegisterAgentInput,
+  opts: { registryContract: string; gasMotes?: string },
+): CasperCallPlan {
+  assertNonEmpty("registryContract", opts.registryContract);
+  assertNonEmpty("name", input.name);
+  if (!/^\d+$/.test(input.bondMotes) || BigInt(input.bondMotes) <= 0n) {
+    throw new Error(`bondMotes must be a positive integer motes string, got: ${input.bondMotes}`);
+  }
+  return {
+    targetContract: opts.registryContract,
+    entryPoint: "register",
+    args: [
+      { name: "name", clType: "string", value: input.name },
+      { name: "metadata_uri", clType: "string", value: input.metadataUri },
+    ],
+    attachedMotes: input.bondMotes,
+    gasMotes: opts.gasMotes ?? DEFAULT_REGISTER_AGENT_GAS_MOTES,
+    usesProxy: true, // payable → routed through proxy_caller_with_return.wasm
+  };
+}

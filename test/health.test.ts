@@ -36,6 +36,7 @@ function healthyReal(): HealthInputs {
       vault: "hash-" + "c6".repeat(32),
       vaultV2: "hash-" + "ce".repeat(32),
       fieldMarket: "hash-" + "dd".repeat(32),
+      agentRegistry: "hash-" + "a9".repeat(32),
     },
     marketAddressCount: 6,
     fieldMarketCount: 1,
@@ -621,5 +622,39 @@ describe("creation health", () => {
     expect(creationCheck({ ...healthyReal(), chainMode: "mock" })?.status).toBe("skip");
     const withoutCreation = { ...healthyReal(), creation: undefined };
     expect(creationCheck(withoutCreation)).toBeUndefined();
+  });
+});
+
+/**
+ * Bonded agent identity (S33/W2).
+ *
+ * The registry is the difference between "any Casper agent can join" as an HTTP claim and as an
+ * on-chain fact. It warns rather than fails when absent — the economy runs fine without it — but
+ * an operator reading a green board must not have to infer the gap from a missing check.
+ */
+describe("the AgentRegistry check", () => {
+  it("is ok when the registry is wired", () => {
+    expect(statusOf(buildHealthReport(healthyReal()), "contracts.agentRegistry")).toBe("ok");
+  });
+
+  it("warns, not fails, when it is not — the economy still runs", () => {
+    const base = healthyReal();
+    const report = buildHealthReport({
+      ...base,
+      contracts: { ...base.contracts, agentRegistry: undefined },
+    });
+    expect(statusOf(report, "contracts.agentRegistry")).toBe("warn");
+    expect(report.status).toBe("ok"); // a warn must not degrade the deployment
+  });
+
+  it("names the command that fixes it", () => {
+    const base = healthyReal();
+    const report = buildHealthReport({
+      ...base,
+      contracts: { ...base.contracts, agentRegistry: undefined },
+    });
+    const detail = report.checks.find((c) => c.name === "contracts.agentRegistry")!.detail;
+    expect(detail).toContain("registry-deploy");
+    expect(detail).toContain("NEXT_PUBLIC_<NETWORK>_AGENT_REGISTRY");
   });
 });

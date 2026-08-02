@@ -23,6 +23,7 @@
 use std::fs;
 use std::str::FromStr;
 
+use contracts::agent_registry::{AgentRegistry, AgentRegistryInitArgs};
 use contracts::hunch_vault::HunchVault;
 use contracts::hunch_vault::HunchVaultInitArgs;
 use contracts::field_market::{FieldMarket, FieldMarketHostRef, FieldMarketInitArgs};
@@ -239,15 +240,90 @@ fn main() {
                 .expect("flag must be true or false");
             open_creation(&env, open);
         }
+        "registry-deploy" => {
+            let min_bond_cspr: u64 = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(100);
+            let cooldown_hours: u64 = args.get(3).and_then(|a| a.parse().ok()).unwrap_or(48);
+            registry_deploy(&env, min_bond_cspr, cooldown_hours);
+        }
+        "registry-info" => {
+            registry_info(&env, args.get(2).map(String::as_str));
+        }
         _ => {
             eprintln!(
                 "usage: contracts_catalogue <balance|lifecycle|catalogue|vault-deploy|\
                  catalogue-v2|create-v2|lifecycle-v2|list-markets|market-info|\
                  approve-oracle|open-creation|fleet-fund|plan-cost|\
+                 registry-deploy|registry-info|\
                  field-deploy|field-register|field-freeze|field-info|field-resolve> ..."
             );
             std::process::exit(2);
         }
+    }
+}
+
+/// W2: install the `AgentRegistry` — bonded, on-chain identity for any agent that wants to trade
+/// in this economy, ours or a third party's.
+///
+/// The bond is the whole point and its size is a policy decision, not a constant: too low and an
+/// identity is free to mint by the thousand, too high and no outside agent bothers. It is settable
+/// after the fact (`set_min_bond`), so the deploy picks a defensible starting number rather than a
+/// permanent one.
+///
+/// `cooldown_ms` is the delay between `deactivate` and `withdraw_bond`. It exists so an agent
+/// cannot misbehave and instantly pull its stake out of reach — the bond has to still be there
+/// when the misbehaviour is noticed, or it is not collateral, it is a deposit.
+fn registry_deploy(env: &HostEnv, min_bond_cspr: u64, cooldown_hours: u64) {
+    let caller = env.caller();
+    let balance = env.balance_of(&caller);
+    println!("HUNCH_BALANCE start {balance}");
+
+    // Same up-front rule as every other install: the node holds the FULL limit at acceptance.
+    let required = U512::from(MARKET_GAS);
+    if balance < required {
+        println!("HUNCH_ABORT low-balance have={balance} need={required}");
+        eprintln!(
+            "registry-deploy needs {required} motes up front ({MARKET_GAS} install limit); the \
+             deployer holds {balance}. Top up at https://testnet.cspr.live/tools/faucet."
+        );
+        std::process::exit(1);
+    }
+
+    let min_bond = U512::from(min_bond_cspr) * U512::from(1_000_000_000u64);
+    let cooldown_ms = cooldown_hours * 3_600_000;
+    println!("HUNCH_STEP deploy-agent-registry bond={min_bond} cooldown_ms={cooldown_ms}");
+    env.set_gas(MARKET_GAS);
+    let registry = AgentRegistry::deploy(
+        env,
+        AgentRegistryInitArgs {
+            treasury: caller,
+            min_bond,
+            cooldown_ms,
+        },
+    );
+    println!(
+        "HUNCH_AGENT_REGISTRY package={}",
+        registry.address().to_formatted_string()
+    );
+    println!(
+        "HUNCH_NOTE wire it with NEXT_PUBLIC_<NETWORK>_AGENT_REGISTRY={}",
+        registry.address().to_formatted_string()
+    );
+    println!("HUNCH_BALANCE end {}", env.balance_of(&caller));
+}
+
+/// Free read of the registry's policy, and of one agent's standing when an address is given.
+fn registry_info(env: &HostEnv, account: Option<&str>) {
+    let addr = std::env::var("HUNCH_AGENT_REGISTRY")
+        .expect("set HUNCH_AGENT_REGISTRY to the deployed AgentRegistry package hash");
+    let registry = AgentRegistry::load(env, Address::from_str(&addr).expect("bad HUNCH_AGENT_REGISTRY"));
+    println!("HUNCH_REGISTRY min_bond={}", registry.min_bond());
+    println!("HUNCH_REGISTRY cooldown_ms={}", registry.cooldown_ms());
+    println!("HUNCH_REGISTRY agent_count={}", registry.agent_count());
+    if let Some(account) = account {
+        let who = Address::from_str(account).expect("bad account address");
+        println!("HUNCH_REGISTRY registered={}", registry.is_registered(who));
+        println!("HUNCH_REGISTRY active={}", registry.is_active(who));
+        println!("HUNCH_REGISTRY bond={}", registry.bond_of(who));
     }
 }
 

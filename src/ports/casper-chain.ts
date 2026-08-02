@@ -176,6 +176,23 @@ export interface CasperChainPort {
    */
   buildCreateMarketTransaction?(input: PrepareCreateMarketInput): Promise<UnsignedTransaction>;
   /**
+   * Build an UNSIGNED `AgentRegistry::register` carrying the bond, for the agent's own wallet
+   * (S33/W2) — the public join path for a third-party Casper agent.
+   *
+   * Unsigned by necessity, not convenience: the contract bonds `env().caller()`, so a registration
+   * this server signed would enrol the OPERATOR under the agent's name. The resulting entry would
+   * name a key the agent does not hold, which is worse than no registry at all — it would look
+   * like accountable identity while being the opposite.
+   *
+   * Optional: the mock adapter has no chain to register on and the route answers 501.
+   */
+  buildAgentRegistrationTransaction?(input: {
+    name: string;
+    metadataUri: string;
+    bondMotes: string;
+    agentPublicKeyHex: string;
+  }): Promise<UnsignedTransaction>;
+  /**
    * Wait for a transaction submitted by SOMEONE ELSE (a visitor's wallet) to execute. Same
    * confirmation semantics as `placeBet`: a revert is a failure, not a bet.
    */

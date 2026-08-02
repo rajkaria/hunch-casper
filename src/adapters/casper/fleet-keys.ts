@@ -43,6 +43,38 @@ export const FLEET_KDF_LABEL = "hunch-fleet-v1";
  */
 export const OPERATOR_AGENT_ID = "operator";
 
+/**
+ * The prefix that marks a bettor as a fleet agent with its own derived Casper key (S30/W1).
+ *
+ * Only `agent:<name>` ids route to a per-agent signer. A bare public key hex is a human in
+ * operator custody, and a `demo-…`/opaque id is not an identity this deployment holds a key for;
+ * both keep the operator signer. The allowlist direction matters: deriving a key for any unknown
+ * string would sign from an unfunded purse and revert, and worse, would let an external caller
+ * name someone else's purse as its bettor.
+ *
+ * It lives HERE rather than in the chain adapter because the composition root has to answer
+ * "can this deployment sign for that agent?" synchronously, without loading `casper-js-sdk`.
+ */
+const FLEET_BETTOR_PREFIX = "agent:";
+
+/** True when `bettor` names a fleet agent (`agent:<name>`), whatever the deployment can sign. */
+export function isFleetBettor(bettor: string): boolean {
+  return bettor.trim().toLowerCase().startsWith(FLEET_BETTOR_PREFIX);
+}
+
+/**
+ * Can this deployment sign as `bettor` itself? Pure, synchronous, and free of the chain SDK, so
+ * the lazily-loaded real adapter and the composition root can both answer it the same way.
+ */
+export function canSignAsAgent(
+  bettor: string,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (!bettor || !isFleetBettor(bettor)) return false;
+  const key = agentSecretKey(bettor.trim(), env);
+  return Boolean(key && key.trim().length > 0);
+}
+
 export class FleetKeyError extends Error {
   constructor(message: string) {
     super(message);

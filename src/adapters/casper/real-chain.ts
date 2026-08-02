@@ -72,18 +72,20 @@ import {
   NATIVE_TRANSFER_MINIMUM_MOTES,
 } from "@/config/network";
 import { FIELD_MARKET_SLUGS } from "@/core/buildathon-field";
-import { agentSecretKey } from "./fleet-keys";
+import { agentSecretKey, isFleetBettor } from "./fleet-keys";
 import { TRANSFER_PAYMENT_MOTES } from "./real-wallet";
 import {
   buildBetPlan,
   buildCommitBundlePlan,
   buildCommitRecipePlan,
   buildCreateMarketPlan,
+  buildRegisterAgentPlan,
   buildResolvePlan,
   resolveMarketTarget,
   type CasperCallArg,
   type CasperCallPlan,
   type MarketCallTarget,
+  type RegisterAgentInput,
 } from "./deploy-plan";
 import {
   awaitExecution,
@@ -128,6 +130,8 @@ export interface RealChainOptions {
   vaultV2PackageHash?: string;
   /** The `FieldMarket` **package** hash — the only valid target for a `FIELD_MARKET_SLUGS` slug. */
   fieldMarketPackageHash?: string;
+  /** The `AgentRegistry` **package** hash — bonded agent identity (S33/W2). */
+  agentRegistryPackageHash?: string;
   /** Filesystem path to Odra's `proxy_caller_with_return.wasm` (required for payable bets). */
   proxyWasmPath: string;
   /**
@@ -156,21 +160,7 @@ export interface RealChainOptions {
   submitImpl?: (tx: Transaction) => Promise<string>;
 }
 
-/**
- * The prefix that marks a bettor as a fleet agent with its own derived Casper key.
- *
- * Only `agent:<name>` ids route to a per-agent signer. A bare public key hex is a human in
- * operator custody, and a `demo-…`/opaque id is not an identity this deployment holds a key for;
- * both keep the operator signer. The allowlist direction matters: deriving a key for any unknown
- * string would sign from an unfunded purse and revert, and worse, would let an external caller
- * name someone else's purse as its bettor.
- */
-const FLEET_BETTOR_PREFIX = "agent:";
-
-/** True when `bettor` names a fleet agent (`agent:<name>`), whatever the deployment can sign. */
-export function isFleetBettor(bettor: string): boolean {
-  return bettor.trim().toLowerCase().startsWith(FLEET_BETTOR_PREFIX);
-}
+export { isFleetBettor };
 
 /** The proxy wasm shipped in-repo (exact Odra 2.8.2 build, from the odra-casper crate). */
 const BUNDLED_PROXY_WASM = "src/adapters/casper/resources/proxy_caller_with_return.wasm";
@@ -610,6 +600,34 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
       return {
         transactionJson: JSON.stringify(tx.toJSON()),
         // Final before the signature — what the creation ticket binds and the receipt shows.
+        transactionHash: tx.hash.toHex(),
+        gasMotes: plan.gasMotes,
+      };
+    },
+
+    /**
+     * Build an UNSIGNED `AgentRegistry::register` for the agent's own wallet (S33/W2).
+     *
+     * Unsigned is the only correct shape. The contract bonds `env().caller()`, so an
+     * operator-submitted registration would put the operator's key in the registry under someone
+     * else's name — an "identity" nobody controls and nothing can slash. The agent signs, the
+     * agent's purse posts the bond, and the agent's key is what the registry records.
+     */
+    async buildAgentRegistrationTransaction(
+      input: RegisterAgentInput & { agentPublicKeyHex: string },
+    ): Promise<UnsignedTransaction> {
+      if (!opts.agentRegistryPackageHash) {
+        throw new CasperConfigError(
+          "agent registration needs the AgentRegistry — set NEXT_PUBLIC_*_AGENT_REGISTRY " +
+            "(deploy it with `cargo run --bin contracts_catalogue -- registry-deploy`)",
+        );
+      }
+      const plan = buildRegisterAgentPlan(input, {
+        registryContract: opts.agentRegistryPackageHash,
+      });
+      const tx = buildPayable(plan, PublicKey.fromHex(input.agentPublicKeyHex.trim()));
+      return {
+        transactionJson: JSON.stringify(tx.toJSON()),
         transactionHash: tx.hash.toHex(),
         gasMotes: plan.gasMotes,
       };

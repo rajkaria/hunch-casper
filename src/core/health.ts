@@ -52,6 +52,7 @@ export interface HealthInputs {
     vaultV2?: string;
     /** `NEXT_PUBLIC_*_FIELD_MARKET` — the only legal target for a wide-field slug. */
     fieldMarket?: string;
+    agentRegistry?: string;
   };
   /**
    * How many catalogue markets are wide fields (the 177-finalist buildathon market is one). They
@@ -249,6 +250,23 @@ function contractChecks(i: HealthInputs): HealthCheck[] {
           ),
     );
   }
+  // Bonded agent identity. A `warn` rather than a `fail`: the economy runs perfectly well without
+  // it, but the claim that any Casper agent can join has nothing behind it until it is wired, and
+  // an operator reading a green board should not have to infer that from an absent check.
+  out.push(
+    i.contracts.agentRegistry
+      ? check(
+          "contracts.agentRegistry",
+          "ok",
+          "AgentRegistry wired — third-party agents can bond an on-chain identity and be slashed",
+        )
+      : check(
+          "contracts.agentRegistry",
+          "warn",
+          "AgentRegistry not wired — /api/agents/register answers 501 and an 'agent' is only a string in a request body; " +
+            "deploy with `cargo run --bin contracts_catalogue -- registry-deploy` and set NEXT_PUBLIC_<NETWORK>_AGENT_REGISTRY",
+        ),
+  );
   return out;
 }
 

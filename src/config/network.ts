@@ -32,6 +32,15 @@ export interface ContractAddresses {
    * vault's `MAX_OUTCOMES`, so falling back would submit a stake at a market that cannot exist.
    */
   fieldMarket?: string;
+  /**
+   * AgentRegistry — bonded, on-chain identity for agents (S33/W2).
+   *
+   * Absent, "any Casper agent can join" is an HTTP claim with nothing behind it: an agent is a
+   * string in a request body. Present, an agent stakes a bond its own key controls, appears in a
+   * registry anyone can read from the chain, and can be slashed — which is what makes a track
+   * record worth anything to a third party.
+   */
+  agentRegistry?: string;
 }
 
 export interface NetworkConfig {
@@ -117,6 +126,7 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
       vault: envAddr("NEXT_PUBLIC_TESTNET_VAULT"),
       vaultV2: envAddr("NEXT_PUBLIC_TESTNET_VAULT_V2"),
       fieldMarket: envAddr("NEXT_PUBLIC_TESTNET_FIELD_MARKET"),
+      agentRegistry: envAddr("NEXT_PUBLIC_TESTNET_AGENT_REGISTRY"),
     },
     marketAddresses: parseMarketAddresses(process.env.NEXT_PUBLIC_TESTNET_MARKET_ADDRS),
     guardrails: { maxBetCspr: null, showUnauditedBanner: false },
@@ -134,6 +144,7 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
       vault: envAddr("NEXT_PUBLIC_MAINNET_VAULT"),
       vaultV2: envAddr("NEXT_PUBLIC_MAINNET_VAULT_V2"),
       fieldMarket: envAddr("NEXT_PUBLIC_MAINNET_FIELD_MARKET"),
+      agentRegistry: envAddr("NEXT_PUBLIC_MAINNET_AGENT_REGISTRY"),
     },
     marketAddresses: parseMarketAddresses(process.env.NEXT_PUBLIC_MAINNET_MARKET_ADDRS),
     // The static unaudited ceiling; the *effective* cap is the audit-gated ramp in `caps.ts`, which

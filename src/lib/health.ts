@@ -271,6 +271,7 @@ export async function gatherHealth(
       vault: cfg.contracts.vault,
       vaultV2: cfg.contracts.vaultV2,
       fieldMarket: cfg.contracts.fieldMarket,
+      agentRegistry: cfg.contracts.agentRegistry,
     },
     marketAddressCount: Object.keys(cfg.marketAddresses).length,
     // Counted off the catalogue, not the env: the question is whether anything on THIS board needs

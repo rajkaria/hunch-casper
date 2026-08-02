@@ -1,4 +1,7 @@
 [[contracts]]
+fqn = "agent_registry::AgentRegistry"
+
+[[contracts]]
 fqn = "field_market::FieldMarket"
 
 [[contracts]]
