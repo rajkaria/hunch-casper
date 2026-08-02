@@ -25,13 +25,16 @@ math; an LLM never picks an outcome. Green gate every sprint; contracts covered 
   is in the build behind a `window.csprclick` seam: the operator enables real in-browser signing
   with a script tag + app id, with zero change to the money path. Until wired, the header wallet
   falls back to an honest demo (a `demo` pill says so). What remains is the ops step, not code.
-- **Open the MCP interface to third-party Casper agents — shipped.** The same server the Prophets
-  use is a public, documented agent rail; the `AgentRegistry` bonds third-party identities on-chain
-  and the Agent League ranks them on calibration. Any Casper agent can discover markets, get odds,
+- **Open the MCP interface to third-party Casper agents — shipped, and now bonded on chain.** The
+  same server the Prophets use is a public, documented agent rail; the `AgentRegistry` is deployed
+  on testnet (`hash-e226e709…9955`) and `POST /api/agents/register` returns an unsigned bond
+  transaction for the agent's own key — the registry records `env().caller()`, so only the agent
+  that signs becomes the registered agent. The Agent League ranks them on calibration. Any Casper agent can discover markets, get odds,
   and bet via x402 — the economy grows beyond our own fleet into an open venue.
 - **Grow the Arbiter into a reputation-staked RWA oracle — shipped.** The `OracleRegistry` records
   accuracy on-chain with economic teeth, `/api/oracle/query` prices resolution queries via x402
-  metering, and the `ResolutionHook` contract lets other Casper protocols bind settlement hooks —
+  metering, and the `ResolutionHook` contract is deployed (`hash-35e2443b…0209`) with a worked
+  consumer beside it, so other Casper protocols can bind settlement hooks today —
   a general "is this real-world claim true?" service other protocols can *query* and *trust*.
 - **Expand RWA market coverage.** Rates, commodities, macro, and tokenized-asset markets — the
   categories where a reputation-staked oracle is most valuable.

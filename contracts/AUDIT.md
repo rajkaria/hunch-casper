@@ -22,10 +22,39 @@ an operator action (only-stop list) and is not performed by the build automation
 | `ParimutuelMarket` (v1) | `src/parimutuel_market.rs` | Single-market escrow + settlement (the pre-v2 model; still deployed for legacy markets). | **Yes** |
 | `MarketFactory` | `src/market_factory.rs` | On-chain registry (id → question/category/address/deadline/resolved). No escrow. | No |
 | `OracleRegistry` | `src/oracle_registry.rs` | Oracle identity + staked reputation (accuracy in bps). | No |
-| `AgentRegistry` | `src/agent_registry.rs` | Bonded agent identity; bond held at risk, admin-gated slashing with reason codes. | **Yes** — holds bonds |
+| `AgentRegistry` | `src/agent_registry.rs` | Bonded agent identity; bond held at risk, admin-gated slashing with reason codes. **Deployed** on testnet 2026-08-02 (`hash-e226e709…9955`), 100 CSPR minimum bond, 48h withdrawal cooldown. | **Yes** — holds bonds |
+| `ResolutionHook` | `src/resolution_hook.rs` | Oracle-as-a-service: resolver-only `dispatch` stores the decided outcome and emits one event per registered consumer. **Deployed** 2026-08-02 (`hash-35e2443b…0209`). | No |
+| `EscrowConsumer` | `src/hook_consumer.rs` | Worked example of consuming a resolution: holds CSPR and releases it by the outcome READ from the hook. **Deployed** 2026-08-02 (`hash-eda04741…0dac`). Not part of the Hunch money path — it is reference material a third party may copy. | **Yes** — holds its own escrows |
 
 The money-path contracts are `HunchVault`, `ParimutuelMarket`, and `AgentRegistry` (bond custody).
-`MarketFactory` and `OracleRegistry` are index/identity only.
+`MarketFactory`, `OracleRegistry` and `ResolutionHook` are index/identity/notification only.
+`EscrowConsumer` holds funds but is not part of Hunch's money path.
+
+**Not deployed, and out of scope for a deployment audit:** `DisputePanel`, `LmsrMarket` and
+`CopyBetting`. They compile and are tested, and the shipped implementations of that behaviour are
+off-chain (`src/core/lmsr.ts`, `src/agent/dispute-flow.ts`, `src/core/copy-betting.ts`). They are
+published as reference patterns; auditing them would price work that secures nothing.
+
+## 1a. Custody model — changed 2026-08-02, read this before the rest
+
+Until S30 every agent bet was signed by ONE operator key: the vault correctly recorded
+`env().caller()`, and that caller was the operator for all four Prophets and for every human in
+operator custody. Since S30, a bettor named `agent:<name>` signs with its own derived key and funds
+its own escrow from its own purse.
+
+What that changes for a reviewer:
+
+- **The blast radius of `CASPER_BETTOR_KEY` is smaller.** It no longer funds agent escrows; it
+  funds market creation, house seeding and resolution.
+- **`CASPER_FLEET_SEED` is now money-path material.** It derives four funded signing identities via
+  `HMAC-SHA256(seed, "hunch-fleet-v1:<agent>")`. Compromise of the seed is compromise of every
+  agent purse. It was previously used only for x402 transfers.
+- **The x402 reimbursement leg is gone for self-custodial agents** (`fleetBet` in
+  `src/lib/agent-bet.ts`). Charging it after the agent escrows its own stake would take the stake
+  twice. The public x402 rail for third-party agents is unchanged and still requires a verified
+  on-chain payment.
+- **Agent-signed bets must be claimed by the agent key**, since `claim()` pays the caller. No
+  server-side claim path exists today; this is recorded as an accepted gap, not an implemented flow.
 
 ---
 

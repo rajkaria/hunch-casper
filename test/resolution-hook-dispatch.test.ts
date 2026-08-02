@@ -54,14 +54,14 @@ describe("the Arbiter dispatches resolution hooks", () => {
   it("does not dispatch in mock mode — there is no chain to notify", async () => {
     const calls: DispatchCall[] = [];
     const container = withDispatch(calls);
-    await resolveMarket(container, await openSlug(container), 0);
+    await resolveMarket(container, await openSlug(container));
     // chainMode() is mock in tests, and dispatch is real-mode only.
     expect(calls).toHaveLength(0);
   });
 
   it("records the resolution regardless of whether hooks are wired", async () => {
     const container = withDispatch([]);
-    const action = await resolveMarket(container, await openSlug(container), 0);
+    const action = await resolveMarket(container, await openSlug(container));
     expect(action?.kind).toBe("market_resolved");
   });
 });
@@ -80,7 +80,7 @@ describe("a broken consumer integration can never withhold a settled payout", ()
     const calls: DispatchCall[] = [];
     const container = withDispatch(calls, impl as () => Promise<{ deployHash?: string }>);
 
-    const action = await resolveMarket(container, await openSlug(container), 0);
+    const action = await resolveMarket(container, await openSlug(container));
 
     expect(action).not.toBeNull();
     expect(action?.kind).toBe("market_resolved");
@@ -98,7 +98,7 @@ describe("a broken consumer integration can never withhold a settled payout", ()
       const saved = process.env.CASPER_CHAIN_MODE;
       process.env.CASPER_CHAIN_MODE = "real";
       try {
-        await resolveMarket(container, await openSlug(container), 0);
+        await resolveMarket(container, await openSlug(container));
       } finally {
         if (saved === undefined) delete process.env.CASPER_CHAIN_MODE;
         else process.env.CASPER_CHAIN_MODE = saved;

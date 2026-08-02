@@ -97,7 +97,7 @@ settle against the economy's own leaderboards — a recursive economy that never
 | x402 Micropayments | Settlement rail for every third-party agent bet, and published standalone as [`x402-casper`](./packages/x402-casper) so any Casper project can charge for an HTTP endpoint. Settlement rail for every agent bet — a real HTTP-402 handshake with payer-bound, single-use proofs. In real mode (`CASPER_X402_PAYTO`) each proof is verified against an actual on-chain CSPR transfer: payer, target, amount, success. |
 | MCP Server | A live JSON-RPC MCP server (`POST /api/mcp`, 8 tools) — the same public surface the Prophet fleet uses. Any agent joins in one command (below). |
 | CSPR.cloud APIs | The live chain signal Genesis opens markets from — active-validator count with `CSPR_CLOUD_API_KEY`, keyless node-RPC block height as fallback. Market subtitles carry the true source label. |
-| Odra Framework | Ten Rust contracts — `MarketFactory`, `ParimutuelMarket`, `FieldMarket` (a parimutuel market over a 177-candidate field, membership in a dictionary so the bet path never scans a list), `OracleRegistry`, the S16 singleton `HunchVault` (markets as state entries — a measured 3.74 CSPR `create_market` call instead of a measured 324 CSPR per-market install), `AgentRegistry` (bonded identity), `DisputePanel` (optimistic resolution), `ResolutionHook` (oracle-as-a-service), `LmsrMarket` (continuous liquidity), and `CopyBetting` (mirrored-fee split) — with 116 OdraVM tests in CI. |
+| Odra Framework | Eleven Rust contracts, 125 OdraVM tests in CI. **Deployed and load-bearing:** the S16 singleton `HunchVault` (markets as state entries — a measured 3.74 CSPR `create_market` call instead of a measured 324 CSPR per-market install), `ParimutuelMarket`, `FieldMarket` (a parimutuel market over a 177-candidate field, membership in a dictionary so the bet path never scans a list), `MarketFactory`, `OracleRegistry`, `AgentRegistry` (bonded identity), `ResolutionHook` (oracle-as-a-service) and `EscrowConsumer` (a worked example of consuming it). **Reference contracts, not deployed:** `DisputePanel`, `LmsrMarket` and `CopyBetting` — the shipped implementations of those three are off-chain (`core/lmsr.ts`, `agent/dispute-flow.ts`, `core/copy-betting.ts`), and the contracts are published as patterns rather than presented as live. Costs for every deployed contract: [`docs/GAS.md`](./docs/GAS.md). |
 | Wallet UX (CSPR.click connector shipped) | The CSPR.click connector is in the build behind a `window.csprclick` seam — the operator enables real signing with a script tag + app id. Absent, the app falls back to a demo wallet with an honest `demo` pill in the header. |
 | drand Beacon | The public randomness The Flip's resolver binds to — provably fair by construction, no house edge. |
 
@@ -108,7 +108,10 @@ and every real claim is verifiable in one click.
 
 | Real | Verify it |
 |---|---|
-| Ten Odra contracts, original Rust | 116 OdraVM tests (`cargo odra test`) run in CI |
+| Eleven Odra contracts, original Rust | 125 OdraVM tests (`cargo odra test`) run in CI |
+| Per-agent on-chain identity | Each Prophet signs its own escrow from its own derived key — four distinct `BetPlaced.bettor` values on chain, so the boards are recomputable by anyone from chain events alone |
+| Bonded agent registry | `hash-e226e709…9955` on testnet — bond, appear in the registry, be slashable |
+| Settlement hooks other protocols can bind to | `hash-35e2443b…0209`, with a deployed consumer at `hash-eda04741…0dac` and a reference keeper in [`examples/hook-keeper`](./examples/hook-keeper) |
 | Testnet deployment + tx receipts | The **Live on Casper** section (landing + `/docs#onchain`) links contract package hashes and real transactions to cspr.live |
 | x402 handshake | `curl` the rail — a genuine HTTP 402 challenge; real mode verifies the on-chain transfer |
 | Live chain signals | Genesis market subtitles name their source (CSPR.cloud validators / node-RPC height) |
@@ -120,6 +123,7 @@ and every real claim is verifiable in one click.
 | Mock-mode transaction hashes | A `simulated` chip in the activity feed — only real transactions get an `on-chain` chip + explorer link |
 | Demo seed history | A deterministic cold-start seed, settled through the real payout engine, so boards aren't empty on a fresh instance |
 | LLM narrations | Advisory flavor only — an LLM never picks an outcome or touches the money path |
+| `DisputePanel`, `LmsrMarket`, `CopyBetting` | Listed as **reference contracts, not deployed** in the Odra row above; the shipped behaviour is the off-chain implementation |
 | Wallet | Demo by default, with a `demo` pill — the shipped CSPR.click connector activates when the operator wires the script tag + app id |
 
 ## Connect your agent in 60 seconds
@@ -240,7 +244,7 @@ distribution (chat bots, embeds, narrated alerts); human NL market creation with
 recipes; **verifiable resolution** (recipe + evidence hashes, replay harness); **optimistic
 resolution** with staked disputes; **oracle-as-a-service** (metered query API + settlement hooks);
 **probability feeds** with calibration exports; **LMSR** continuous liquidity + LP vaults;
-**copy-betting**; and the **Testnet ⇄ Mainnet** toggle end-to-end. 1888 TS tests + 116 OdraVM
+**copy-betting**; and the **Testnet ⇄ Mainnet** toggle end-to-end. 1974 TS tests + 125 OdraVM
 contract tests, green gate each sprint (`typecheck / lint / test / build`), GitHub CI green, and
 `pnpm audit` clean.
 
