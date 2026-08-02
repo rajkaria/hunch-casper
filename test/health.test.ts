@@ -14,7 +14,11 @@ import { probePersistence, __resetPersistenceForTests } from "@/adapters/persist
 import { appendAction, __resetActivity } from "@/adapters/mock/activity-log";
 import { __resetDemoSeed } from "@/adapters/mock/demo-seed";
 import { fleetTurnFloorMotes } from "@/lib/health";
-import { prophetTurnCostMotes, PROPHET_GAS_FLOOR_MOTES } from "@/agent/prophet";
+import {
+  prophetTurnCostMotes,
+  PROPHET_GAS_FLOOR_MOTES,
+  PROPHET_ESCROW_GAS_FLOOR_MOTES,
+} from "@/agent/prophet";
 import { PROPHETS, MAX_CONVICTION_MULTIPLIER } from "@/core/prophet-strategies";
 import { csprToMotes } from "@/core/types";
 import { NATIVE_TRANSFER_MINIMUM_MOTES } from "@/config/network";
@@ -481,9 +485,18 @@ describe("GET /api/health", () => {
 describe("the fleet turn floor is the cadence planner's number", () => {
   it("covers the worst turn any Prophet can take: largest stake at full conviction, plus its gas", () => {
     const largest = PROPHETS.reduce((max, p) => Math.max(max, p.stakeCspr), 0);
-    const worstCase = BigInt(csprToMotes(largest)) * BigInt(MAX_CONVICTION_MULTIPLIER) + PROPHET_GAS_FLOOR_MOTES;
+    // The ESCROW gas, not the transfer gas. Since S30 a self-custodial agent signs the payable
+    // `bet` session itself, which is the expensive half of its turn — an order of magnitude above
+    // the native transfer it replaced. Billing a turn at the old floor would call a purse funded
+    // that cannot actually pay for the escrow it is about to submit.
+    const worstCase =
+      BigInt(csprToMotes(largest)) * BigInt(MAX_CONVICTION_MULTIPLIER) + PROPHET_ESCROW_GAS_FLOOR_MOTES;
     expect(fleetTurnFloorMotes()).toBe(worstCase.toString());
     expect(fleetTurnFloorMotes()).toBe(prophetTurnCostMotes());
+  });
+
+  it("bills the escrow gas, which is strictly more than the transfer gas it replaced", () => {
+    expect(PROPHET_ESCROW_GAS_FLOOR_MOTES).toBeGreaterThan(PROPHET_GAS_FLOOR_MOTES);
   });
 
   it("stays above the chain's own transfer floor — a turn that cannot transfer is not a turn", () => {

@@ -12,7 +12,8 @@ import type { Prophet } from "@/core/prophet-strategies";
 import { PROPHETS, decide, MAX_CONVICTION_MULTIPLIER } from "@/core/prophet-strategies";
 import type { Market } from "@/core/types";
 import { csprToMotes } from "@/core/types";
-import { agentBet } from "@/lib/agent-bet";
+import { agentBet, fleetBet } from "@/lib/agent-bet";
+import { DEFAULT_BET_GAS_MOTES } from "@/adapters/casper/deploy-plan";
 import { computeOdds } from "@/core/parimutuel-odds";
 import { appendAction } from "@/adapters/mock/activity-log";
 import type { AgentAction } from "@/adapters/mock/activity-log";
@@ -31,6 +32,17 @@ import { isQuarantined, permanentMarketFault, quarantineMarket } from "@/agent/m
 export const PROPHET_GAS_FLOOR_MOTES = 200_000_000n;
 
 /**
+ * Motes a SELF-CUSTODIAL Prophet must hold above its stake: the gas on the payable `bet` session
+ * it now signs itself (S30/W1), which is an order of magnitude more than the native transfer it
+ * replaces — a proxy-caller session doing a contract call, not a bare transfer.
+ *
+ * The fleet floor below uses this larger number unconditionally rather than branching on custody.
+ * Being 5 CSPR conservative on a 100+ CSPR purse costs nothing; being 5 CSPR optimistic means an
+ * agent submits an escrow it cannot pay for, which burns gas to produce nothing.
+ */
+export const PROPHET_ESCROW_GAS_FLOOR_MOTES = BigInt(DEFAULT_BET_GAS_MOTES);
+
+/**
  * What one turn can cost the richest-betting agent: the largest stake in the fleet, at Momentum's
  * doubled conviction, plus the gas on its own x402 transfer.
  *
@@ -44,7 +56,37 @@ export const PROPHET_GAS_FLOOR_MOTES = 200_000_000n;
 export function prophetTurnCostMotes(): string {
   const largestStake = PROPHETS.reduce((max, p) => Math.max(max, p.stakeCspr), 0);
   const worstCase = BigInt(csprToMotes(largestStake)) * BigInt(MAX_CONVICTION_MULTIPLIER);
-  return (worstCase + PROPHET_GAS_FLOOR_MOTES).toString();
+  // The escrow gas, not the transfer gas: since S30 a self-custodial agent signs the payable
+  // `bet` itself, and that is the expensive half of its turn. See PROPHET_ESCROW_GAS_FLOOR_MOTES.
+  return (worstCase + PROPHET_ESCROW_GAS_FLOOR_MOTES).toString();
+}
+
+/**
+ * Can this agent afford to escrow its own bet — stake plus the gas on the payable session?
+ *
+ * The self-custodial mirror of the balance check inside `settleFromAgentPurse`. Sitting a round
+ * out costs nothing; submitting an escrow the purse cannot cover burns gas and places no bet.
+ */
+async function canAffordOwnEscrow(
+  container: Container,
+  agentId: string,
+  amountMotes: string,
+): Promise<boolean> {
+  const needed = BigInt(amountMotes) + PROPHET_ESCROW_GAS_FLOOR_MOTES;
+  let balance: bigint;
+  try {
+    balance = BigInt(await container.wallet.balanceOf(agentId));
+  } catch {
+    return false;
+  }
+  if (balance < needed) {
+    console.warn(
+      `[prophet] ${agentId} sits out: balance ${balance} motes is below the ${needed} needed ` +
+        `(stake ${amountMotes} + escrow gas ${PROPHET_ESCROW_GAS_FLOOR_MOTES}) — refill the fleet wallet`,
+    );
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -119,54 +161,95 @@ export async function runProphet(
   // derived Casper key. Both travel with the bet — see `AgentBetInput.payerAccount`.
   const account = await container.wallet.accountFor(prophet.id);
 
-  // x402 two-step: quote (get the account-bound requirement) → pay from the agent's purse → place.
-  const quote = await agentBet(container, {
-    marketId: market.id,
-    outcomeKey: decision.outcomeKey,
-    amountMotes: decision.amountMotes,
-    bettor: prophet.id,
-    payerAccount: account.publicKeyHex,
-  });
-  if (quote.status !== "payment_required") {
-    // A quote that is not a 402 challenge means the rail itself is closed (misconfigured real-mode
-    // x402, a market that just closed, a cap). Silence here read as "the fleet is quiet" for a
-    // whole deployment; say why.
-    console.warn(
-      "[prophet] %s could not get a payment quote (status %s): %s",
-      prophet.id,
-      quote.status,
-      quote.status === "error" ? quote.error : "unexpected quote status",
-    );
-    return null;
+  /**
+   * Two custody models, and the difference is whether the operator fronted the stake (S30/W1).
+   *
+   * SELF-CUSTODIAL — this deployment holds the agent's key, so the agent signs the escrow itself.
+   * There is no x402 leg, and that is not a feature removal: the x402 transfer only ever
+   * *reimbursed* the operator for an escrow it had fronted. Charging it now would take the stake
+   * twice for one bet — once into the vault, once into the treasury.
+   *
+   * OPERATOR-CUSTODIAL — no fleet key configured, so the operator still escrows on the agent's
+   * behalf and the agent still owes it the reimbursement. Byte-identical to the pre-S30 path.
+   */
+  const selfCustodial = container.chain.canSelfSign?.(prophet.id) === true;
+  let placed;
+  let settlement = "";
+
+  if (selfCustodial) {
+    if (!(await canAffordOwnEscrow(container, prophet.id, decision.amountMotes))) return null;
+    placed = await fleetBet(container, {
+      marketId: market.id,
+      outcomeKey: decision.outcomeKey,
+      amountMotes: decision.amountMotes,
+      bettor: prophet.id,
+      payerAccount: account.publicKeyHex,
+    });
+  } else {
+    // x402 two-step: quote (get the account-bound requirement) → pay from the agent's purse → place.
+    const quote = await agentBet(container, {
+      marketId: market.id,
+      outcomeKey: decision.outcomeKey,
+      amountMotes: decision.amountMotes,
+      bettor: prophet.id,
+      payerAccount: account.publicKeyHex,
+    });
+    if (quote.status !== "payment_required") {
+      // A quote that is not a 402 challenge means the rail itself is closed (misconfigured
+      // real-mode x402, a market that just closed, a cap). Silence here read as "the fleet is
+      // quiet" for a whole deployment; say why.
+      console.warn(
+        "[prophet] %s could not get a payment quote (status %s): %s",
+        prophet.id,
+        quote.status,
+        quote.status === "error" ? quote.error : "unexpected quote status",
+      );
+      return null;
+    }
+
+    const proof = await settleFromAgentPurse(container, prophet.id, quote.requirement);
+    if (!proof) return null; // unfunded or transfer failed — sit this round out
+    settlement = proof.deployHash;
+
+    placed = await agentBet(container, {
+      marketId: market.id,
+      outcomeKey: decision.outcomeKey,
+      amountMotes: decision.amountMotes,
+      bettor: prophet.id,
+      payerAccount: account.publicKeyHex,
+      paymentProof: proof,
+    });
   }
-
-  const proof = await settleFromAgentPurse(container, prophet.id, quote.requirement);
-  if (!proof) return null; // unfunded or transfer failed — sit this round out
-
-  const placed = await agentBet(container, {
-    marketId: market.id,
-    outcomeKey: decision.outcomeKey,
-    amountMotes: decision.amountMotes,
-    bettor: prophet.id,
-    payerAccount: account.publicKeyHex,
-    paymentProof: proof,
-  });
   if (placed.status !== "placed") {
-    // THE EXPENSIVE ONE. The agent has already paid: money left its purse and landed in the
-    // treasury. Dropping this silently is how a live deployment leaked a stake per round while
-    // recording no bets and looking merely idle. An operator must be able to see the paid-for-
-    // nothing case in the logs, with the settlement hash to reconcile against.
     const reason = placed.status === "error" ? placed.error : "unexpected placement status";
-    console.error(
-      "[prophet] %s PAID BUT DID NOT PLACE — settlement %s, status %s: %s",
-      prophet.id,
-      proof.deployHash,
-      placed.status,
-      reason,
-    );
+    if (selfCustodial) {
+      // Nothing is stranded: the escrow either executed or it did not, and no separate payment
+      // preceded it. The agent is out the gas on a reverted session, which is worth saying but is
+      // NOT the paid-for-nothing case the breaker exists to stop.
+      console.error(
+        "[prophet] %s self-custodial escrow did not place, status %s: %s",
+        prophet.id,
+        placed.status,
+        reason,
+      );
+    } else {
+      // THE EXPENSIVE ONE. The agent has already paid: money left its purse and landed in the
+      // treasury. Dropping this silently is how a live deployment leaked a stake per round while
+      // recording no bets and looking merely idle. An operator must be able to see the paid-for-
+      // nothing case in the logs, with the settlement hash to reconcile against.
+      console.error(
+        "[prophet] %s PAID BUT DID NOT PLACE — settlement %s, status %s: %s",
+        prophet.id,
+        settlement,
+        placed.status,
+        reason,
+      );
+      // Count it. Repeating this every tick is how a bounded per-bet loss becomes an unbounded one.
+      recordPaidNotPlaced({ agentId: prophet.id, deployHash: settlement, reason, ts: Date.now() });
+    }
     // A revert that names a permanent config fault (the contract has no such outcome / no such
-    // market) will repeat every time this slug comes around in the rotation. Quarantine the slug
-    // so the loss is one stake, not one stake per cycle forever.
+    // market) will repeat every time this slug comes around in the rotation, under either custody
+    // model. Quarantine the slug so the loss is one turn, not one turn per cycle forever.
     const fault = permanentMarketFault(reason);
     if (fault) {
       console.error(
@@ -174,15 +257,8 @@ export async function runProphet(
         slug,
         fault,
       );
-      quarantineMarket({ slug, reason: `${fault}: ${reason}`, deployHash: proof.deployHash ?? "", ts: Date.now() });
+      quarantineMarket({ slug, reason: `${fault}: ${reason}`, deployHash: settlement, ts: Date.now() });
     }
-    // Count it. Repeating this every tick is how a bounded per-bet loss becomes an unbounded one.
-    recordPaidNotPlaced({
-      agentId: prophet.id,
-      deployHash: proof.deployHash ?? "",
-      reason,
-      ts: Date.now(),
-    });
     return null;
   }
 

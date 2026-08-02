@@ -83,6 +83,68 @@ export interface AgentBetInput {
   paymentProof?: X402PaymentProof;
 }
 
+/** A validated bet request: the market it lands on, or the error the caller should return. */
+type BetTarget =
+  | { ok: true; market: Awaited<ReturnType<Container["store"]["get"]>> & object }
+  | { ok: false; error: string; code: number };
+
+/**
+ * Everything a bet must satisfy before any money moves — shared verbatim by the x402 rail
+ * (`agentBet`) and the self-custodial fleet path (`fleetBet`), because a bet that one would reject
+ * and the other would accept is a hole. Deliberately excludes the x402 real-mode gate, which is
+ * about who FUNDS the escrow and therefore does not apply when the bettor funds it themselves.
+ */
+async function resolveBetTarget(container: Container, input: AgentBetInput): Promise<BetTarget> {
+  const { marketId, outcomeKey, amountMotes, bettor } = input;
+
+  if (typeof marketId !== "string" || marketId.length === 0) {
+    return { ok: false, error: "marketId is required", code: 400 };
+  }
+  if (typeof outcomeKey !== "string" || outcomeKey.length === 0) {
+    return { ok: false, error: "outcomeKey is required", code: 400 };
+  }
+  if (typeof amountMotes !== "string" || !MOTES.test(amountMotes) || BigInt(amountMotes) <= 0n) {
+    return { ok: false, error: "amountMotes must be a positive integer motes string", code: 400 };
+  }
+  if (typeof bettor !== "string" || bettor.length === 0) {
+    return { ok: false, error: "bettor is required", code: 400 };
+  }
+
+  // Mainnet guardrail — the same real-money cap the human bet route enforces. Agents must not be
+  // able to route around it via the x402 rail, nor by self-signing.
+  if (exceedsBetCap(container.network, motesToCspr(amountMotes))) {
+    return {
+      ok: false,
+      error: `bet exceeds the ${container.network} cap of ${maxBetCspr(container.network)} CSPR`,
+      code: 400,
+    };
+  }
+
+  // A `network:slug` marketId must be on this container's network — reject a cross-network id
+  // rather than silently mis-resolving it (keeps REST + MCP identical).
+  const colon = marketId.indexOf(":");
+  if (colon > 0) {
+    const prefix = marketId.slice(0, colon);
+    if (isCasperNetwork(prefix) && prefix !== container.network) {
+      return { ok: false, error: `market ${marketId} is not on ${container.network}`, code: 400 };
+    }
+  }
+
+  // Validate against the read model (real market + outcome + still open).
+  const slug = marketId.startsWith(`${container.network}:`)
+    ? marketId.slice(container.network.length + 1)
+    : marketId;
+  const market = await container.store.get(slug, container.network);
+  if (!market) return { ok: false, error: `unknown market '${marketId}'`, code: 400 };
+  if (!market.outcomes.some((o) => o.key === outcomeKey)) {
+    return { ok: false, error: `'${outcomeKey}' is not an outcome of ${marketId}`, code: 400 };
+  }
+  if (market.status !== "open") {
+    return { ok: false, error: `market ${marketId} is ${market.status}`, code: 409 };
+  }
+  return { ok: true, market };
+}
+
 export type AgentBetResult =
   | { status: "payment_required"; requirement: X402PaymentRequirement; previewPayoutMotes: string }
   | {
@@ -100,7 +162,7 @@ const MOTES = /^\d+$/;
 
 /** Run the x402 bet exchange for an agent against a container's ports. */
 export async function agentBet(container: Container, input: AgentBetInput): Promise<AgentBetResult> {
-  const { marketId, outcomeKey, amountMotes, bettor, payerAccount, paymentProof } = input;
+  const { outcomeKey, amountMotes, bettor, payerAccount, paymentProof } = input;
 
   // Real-mode safety (see file header): a real, operator-funded on-chain bet is reachable via the
   // agent x402 rail only when payment verification is trustless (CASPER_X402_PAYTO wires the real
@@ -116,51 +178,9 @@ export async function agentBet(container: Container, input: AgentBetInput): Prom
     };
   }
 
-  if (typeof marketId !== "string" || marketId.length === 0) {
-    return { status: "error", error: "marketId is required", code: 400 };
-  }
-  if (typeof outcomeKey !== "string" || outcomeKey.length === 0) {
-    return { status: "error", error: "outcomeKey is required", code: 400 };
-  }
-  if (typeof amountMotes !== "string" || !MOTES.test(amountMotes) || BigInt(amountMotes) <= 0n) {
-    return { status: "error", error: "amountMotes must be a positive integer motes string", code: 400 };
-  }
-  if (typeof bettor !== "string" || bettor.length === 0) {
-    return { status: "error", error: "bettor is required", code: 400 };
-  }
-
-  // Mainnet guardrail — the same real-money cap the human bet route enforces. Agents must not be
-  // able to route around it via the x402 rail.
-  if (exceedsBetCap(container.network, motesToCspr(amountMotes))) {
-    return {
-      status: "error",
-      error: `bet exceeds the ${container.network} cap of ${maxBetCspr(container.network)} CSPR`,
-      code: 400,
-    };
-  }
-
-  // A `network:slug` marketId must be on this container's network — reject a cross-network id
-  // rather than silently mis-resolving it (keeps REST + MCP identical).
-  const colon = marketId.indexOf(":");
-  if (colon > 0) {
-    const prefix = marketId.slice(0, colon);
-    if (isCasperNetwork(prefix) && prefix !== container.network) {
-      return { status: "error", error: `market ${marketId} is not on ${container.network}`, code: 400 };
-    }
-  }
-
-  // Validate against the read model (real market + outcome + still open).
-  const slug = marketId.startsWith(`${container.network}:`)
-    ? marketId.slice(container.network.length + 1)
-    : marketId;
-  const market = await container.store.get(slug, container.network);
-  if (!market) return { status: "error", error: `unknown market '${marketId}'`, code: 400 };
-  if (!market.outcomes.some((o) => o.key === outcomeKey)) {
-    return { status: "error", error: `'${outcomeKey}' is not an outcome of ${marketId}`, code: 400 };
-  }
-  if (market.status !== "open") {
-    return { status: "error", error: `market ${marketId} is ${market.status}`, code: 409 };
-  }
+  const target = await resolveBetTarget(container, input);
+  if (!target.ok) return { status: "error", error: target.error, code: target.code };
+  const { market } = target;
 
   const requirement = await container.payment.quote({
     marketId: market.id,
@@ -217,5 +237,85 @@ export async function agentBet(container: Container, input: AgentBetInput): Prom
   } catch {
     // Chain accepted the escrow; indexing failed (e.g. concurrent resolve). Surface distinctly.
     return { status: "placed", deployHash: res.deployHash, explorerUrl: res.explorerUrl, proof: paymentProof, indexed: false };
+  }
+}
+
+/** The ledger dedupe key a self-custodial escrow burns — its own transaction, namespaced apart
+ * from x402 settlements so the two can never collide. */
+function escrowDedupeKey(deployHash: string): string {
+  return `escrow:${deployHash}`;
+}
+
+/**
+ * Place a bet for a fleet agent that signs its OWN escrow (S30/W1) — no x402 reimbursement leg.
+ *
+ * ## Why this is a separate function, and why it takes no payment proof
+ *
+ * The x402 leg was never a stake transfer; it was a **reimbursement**. The operator fronted the
+ * escrow out of its own purse, so the agent wired the same amount back to the treasury and the
+ * proof of that wire is what authorised the escrow. Once the agent signs the escrow itself, the
+ * money already left its purse into the vault — charging it a second, equal transfer to the
+ * treasury would take the stake twice for one bet.
+ *
+ * So the escrow IS the settlement here. It is strictly stronger evidence than the transfer it
+ * replaces: a `BetPlaced` event naming the agent as `caller`, for this market and this outcome,
+ * rather than a bare transfer that merely happened to precede a bet.
+ *
+ * ## Why an external caller can never reach it
+ *
+ * This function is reachable only from the internal fleet loop — no route imports it — and it
+ * additionally refuses any bettor `chain.canSelfSign` does not claim. That predicate answers from
+ * the deployment's own key material, so "I am `agent:momentum`" is not something an HTTP caller
+ * can assert its way into: the public rail (`agentBet`) still demands a paid, verified proof.
+ */
+export async function fleetBet(
+  container: Container,
+  input: Omit<AgentBetInput, "paymentProof">,
+): Promise<AgentBetResult> {
+  const { outcomeKey, amountMotes, bettor } = input;
+
+  // The capability gate. Not an assertion the caller makes — a fact about the keys this
+  // deployment holds. Anything else belongs on the x402 rail, where a payment is proof.
+  if (container.chain.canSelfSign?.(bettor) !== true) {
+    return {
+      status: "error",
+      error: `this deployment cannot sign as '${bettor}' — self-custodial placement is only for fleet agents whose key it holds`,
+      code: 403,
+    };
+  }
+
+  const target = await resolveBetTarget(container, input);
+  if (!target.ok) return { status: "error", error: target.error, code: target.code };
+  const { market } = target;
+
+  let res;
+  try {
+    res = await container.chain.placeBet({ marketId: market.id, outcomeKey, amountMotes, bettor });
+  } catch (err) {
+    return { status: "error", error: err instanceof Error ? err.message : "chain submission failed", code: 502 };
+  }
+
+  // The escrow's own hash is the settlement id: one transaction, one bet, and a replayed hash
+  // is caught by the same durable dedupe set that guards the x402 rail.
+  const proof: X402PaymentProof = { scheme: "casper-x402", deployHash: res.deployHash, nonce: res.deployHash };
+  try {
+    const updated = await container.store.recordBet({
+      marketId: market.id,
+      bettor,
+      outcomeKey,
+      amountMotes,
+      dedupeKey: escrowDedupeKey(res.deployHash),
+    });
+    return {
+      status: "placed",
+      deployHash: res.deployHash,
+      explorerUrl: res.explorerUrl,
+      proof,
+      indexed: true,
+      totalStakedMotes: updated.totalStakedMotes,
+      poolByOutcomeMotes: updated.poolByOutcomeMotes,
+    };
+  } catch {
+    return { status: "placed", deployHash: res.deployHash, explorerUrl: res.explorerUrl, proof, indexed: false };
   }
 }

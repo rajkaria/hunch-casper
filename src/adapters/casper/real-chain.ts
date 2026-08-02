@@ -15,17 +15,21 @@
  * which Odra 2.8.2 routes through its `proxy_caller_with_return.wasm` session (a direct call
  * would attach ZERO value). See `buildBetPlan`/`usesProxy`.
  *
- * CUSTODY — two paths, and the difference is who signs:
+ * CUSTODY — three paths, and the difference is who signs:
  *
- *  - `placeBet` is **single-custodian**: signed and funded by the one operator key
- *    (`CASPER_BETTOR_KEY`), so on chain the bettor is the operator and `input.bettor` is an
- *    off-chain label only. It is what agents and the demo wallet use. Do NOT expose this path to
- *    untrusted multi-user betting as-is.
- *  - `buildBetTransaction` + `confirmTransaction` are **self-custodial**: the same plan and the
- *    same proxy envelope, built with the visitor's public key as initiator and handed back
+ *  - `placeBet`/`submitBet` for a FLEET AGENT (`agent:<name>`) are **self-custodial**: the agent's
+ *    own derived key signs, its own purse funds the gas and the stake, and `self.env().caller()`
+ *    inside the vault is the agent. That is what makes a per-agent track record a fact on chain
+ *    rather than a number this server remembers — see `canSelfSign` and `fleet-keys.ts`.
+ *  - `placeBet` for ANY OTHER bettor is **single-custodian**: signed and funded by the one operator
+ *    key (`CASPER_BETTOR_KEY`), so on chain the bettor is the operator and `input.bettor` is an
+ *    off-chain label only. It is what the demo wallet uses, and what a fleet agent falls back to on
+ *    a deployment with no `CASPER_FLEET_SEED`. Do NOT expose this path to untrusted multi-user
+ *    betting as-is.
+ *  - `buildBetTransaction` + `confirmTransaction` are **self-custodial for humans**: the same plan
+ *    and the same proxy envelope, built with the visitor's public key as initiator and handed back
  *    unsigned. Their wallet signs, their account pays the gas and the stake, and
  *    `self.env().caller()` is genuinely them — which is what makes `claim` theirs to call.
- *    Per-agent keys (Prophets) are still pending; see the note in `lib/agent-bet.ts`.
  */
 
 import { readFileSync } from "node:fs";
@@ -68,6 +72,7 @@ import {
   NATIVE_TRANSFER_MINIMUM_MOTES,
 } from "@/config/network";
 import { FIELD_MARKET_SLUGS } from "@/core/buildathon-field";
+import { agentSecretKey } from "./fleet-keys";
 import { TRANSFER_PAYMENT_MOTES } from "./real-wallet";
 import {
   buildBetPlan,
@@ -132,6 +137,39 @@ export interface RealChainOptions {
   confirmImpl?: (hash: string) => Promise<ExecutionOutcome>;
   /** Tuning/injection for the default confirmation poll. */
   confirmOptions?: AwaitExecutionOptions;
+  /**
+   * Resolve the secret key a fleet agent signs with, given its `agent:<name>` id — the seam that
+   * makes an agent's bet its own on-chain act rather than the operator's (S30/W1).
+   *
+   * Defaults to {@link agentSecretKey}, which reads a per-agent override env var and otherwise
+   * derives from `CASPER_FLEET_SEED`. Returning `null` means "this deployment cannot sign for that
+   * agent", and every caller falls back to the operator key — which is exactly the pre-S30
+   * behaviour, so an instance with no fleet seed is byte-identical to before.
+   *
+   * Injected by tests so the derivation can be asserted without a real seed in the environment.
+   */
+  agentKeyLookup?: (agentId: string) => string | null;
+  /**
+   * Injectable submit seam (mirrors `real-wallet.ts`). Receives the signed transaction and returns
+   * its hash. Tests use it to read back WHO signed — the one fact `placeBet` must now get right.
+   */
+  submitImpl?: (tx: Transaction) => Promise<string>;
+}
+
+/**
+ * The prefix that marks a bettor as a fleet agent with its own derived Casper key.
+ *
+ * Only `agent:<name>` ids route to a per-agent signer. A bare public key hex is a human in
+ * operator custody, and a `demo-…`/opaque id is not an identity this deployment holds a key for;
+ * both keep the operator signer. The allowlist direction matters: deriving a key for any unknown
+ * string would sign from an unfunded purse and revert, and worse, would let an external caller
+ * name someone else's purse as its bettor.
+ */
+const FLEET_BETTOR_PREFIX = "agent:";
+
+/** True when `bettor` names a fleet agent (`agent:<name>`), whatever the deployment can sign. */
+export function isFleetBettor(bettor: string): boolean {
+  return bettor.trim().toLowerCase().startsWith(FLEET_BETTOR_PREFIX);
 }
 
 /** The proxy wasm shipped in-repo (exact Odra 2.8.2 build, from the odra-casper crate). */
@@ -331,8 +369,27 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
     return { deployHash: hash, explorerUrl: explorerTransactionUrl(network, hash) };
   }
 
+  /**
+   * The secret key a bettor signs with — the whole of W1 in one function.
+   *
+   * A fleet agent (`agent:<name>`) signs with its OWN derived key, so `self.env().caller()` inside
+   * the vault is the agent and `BetPlaced.bettor` names it. Anything else — a human's public key
+   * in operator custody, a demo id — keeps the operator key, unchanged. So does a fleet agent this
+   * deployment holds no key for: `agentSecretKey` returns `null` without `CASPER_FLEET_SEED`, and
+   * the fallback is the pre-S30 behaviour exactly.
+   */
+  function signerKeyFor(bettor: string | undefined): PrivateKey {
+    if (bettor && isFleetBettor(bettor)) {
+      const lookup = opts.agentKeyLookup ?? ((id: string) => agentSecretKey(id));
+      const agentKey = lookup(bettor.trim());
+      if (agentKey && agentKey.trim().length > 0) return loadKey(agentKey);
+    }
+    return loadKey(opts.bettorKey);
+  }
+
   async function submit(tx: Transaction, key: PrivateKey): Promise<DeployResult> {
     tx.sign(key);
+    if (opts.submitImpl) return confirm(await opts.submitImpl(tx));
     const res = await rpc.putTransaction(tx);
     return confirm(res.transactionHash.toHex());
   }
@@ -365,9 +422,24 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
       return Number(res.block.height);
     },
 
+    /**
+     * True when this deployment can sign as `bettor` itself — i.e. the bet will be the bettor's
+     * own on-chain act, funded from its own purse, and not an operator escrow on its behalf.
+     *
+     * The fleet loop reads this to decide whether it still owes the operator an x402 reimbursement
+     * (see `lib/agent-bet.ts`). It is deliberately a capability question about THIS deployment, not
+     * a claim the caller can make: an unknown or human bettor is always `false`.
+     */
+    canSelfSign(bettor: string): boolean {
+      if (!bettor || !isFleetBettor(bettor)) return false;
+      const lookup = opts.agentKeyLookup ?? ((id: string) => agentSecretKey(id));
+      const agentKey = lookup(bettor.trim());
+      return Boolean(agentKey && agentKey.trim().length > 0);
+    },
+
     /** Payable `bet` → an Odra proxy session carrying the stake. */
     async placeBet(input: PlaceBetInput): Promise<DeployResult> {
-      const key = loadKey(opts.bettorKey);
+      const key = signerKeyFor(input.bettor);
       const target = targetFor(input.marketId);
       const plan = buildBetPlan(input, {
         marketContract: target.contract,
@@ -382,7 +454,7 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
      * execution, so the caller can show a hash now and confirm it separately.
      */
     async submitBet(input: PlaceBetInput): Promise<DeployResult> {
-      const key = loadKey(opts.bettorKey);
+      const key = signerKeyFor(input.bettor);
       const target = targetFor(input.marketId);
       const plan = buildBetPlan(input, {
         marketContract: target.contract,
@@ -390,8 +462,9 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
       });
       const tx = buildPayable(plan, key.publicKey);
       tx.sign(key);
-      const res = await rpc.putTransaction(tx);
-      const hash = res.transactionHash.toHex();
+      const hash = opts.submitImpl
+        ? await opts.submitImpl(tx)
+        : (await rpc.putTransaction(tx)).transactionHash.toHex();
       return { deployHash: hash, explorerUrl: explorerTransactionUrl(network, hash) };
     },
 

@@ -111,6 +111,19 @@ export interface CasperChainPort {
   /** Escrow a stake into the parimutuel vault. Returns the on-chain deploy, once it has executed. */
   placeBet(input: PlaceBetInput): Promise<DeployResult>;
   /**
+   * Can this deployment sign as `bettor` itself, making the bet the bettor's own on-chain act
+   * funded from its own purse (S30/W1)?
+   *
+   * True only for a fleet agent (`agent:<name>`) whose key this deployment holds. A human bettor
+   * and an unknown id are always false — the answer is a fact about the deployment's key material,
+   * never a claim the caller can assert. The fleet loop reads it to decide whether the bettor still
+   * owes the operator an x402 reimbursement for an escrow the operator fronted.
+   *
+   * Optional: an adapter with no key material (the mock) omits it and every bettor reads as
+   * operator-custodied, which is the safe direction.
+   */
+  canSelfSign?(bettor: string): boolean;
+  /**
    * The same escrow, submitted but NOT waited for: the hash the moment a node accepts it.
    *
    * `placeBet` only answers once the transaction has executed, which on testnet is 8-16s during
