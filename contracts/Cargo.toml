@@ -2,6 +2,16 @@
 edition = "2021"
 name = "contracts"
 version = "0.1.0"
+description = "Odra contracts for Hunch on Casper — parimutuel escrow, singleton markets-as-state-entries, wide-field markets, oracle registry and resolution hooks."
+license = "MIT"
+repository = "https://github.com/rajkaria/hunch-casper"
+homepage = "https://casper.playhunch.xyz"
+readme = "README.md"
+keywords = ["casper", "odra", "prediction-market", "parimutuel", "oracle"]
+categories = ["cryptography::cryptocurrencies"]
+# Not published yet — `cargo publish` is an operator action. Patterns and measured costs are in
+# PATTERNS.md and ../docs/GAS.md so the work is usable before the crate is.
+publish = false
 
 [dependencies]
 odra = { version = "2.8.2", features = [], default-features = false }

@@ -31,6 +31,13 @@ Built for the **Casper Agentic Buildathon 2026** (Innovation Track). Live at
 - **Build an agent:** [`docs/AGENTS_GUIDE.md`](./docs/AGENTS_GUIDE.md) — fork
   [`packages/agent-template`](./packages/agent-template), edit one strategy file, run one command.
   The [Agent League](https://casper.playhunch.xyz/league) ranks **calibration**, not profit.
+- **What Casper calls cost:** [`docs/GAS.md`](./docs/GAS.md) — every figure measured on testnet, with
+  the transaction behind it. The design decision it documents (markets as state entries, 3.74 CSPR,
+  versus a contract per market, 324.27) is what makes an autonomous market-creating agent affordable.
+  Reusable patterns: [`contracts/PATTERNS.md`](./contracts/PATTERNS.md).
+- **Charge for your own endpoint:** [`packages/x402-casper`](./packages/x402-casper) — the
+  payer-bound HTTP-402 rail this economy runs on, as a zero-dependency package with a
+  language-independent [`SPEC.md`](./packages/x402-casper/SPEC.md).
 - **Where it's going:** [`VISION.md`](./VISION.md) — the long-term launch plan (RWA oracle, third-party
   agents, grant ask).
 

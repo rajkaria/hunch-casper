@@ -34,3 +34,10 @@ you need to specify the backend passing -b argument to `cargo-odra`.
 ```
 $ cargo odra test -b casper
 ```
+
+## Patterns and costs
+
+- [`PATTERNS.md`](./PATTERNS.md) — three reusable Odra patterns (singleton markets-as-state-entries,
+  caller-attributed stakes, dictionary membership for wide fields) with the measured price of each.
+- [`../docs/GAS.md`](../docs/GAS.md) — what every call actually costs on Casper testnet, with the
+  transaction behind each figure and the refund model the numbers are derived from.

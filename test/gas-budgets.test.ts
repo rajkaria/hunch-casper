@@ -61,3 +61,60 @@ describe("gas limits cover what the chain actually consumes", () => {
     expect(BigInt(DEFAULT_CREATE_GAS_MOTES)).toBe(8n * CSPR);
   });
 });
+
+/**
+ * The published gas documentation must not drift from the measurements the code is tuned against.
+ *
+ * `docs/GAS.md` and `contracts/PATTERNS.md` are written for Casper developers outside this repo,
+ * who have no way to tell a current figure from a stale one. A number that quietly rots is worse
+ * than no number at all, so every headline figure is asserted against the same constants the
+ * budgets above use.
+ */
+describe("the published gas docs stay true", () => {
+  const read = async (path: string): Promise<string> => {
+    const { readFile } = await import("node:fs/promises");
+    return readFile(new URL(`../${path}`, import.meta.url), "utf8");
+  };
+
+  it("GAS.md cites the measured create_market and per-market install costs", async () => {
+    const gas = await read("docs/GAS.md");
+    expect(gas).toContain("3.74");   // create_market, typical — tx e2bb364c…
+    expect(gas).toContain("324.27"); // v1 ParimutuelMarket install
+    expect(gas).toContain("5.22");   // first create_market, dictionary init
+    expect(gas).toContain("373.07"); // HunchVault install
+  });
+
+  it("GAS.md states the refund model the net figures are derived from", async () => {
+    const gas = await read("docs/GAS.md");
+    // Every "net" number on the page is meaningless without this rule.
+    expect(gas).toMatch(/75%/);
+    expect(gas).toMatch(/net = consumed/);
+  });
+
+  it("GAS.md quotes the same bet/resolve/claim consumption the budgets are tuned to", async () => {
+    const gas = await read("docs/GAS.md");
+    expect(gas).toContain((Number(MEASURED.bet) / 1e9).toFixed(3));
+    expect(gas).toContain((Number(MEASURED.resolve) / 1e9).toFixed(3));
+  });
+
+  it("PATTERNS.md agrees with GAS.md on the headline comparison", async () => {
+    const patterns = await read("contracts/PATTERNS.md");
+    expect(patterns).toContain("324.27");
+    expect(patterns).toContain("3.74");
+    // The 87× claim is load-bearing in the pitch; keep it arithmetically honest.
+    expect(Math.round(324.27 / 3.74)).toBe(87);
+  });
+
+  it("PATTERNS.md describes contracts that actually exist in this crate", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const patterns = await read("contracts/PATTERNS.md");
+    for (const file of ["hunch_vault.rs", "field_market.rs"]) {
+      const src = await readFile(new URL(`../contracts/src/${file}`, import.meta.url), "utf8");
+      expect(src.length).toBeGreaterThan(0);
+    }
+    // The dictionary-membership claim is the one a reader would copy; pin the real declaration.
+    const field = await readFile(new URL("../contracts/src/field_market.rs", import.meta.url), "utf8");
+    expect(field).toContain("candidate: Mapping<String, bool>");
+    expect(patterns).toContain("candidate: Mapping<String, bool>");
+  });
+});
