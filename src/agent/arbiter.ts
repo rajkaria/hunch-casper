@@ -203,6 +203,12 @@ export async function resolveMarket(container: Container, slug: string): Promise
   // payout because a metadata write reverted would strand user money to protect a hash.
   const anchor = evidence ? await anchorResolution(container, market.id, evidence) : null;
 
+  // Notify every contract bound to this market's resolution (S34/W3). Same placement and same
+  // rule as anchoring: after the money has moved, and structurally unable to fail the resolution.
+  // A consumer integration that breaks must never be able to hold a settled payout hostage — that
+  // is the whole reason dispatch emits events instead of calling consumers back.
+  const dispatched = await dispatchResolutionHooks(container, market.id, winningOutcomeKey, evidence?.bundleHash);
+
   return appendAction({
     agent: "Arbiter",
     kind: "market_resolved",
@@ -216,7 +222,45 @@ export async function resolveMarket(container: Container, slug: string): Promise
     recipeHash: evidence?.recipeHash,
     evidenceBundleHash: evidence?.bundleHash,
     anchorDeployHash: anchor?.recipeDeployHash ?? anchor?.bundleDeployHash,
+    hookDispatchDeployHash: dispatched ?? undefined,
   });
+}
+
+/**
+ * Fire the `ResolutionHook` for a finalised market, so consumer protocols can act on the outcome.
+ *
+ * Total by construction, exactly like `anchorResolution`: every failure returns `null`. Three
+ * distinct non-events are folded into that null on purpose — mock mode, no hook deployed, and a
+ * market that was already dispatched — because none of them is a problem the resolution can or
+ * should do anything about. `dispatch` is idempotent per market on chain, so a retried
+ * finalisation cannot double-fire a consumer even if this runs twice.
+ */
+async function dispatchResolutionHooks(
+  container: Container,
+  marketId: string,
+  winningOutcomeKey: string | null,
+  bundleHash: string | undefined,
+): Promise<string | null> {
+  if (chainMode() !== "real") return null;
+  if (!container.chain.dispatchResolution) return null;
+  // A voided market has no decided outcome, so there is nothing a consumer could act on. Sending
+  // an empty string would be worse than silence: it reads as a real outcome that matches nothing.
+  if (!winningOutcomeKey) return null;
+  try {
+    const result = await container.chain.dispatchResolution({
+      marketId,
+      decidedOutcome: winningOutcomeKey,
+      bundleHash: bundleHash ?? "",
+    });
+    if (result.skipped) {
+      console.warn("[arbiter] hooks not dispatched:", JSON.stringify({ marketId, why: result.skipped }));
+      return null;
+    }
+    return result.deployHash ?? null;
+  } catch (err) {
+    console.warn("[arbiter] hook dispatch threw — the resolution still paid out:", JSON.stringify({ marketId }), err);
+    return null;
+  }
 }
 
 /**

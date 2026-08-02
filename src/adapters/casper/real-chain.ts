@@ -132,6 +132,8 @@ export interface RealChainOptions {
   fieldMarketPackageHash?: string;
   /** The `AgentRegistry` **package** hash — bonded agent identity (S33/W2). */
   agentRegistryPackageHash?: string;
+  /** The `ResolutionHook` **package** hash — oracle-as-a-service dispatch (S34/W3). */
+  resolutionHookPackageHash?: string;
   /** Filesystem path to Odra's `proxy_caller_with_return.wasm` (required for payable bets). */
   proxyWasmPath: string;
   /**
@@ -161,6 +163,12 @@ export interface RealChainOptions {
 }
 
 export { isFleetBettor };
+
+/**
+ * Gas for `ResolutionHook::dispatch` — a non-payable call writing one flag and emitting one event
+ * per registered consumer. Sized like the other commit-style calls rather than like a settlement.
+ */
+const DISPATCH_GAS_MOTES = 3_000_000_000n;
 
 /** The proxy wasm shipped in-repo (exact Odra 2.8.2 build, from the odra-casper crate). */
 const BUNDLED_PROXY_WASM = "src/adapters/casper/resources/proxy_caller_with_return.wasm";
@@ -659,6 +667,47 @@ export function createRealChain(network: CasperNetwork, opts: RealChainOptions):
      * paid winners at this point, and letting a metadata write abort that would be exactly
      * backwards — the same reasoning that keeps resolution itself outside the cadence throttle.
      */
+    /**
+     * `ResolutionHook::dispatch` — non-payable, signed by the ORACLE key, because the contract
+     * authorises exactly one resolver and that is the identity Hunch resolves markets as.
+     *
+     * Never throws. An unconfigured hook, a revert, an RPC failure and an already-dispatched
+     * market all come back as `skipped`, because this runs after winners have been paid: the one
+     * thing it must never do is turn a consumer's broken integration into a withheld payout.
+     */
+    async dispatchResolution(input: {
+      marketId: string;
+      decidedOutcome: string;
+      bundleHash: string;
+    }): Promise<{ deployHash?: string; explorerUrl?: string; skipped?: string }> {
+      if (!opts.resolutionHookPackageHash) {
+        return { skipped: "no ResolutionHook configured (NEXT_PUBLIC_*_RESOLUTION_HOOK)" };
+      }
+      try {
+        const key = loadKey(opts.oracleKey ?? opts.bettorKey);
+        const tx = new ContractCallBuilder()
+          .from(key.publicKey)
+          .byPackageHash(toHexHash(opts.resolutionHookPackageHash))
+          .entryPoint("dispatch")
+          .runtimeArgs(
+            Args.fromMap({
+              market_id: CLValue.newCLString(input.marketId),
+              decided_outcome: CLValue.newCLString(input.decidedOutcome),
+              bundle_hash: CLValue.newCLString(input.bundleHash),
+            }),
+          )
+          .chainName(cfg.chainName)
+          .payment(Number(DISPATCH_GAS_MOTES))
+          .build();
+        const result = await submit(tx, key);
+        return { deployHash: result.deployHash, explorerUrl: result.explorerUrl };
+      } catch (err) {
+        // `AlreadyDispatched` lands here too, and is the expected outcome of a retried
+        // finalisation rather than a fault — idempotency working, not failing.
+        return { skipped: err instanceof Error ? err.message : "dispatch failed" };
+      }
+    },
+
     async anchorResolution(input: AnchorResolutionInput): Promise<AnchorResult> {
       const target = targetFor(input.marketId);
       // `commit_recipe`/`commit_bundle` exist only on the v2 vault; a per-market v1 package has no

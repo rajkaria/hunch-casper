@@ -24,13 +24,15 @@ use std::fs;
 use std::str::FromStr;
 
 use contracts::agent_registry::{AgentRegistry, AgentRegistryInitArgs};
+use contracts::hook_consumer::{EscrowConsumer, EscrowConsumerInitArgs};
+use contracts::resolution_hook::ResolutionHook;
 use contracts::hunch_vault::HunchVault;
 use contracts::hunch_vault::HunchVaultInitArgs;
 use contracts::field_market::{FieldMarket, FieldMarketHostRef, FieldMarketInitArgs};
 use contracts::market_factory::MarketFactory;
 use contracts::parimutuel_market::{ParimutuelMarket, ParimutuelMarketInitArgs};
 use odra::casper_types::U512;
-use odra::host::{Deployer, HostEnv, HostRef, HostRefLoader};
+use odra::host::{Deployer, HostEnv, HostRef, HostRefLoader, NoArgs};
 use odra::prelude::*;
 
 // Gas limits are NOT ceilings you get back — testnet runs `pricing_handling =
@@ -245,6 +247,15 @@ fn main() {
             let cooldown_hours: u64 = args.get(3).and_then(|a| a.parse().ok()).unwrap_or(48);
             registry_deploy(&env, min_bond_cspr, cooldown_hours);
         }
+        "hook-deploy" => {
+            hook_deploy(&env);
+        }
+        "hook-consumer-deploy" => {
+            hook_consumer_deploy(&env, args.get(2).map(String::as_str));
+        }
+        "hook-info" => {
+            hook_info(&env, args.get(2).map(String::as_str));
+        }
         "registry-info" => {
             registry_info(&env, args.get(2).map(String::as_str));
         }
@@ -254,6 +265,7 @@ fn main() {
                  catalogue-v2|create-v2|lifecycle-v2|list-markets|market-info|\
                  approve-oracle|open-creation|fleet-fund|plan-cost|\
                  registry-deploy|registry-info|\
+                 hook-deploy|hook-consumer-deploy|hook-info|\
                  field-deploy|field-register|field-freeze|field-info|field-resolve> ..."
             );
             std::process::exit(2);
@@ -324,6 +336,72 @@ fn registry_info(env: &HostEnv, account: Option<&str>) {
         println!("HUNCH_REGISTRY registered={}", registry.is_registered(who));
         println!("HUNCH_REGISTRY active={}", registry.is_active(who));
         println!("HUNCH_REGISTRY bond={}", registry.bond_of(who));
+    }
+}
+
+/// W3: install the `ResolutionHook` — the point where a Hunch resolution becomes something other
+/// Casper protocols can act on.
+///
+/// The deployer becomes the authorised resolver, so it must be the same identity the app resolves
+/// markets with (`CASPER_ORACLE_KEY`, which falls back to the deployer). A hook whose resolver is
+/// nobody's key is a contract that can never fire.
+fn hook_deploy(env: &HostEnv) {
+    let caller = env.caller();
+    let balance = env.balance_of(&caller);
+    println!("HUNCH_BALANCE start {balance}");
+    let required = U512::from(MARKET_GAS);
+    if balance < required {
+        println!("HUNCH_ABORT low-balance have={balance} need={required}");
+        eprintln!("hook-deploy needs {required} motes up front; the deployer holds {balance}.");
+        std::process::exit(1);
+    }
+
+    println!("HUNCH_STEP deploy-resolution-hook");
+    env.set_gas(MARKET_GAS);
+    let hook = ResolutionHook::deploy(env, NoArgs);
+    println!("HUNCH_RESOLUTION_HOOK package={}", hook.address().to_formatted_string());
+    println!("HUNCH_NOTE resolver={}", caller.to_formatted_string());
+    println!(
+        "HUNCH_NOTE wire it with NEXT_PUBLIC_<NETWORK>_RESOLUTION_HOOK={}",
+        hook.address().to_formatted_string()
+    );
+    println!("HUNCH_BALANCE end {}", env.balance_of(&caller));
+}
+
+/// Install the worked-example `EscrowConsumer` and bind it to a notifier (defaults to the caller).
+///
+/// This exists to be a REAL third-party integration on chain, not a fixture: a contract someone
+/// other than us could have written, bound to our hook, that a keeper drives. "Other protocols can
+/// consume this oracle" is a claim best answered with a deployed address.
+fn hook_consumer_deploy(env: &HostEnv, hook: Option<&str>) {
+    let caller = env.caller();
+    // The hook address is the consumer's ONE trust decision, made here at deploy time rather than
+    // per-settlement by whoever calls — so it is a required argument, not a convenient default.
+    let hook = match hook.or(std::env::var("HUNCH_RESOLUTION_HOOK").ok().as_deref()) {
+        Some(a) => Address::from_str(a).expect("bad ResolutionHook address"),
+        None => {
+            eprintln!("hook-consumer-deploy <hook-package-hash> (or set HUNCH_RESOLUTION_HOOK)");
+            std::process::exit(2);
+        }
+    };
+    println!("HUNCH_BALANCE start {}", env.balance_of(&caller));
+    println!("HUNCH_STEP deploy-escrow-consumer hook={}", hook.to_formatted_string());
+    env.set_gas(MARKET_GAS);
+    let consumer = EscrowConsumer::deploy(env, EscrowConsumerInitArgs { hook });
+    println!("HUNCH_ESCROW_CONSUMER package={}", consumer.address().to_formatted_string());
+    println!("HUNCH_BALANCE end {}", env.balance_of(&caller));
+}
+
+/// Free read of a market's hook state — how many consumers are bound, and whether it has fired.
+fn hook_info(env: &HostEnv, market_id: Option<&str>) {
+    let addr = std::env::var("HUNCH_RESOLUTION_HOOK")
+        .expect("set HUNCH_RESOLUTION_HOOK to the deployed ResolutionHook package hash");
+    let hook = ResolutionHook::load(env, Address::from_str(&addr).expect("bad HUNCH_RESOLUTION_HOOK"));
+    println!("HUNCH_HOOK resolver={}", hook.resolver().to_formatted_string());
+    if let Some(market_id) = market_id {
+        println!("HUNCH_HOOK market={market_id}");
+        println!("HUNCH_HOOK hook_count={}", hook.hook_count(market_id.to_string()));
+        println!("HUNCH_HOOK dispatched={}", hook.is_dispatched(market_id.to_string()));
     }
 }
 

@@ -6,6 +6,7 @@ pub mod agent_registry;
 pub mod copy_betting;
 pub mod dispute_panel;
 pub mod field_market;
+pub mod hook_consumer;
 pub mod hunch_vault;
 pub mod lmsr_market;
 pub mod market_factory;

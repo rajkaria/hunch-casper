@@ -214,6 +214,21 @@ export interface CasperChainPort {
   /** Open a market inside the v2 vault. Rejects when no v2 vault is configured. */
   createMarket(input: CreateMarketInput): Promise<DeployResult>;
   /**
+   * Notify every contract bound to a finalised market via `ResolutionHook::dispatch` (S34/W3) —
+   * the oracle-as-a-service surface other Casper protocols consume.
+   *
+   * NEVER throws, exactly like `anchorResolution`, and for the same reason: it runs after winners
+   * have been paid, so a consumer integration that breaks must not be able to hold a settled
+   * payout hostage. An unconfigured hook returns `skipped` rather than failing.
+   *
+   * Optional: an adapter with no chain behind it does not implement it and the Arbiter carries on.
+   */
+  dispatchResolution?(input: {
+    marketId: string;
+    decidedOutcome: string;
+    bundleHash: string;
+  }): Promise<{ deployHash?: string; explorerUrl?: string; skipped?: string }>;
+  /**
    * Anchor a settled resolution's recipe + evidence hashes on chain (S24), so the call is
    * replayable from the chain alone rather than from this server's word.
    *

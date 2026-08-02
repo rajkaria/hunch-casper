@@ -1,0 +1,10 @@
+{
+  "name": "hunch-hook-keeper",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Reference keeper: relays Hunch resolutions into a consumer contract on Casper.",
+  "type": "module",
+  "main": "keeper.mjs",
+  "scripts": { "start": "node keeper.mjs" },
+  "dependencies": { "casper-js-sdk": "^5.0.0" }
+}

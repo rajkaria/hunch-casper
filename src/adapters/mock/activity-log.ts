@@ -39,6 +39,8 @@ export interface AgentAction {
    * "we published a recipe" from "the recipe is on chain and anyone can check it".
    */
   anchorDeployHash?: string;
+  /** The `ResolutionHook::dispatch` that notified consumer protocols of this outcome (S34/W3). */
+  hookDispatchDeployHash?: string;
   /** Epoch ms the action was recorded — the feed renders it as relative time ("2m ago"). */
   ts: number;
 }

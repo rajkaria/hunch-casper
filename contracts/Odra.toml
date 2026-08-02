@@ -1,4 +1,10 @@
 [[contracts]]
+fqn = "hook_consumer::EscrowConsumer"
+
+[[contracts]]
+fqn = "resolution_hook::ResolutionHook"
+
+[[contracts]]
 fqn = "agent_registry::AgentRegistry"
 
 [[contracts]]

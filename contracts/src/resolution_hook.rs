@@ -75,6 +75,15 @@ pub struct ResolutionHook {
     registered: Mapping<(String, Address), bool>,
     /// market -> already dispatched (idempotency + reentrancy guard).
     dispatched: Mapping<String, bool>,
+    /// market -> the decided outcome, readable on chain.
+    ///
+    /// Stored rather than only emitted, because an event is not readable by another CONTRACT. A
+    /// consumer that can only learn the outcome from whoever calls it has to trust that caller;
+    /// a consumer that can read it here does not. This one field is the difference between a
+    /// permissionless keeper who is merely a relay and one who is an oracle in their own right.
+    decided: Mapping<String, String>,
+    /// market -> the evidence-bundle hash the resolution carried.
+    bundle: Mapping<String, String>,
 }
 
 #[odra::module]
@@ -122,6 +131,8 @@ impl ResolutionHook {
         }
         // EFFECT first — reentrancy guard set before any interaction.
         self.dispatched.set(&market_id, true);
+        self.decided.set(&market_id, decided_outcome.clone());
+        self.bundle.set(&market_id, bundle_hash.clone());
 
         let hooks = self.hooks.get_or_default(&market_id);
         for consumer in hooks.iter() {
@@ -144,6 +155,19 @@ impl ResolutionHook {
     /// Number of hooks registered for a market.
     pub fn hook_count(&self, market_id: String) -> u32 {
         self.hooks.get_or_default(&market_id).len() as u32
+    }
+
+    /// The decided outcome for a dispatched market — empty until `dispatch` has run.
+    ///
+    /// The read a consumer contract makes to verify a settlement claim for itself instead of
+    /// believing its caller.
+    pub fn decided_outcome(&self, market_id: String) -> String {
+        self.decided.get_or_default(&market_id)
+    }
+
+    /// The evidence-bundle hash recorded with the resolution — empty until dispatched.
+    pub fn bundle_hash_of(&self, market_id: String) -> String {
+        self.bundle.get_or_default(&market_id)
     }
 
     /// Whether a market has already been dispatched.

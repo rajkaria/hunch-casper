@@ -97,6 +97,22 @@ The install figure is the deployer purse before and after: 2000.00 → 1670.57 C
 reference point for "what does an Odra contract of ~300 KB cost to install", independent of what
 this particular contract does.
 
+## Oracle-as-a-service — ResolutionHook + a reference consumer
+
+Measured 2026-08-02.
+
+| Contract | Package hash | net (CSPR) | limit |
+|---|---|---|---|
+| `ResolutionHook` | `hash-35e2443be11ac4fed329e216338d702c45bbd8657d8687d1a18a7ed1fc020209` | **302.57** | 450 |
+| `EscrowConsumer` (worked example) | `hash-eda04741636979fe2456e0554a195047082224ba998012b329c89989959f0dac` | **303.25** | 450 |
+
+Deployer purse across the pair: 1372.74 → 766.93 CSPR. Install transactions `6e4db5ef…` and
+`451a5a11…`.
+
+`dispatch` is budgeted at a 3 CSPR limit — one flag, one stored outcome, one event per registered
+consumer. Consumers pay their own `settle` gas, which is the point of event dispatch: the oracle's
+cost does not grow with the number of protocols bound to it.
+
 ## v1 per-market installs (historical)
 
 | Call | net (CSPR) | consumed | limit |

@@ -41,6 +41,13 @@ export interface ContractAddresses {
    * record worth anything to a third party.
    */
   agentRegistry?: string;
+  /**
+   * ResolutionHook — the oracle-as-a-service dispatch point (S34/W3).
+   *
+   * Absent, the Arbiter resolves markets and no consumer protocol ever hears about it, which is
+   * the difference between an oracle and a scoreboard.
+   */
+  resolutionHook?: string;
 }
 
 export interface NetworkConfig {
@@ -127,6 +134,7 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
       vaultV2: envAddr("NEXT_PUBLIC_TESTNET_VAULT_V2"),
       fieldMarket: envAddr("NEXT_PUBLIC_TESTNET_FIELD_MARKET"),
       agentRegistry: envAddr("NEXT_PUBLIC_TESTNET_AGENT_REGISTRY"),
+      resolutionHook: envAddr("NEXT_PUBLIC_TESTNET_RESOLUTION_HOOK"),
     },
     marketAddresses: parseMarketAddresses(process.env.NEXT_PUBLIC_TESTNET_MARKET_ADDRS),
     guardrails: { maxBetCspr: null, showUnauditedBanner: false },
@@ -145,6 +153,7 @@ export const NETWORKS: Record<CasperNetwork, NetworkConfig> = {
       vaultV2: envAddr("NEXT_PUBLIC_MAINNET_VAULT_V2"),
       fieldMarket: envAddr("NEXT_PUBLIC_MAINNET_FIELD_MARKET"),
       agentRegistry: envAddr("NEXT_PUBLIC_MAINNET_AGENT_REGISTRY"),
+      resolutionHook: envAddr("NEXT_PUBLIC_MAINNET_RESOLUTION_HOOK"),
     },
     marketAddresses: parseMarketAddresses(process.env.NEXT_PUBLIC_MAINNET_MARKET_ADDRS),
     // The static unaudited ceiling; the *effective* cap is the audit-gated ramp in `caps.ts`, which

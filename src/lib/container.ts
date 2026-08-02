@@ -79,6 +79,7 @@ function createLazyRealChain(
   vaultV2PackageHash: string | undefined,
   fieldMarketPackageHash: string | undefined,
   agentRegistryPackageHash?: string,
+  resolutionHookPackageHash?: string,
 ): CasperChainPort {
   let cached: Promise<CasperChainPort> | null = null;
   const load = (): Promise<CasperChainPort> =>
@@ -93,6 +94,7 @@ function createLazyRealChain(
             fieldMarketPackageHash,
           ),
           agentRegistryPackageHash,
+          resolutionHookPackageHash,
         },
       ),
     ));
@@ -171,6 +173,15 @@ function createLazyRealChain(
     async anchorResolution(input: AnchorResolutionInput): Promise<AnchorResult> {
       return (await load()).anchorResolution(input);
     },
+    async dispatchResolution(input: {
+      marketId: string;
+      decidedOutcome: string;
+      bundleHash: string;
+    }): Promise<{ deployHash?: string; explorerUrl?: string; skipped?: string }> {
+      const chain = await load();
+      if (!chain.dispatchResolution) return { skipped: "this chain cannot dispatch resolution hooks" };
+      return chain.dispatchResolution(input);
+    },
     explorerUrlForDeploy(deployHash: string): string {
       return explorerTransactionUrl(network, deployHash);
     },
@@ -219,6 +230,7 @@ export function createContainer(network: CasperNetwork = DEFAULT_NETWORK): Conta
           cfg.contracts.vaultV2,
           cfg.contracts.fieldMarket,
           cfg.contracts.agentRegistry,
+          cfg.contracts.resolutionHook,
         )
       : createMockChain(network);
   // Real mode + a configured treasury (CASPER_X402_PAYTO) upgrades the x402 rail to the
