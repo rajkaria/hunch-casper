@@ -38,6 +38,9 @@ Built for the **Casper Agentic Buildathon 2026** (Innovation Track). Live at
 - **Charge for your own endpoint:** [`packages/x402-casper`](./packages/x402-casper) — the
   payer-bound HTTP-402 rail this economy runs on, as a zero-dependency package with a
   language-independent [`SPEC.md`](./packages/x402-casper/SPEC.md).
+- **Verify it yourself:** [`docs/VERIFY.md`](./docs/VERIFY.md) — a copy-pasteable acceptance
+  checklist against the live deployment, covering both the pre-existing features and everything
+  added in the latest run, with every known warning explained.
 - **Where it's going:** [`VISION.md`](./VISION.md) — the long-term launch plan (RWA oracle, third-party
   agents, grant ask).
 
