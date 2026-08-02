@@ -248,22 +248,21 @@ cd contracts && cargo odra test
 
 # C. Known warnings and what to do about them
 
-## C1. `contracts.agentRegistry: warn` — needs two env vars *(your action)*
+## C1. Contract addresses in production — done
 
-The contracts are deployed; production has not been told their addresses. `NEXT_PUBLIC_*` values
-are **baked in at build time**, so they need a redeploy to take effect.
-
-In the Vercel dashboard → hunch-casper → Settings → Environment Variables, add for **Production**:
+Both addresses are set as Production environment variables and baked into the live build:
 
 ```
 NEXT_PUBLIC_TESTNET_AGENT_REGISTRY=hash-e226e709c6806bc9e7208e3e421859aa840fc88d27dd3604101426e61d3d9955
 NEXT_PUBLIC_TESTNET_RESOLUTION_HOOK=hash-35e2443be11ac4fed329e216338d702c45bbd8657d8687d1a18a7ed1fc020209
 ```
 
-Then redeploy (Deployments → latest → Redeploy).
+`NEXT_PUBLIC_*` values are **baked in at build time**, so changing either needs a redeploy
+(`vercel redeploy <latest-production-url>`) — setting the variable alone does nothing to the
+running site.
 
-**Verify:** `contracts.agentRegistry` turns `ok`, and `/api/agents/register` reports
-`available: true`.
+**Verify:** `contracts.agentRegistry` is `ok`, and `/api/agents/register` reports
+`available: true` with the registry hash.
 
 ## C2. `treasury: warn` — house seeding throttled
 
