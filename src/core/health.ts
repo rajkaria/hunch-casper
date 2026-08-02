@@ -20,7 +20,17 @@ import {
   CREATION_FLOOR_ROUNDS,
   SEEDING_FLOOR_ROUNDS,
   roundsOfRunway,
+  runwayHours,
 } from "@/core/cadence";
+
+/** Runway in words an operator can act on tonight — "6.5h", or "unlimited" when nothing is spent. */
+function formatRunwayHours(rounds: number): string {
+  const hours = runwayHours(rounds);
+  if (!Number.isFinite(hours)) return "unlimited";
+  if (hours < 1) return `${Math.round(hours * 60)}m`;
+  if (hours < 48) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
 
 export type CheckStatus = "ok" | "warn" | "fail" | "skip";
 
@@ -118,6 +128,12 @@ export interface HealthInputs {
     balanceMotes: string;
     /** What one tick's escrows cost this purse — the same figure the cadence planner throttles on. */
     perRoundCostMotes: string;
+    /**
+     * Do the agents fund their own escrows (S30/W1)? Changes what a dry treasury actually breaks:
+     * creation, seeding and resolution — but no longer betting. Optional; absent reads as `false`,
+     * the conservative pre-S30 message.
+     */
+    selfCustodialBets?: boolean;
   };
   /**
    * Loop-liveness facts. Optional: a caller that omits it gets today's subsystem-only report.
@@ -411,7 +427,15 @@ function fleetCheck(i: HealthInputs, unfunded: FleetBalance[]): HealthCheck {
     return check("fleet", "skip", "no fleet wallet wired — agents are not paying from their own purses");
   }
   if (unfunded.length === 0) {
-    return check("fleet", "ok", `all ${i.fleet.length} agent purses are above the ${i.fleetMinBalanceMotes}-mote turn floor`);
+    // The poorest purse sets the fleet's runway: it is the first to sit a round out.
+    const poorest = i.fleet.reduce((min, f) => (BigInt(f.balanceMotes) < BigInt(min.balanceMotes) ? f : min));
+    const rounds = roundsOfRunway(poorest.balanceMotes, i.fleetMinBalanceMotes);
+    return check(
+      "fleet",
+      "ok",
+      `all ${i.fleet.length} agent purses are above the ${i.fleetMinBalanceMotes}-mote turn floor — ` +
+        `${poorest.agentId} is the shortest at ~${rounds} round(s), ${formatRunwayHours(rounds)}`,
+    );
   }
   if (unfunded.length === i.fleet.length) {
     return check(
@@ -439,23 +463,32 @@ function treasuryCheck(i: HealthInputs): HealthCheck | null {
   if (!t) return check("treasury", "skip", "operator treasury balance not read on this instance");
   const rounds = roundsOfRunway(t.balanceMotes, t.perRoundCostMotes);
   const cspr = (Number(BigInt(t.balanceMotes) / 10_000_000n) / 100).toFixed(2);
+  // Rounds are the spend unit; hours are the unit an operator decides on. Say both — "12 rounds"
+  // does not tell anyone whether to refill tonight or on Monday.
+  const runway = `~${rounds} round(s), ${formatRunwayHours(rounds)} of runway`;
   if (rounds < BETTING_FLOOR_ROUNDS) {
+    // Self-custodial agents fund their own escrows, so a dry treasury no longer stops betting —
+    // it stops creation and seeding. Saying "the economy pauses" when it does not is the kind of
+    // alarm that gets ignored.
+    const stops = t.selfCustodialBets
+      ? "market creation and house seeding stop, and no matured market can be resolved or bonded"
+      : "the economy pauses (or reverts bets agents already paid for)";
     return check(
       "treasury",
       "fail",
-      `operator treasury is down to ${cspr} CSPR (~${rounds} escrow round(s) of runway) — this purse funds every escrow, creation, and seed, and below the betting floor the economy pauses (or reverts bets agents already paid for); refill ${t.account}`,
+      `operator treasury is down to ${cspr} CSPR (${runway}) — this purse funds every creation, seed and resolution, and below the betting floor ${stops}; refill ${t.account}`,
     );
   }
   if (rounds < SEEDING_FLOOR_ROUNDS) {
     return check(
       "treasury",
       "warn",
-      `operator treasury holds ${cspr} CSPR (~${rounds} escrow rounds of runway) — betting is funded, but ${
+      `operator treasury holds ${cspr} CSPR (${runway}) — betting is funded, but ${
         rounds < CREATION_FLOOR_ROUNDS ? "market creation and house seeding are" : "house seeding is"
       } throttled off; top up ${t.account} to restore full cadence`,
     );
   }
-  return check("treasury", "ok", `operator treasury holds ${cspr} CSPR (~${rounds} escrow rounds of runway)`);
+  return check("treasury", "ok", `operator treasury holds ${cspr} CSPR (${runway})`);
 }
 
 /**

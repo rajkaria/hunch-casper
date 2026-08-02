@@ -454,6 +454,40 @@ The Casper testnet faucet is **human-only** (no API). Refill at
 cd contracts && cargo run --bin contracts_catalogue -- balance
 ```
 
+**A faucet is not a funding model.** It needs a human at a browser, so the economy's uptime is
+bounded by someone noticing — which is how an empty purse became a 44-hour outage on 2026-07-31.
+Two things reduce the exposure and one removes it:
+
+- *Reduced:* self-custodial betting (`CASPER_FLEET_SEED`) takes the treasury off the betting path
+  entirely, so a dry treasury costs you new markets, not the visible loop.
+- *Reduced:* the runway numbers below fire while there is still time to act, in hours rather than
+  rounds.
+- *Removed:* mainnet plus a fee on settled volume, which is the only version of this that funds
+  itself. Until then, treat the treasury as a standing operational task.
+
+**Standing floor to keep funded.** Keep the operator purse above **144 rounds** (~24 h, the
+seeding floor) so the economy runs at full cadence unattended overnight. Below 48 rounds (~8 h)
+the catalogue stops growing; below 12 (~2 h) resolution is at risk, which is the one thing that
+must never stop — it is how bettors get paid.
+
+### When the economy has stalled
+
+```bash
+curl -s https://casper.playhunch.xyz/api/health | jq '.status, .problems, .checks[] | select(.status != "ok")'
+```
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `treasury: fail` | operator purse dry | faucet refill above |
+| `bets: fail` (breaker tripped) | agents paid and got nothing back | refill, then reset the breaker |
+| `economy: warn`, action age > 25m | the GitHub Actions heartbeat is not firing | check the `economy` workflow's last run |
+
+Resetting the breaker is deliberate and manual — nothing clears it but a bet that lands:
+
+```bash
+curl -X POST https://casper.playhunch.xyz/api/agent/tick -H "x-cron-secret: $CRON_SECRET" -H 'content-type: application/json' -d '{"resetBreaker":true}'
+```
+
 ---
 
 ## 5. The Prophet fleet's wallets
@@ -600,10 +634,21 @@ burns its gas on the way — a broke economy would otherwise drain *faster* than
 | < 144 rounds | **house seeding off** — most expensive per unit of value, most replaceable |
 | < 48 rounds (~8 h) | **market creation off** — the catalogue stops growing; live markets keep trading |
 
-| Fleet runway (poorest agent) | Effect |
+| Fleet runway (**best-funded** agent) | Effect |
 |---|---|
 | ≥ 12 rounds (~2 h) | Prophets bet |
 | < 12 rounds | **betting off** — last, because an economy that stops betting looks dead |
+
+The betting gate reads the *best-funded* agent, not the poorest: each agent pays for its own turn
+out of its own purse, so one drained Prophet is one Prophet sitting rounds out, not a reason to
+stop the other three. The poorest purse is still what health and the `throttled:` log report, so
+the warning arrives long before anything stops. Degrade, don't die.
+
+**Does the treasury gate betting?** Only under operator custody. Once `CASPER_FLEET_SEED` is set,
+agents sign and fund their own escrows, so a dry treasury cannot break a bet and does not veto one
+— it stops creation, seeding and resolution instead. Before that fix an empty operator purse idled
+a fleet holding 755 CSPR (2026-08-02). The planner asks the chain adapter's own `canSelfSign`,
+so this can never drift from what the bet path actually does.
 
 **Resolution is never throttled.** It pays people what they are owed and refunds creation bonds;
 withholding it to save gas would strand user money to protect the operator's. Each capability is
@@ -612,7 +657,7 @@ The tick logs `[economy] throttled: …` with the runway numbers whenever it is 
 
 ### Running dry
 
-An agent below its **turn floor** (largest stake at full conviction + transfer gas, one number
+An agent below its **turn floor** (largest stake at full conviction + escrow gas, one number
 shared by the health endpoint and the cadence planner — `prophetTurnCostMotes`) skips its turn and logs a
 warning. This is correct behaviour, not a fault: submitting a transfer it cannot pay for would
 burn gas to produce a failed transaction and an unverifiable proof. Health reflects it:
@@ -622,16 +667,33 @@ burn gas to produce a failed transaction and an unverifiable proof. Health refle
 | `ok` | every purse clears the turn floor |
 | `warn` | some agents are sitting rounds out — named in the detail |
 | `fail` | **every** purse is below the floor; the fleet has stopped betting entirely |
+| detail | names the shortest-runway agent in hours, so "refill tonight or Monday?" has an answer |
 | `skip` | no fleet wallet wired (mock mode, or real mode with no seed) |
 
-### Why a bet costs two transactions
+### How many transactions a bet costs, and who signs them
 
-The agent transfers its stake to the treasury (its x402 payment); the operator key escrows the
-same amount into the vault. Since the treasury and the escrow funder are the same operator
-account, the operator is reimbursed exactly and the agent pays exactly once. The agent's identity
-is proven by the *transfer*, which is what the reputation layer indexes — not by who submitted the
-escrow. See the decision journal for why the alternative (the agent signing its own escrow) would
-charge the agent twice.
+This depends on whether the deployment holds the fleet's keys, and the difference matters for
+reading balances.
+
+**Self-custodial (`CASPER_FLEET_SEED` set) — one transaction.** The agent signs the payable `bet`
+itself. Its own purse pays the stake and the ~5 CSPR escrow gas, the vault records
+`self.env().caller()` as the agent, and the treasury is not involved at all. There is no x402
+reimbursement leg, because there is nothing to reimburse — adding one would take the stake twice
+for a single bet.
+
+**Operator custody (no fleet seed) — two transactions.** The agent transfers its stake to the
+treasury (its x402 payment) and the operator key escrows the same amount into the vault. The
+treasury and the escrow funder are the same account, so the operator is reimbursed exactly and the
+agent pays exactly once. On chain the bettor is the operator, and the agent's identity is proven
+only by the *transfer*.
+
+The public x402 rail (`/api/agent/v1/bet`, the MCP `place_bet` tool) is unchanged in both cases:
+an external agent always pays and always presents a proof the server verifies against the chain.
+Self-custody applies to the internal fleet, whose keys this deployment holds.
+
+**Reading a purse.** Under self-custody an agent's balance falls by stake + gas per bet and the
+treasury no longer rises to match, so a treasury that used to look flat now only spends. That is
+the intended shape: the treasury funds creation, seeding and resolution, and nothing else.
 
 ---
 

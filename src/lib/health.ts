@@ -129,8 +129,11 @@ export const fleetTurnFloorMotes = prophetTurnCostMotes;
  */
 async function treasuryBalance(network: CasperNetwork): Promise<HealthInputs["treasury"]> {
   if (chainMode() !== "real") return undefined;
-  const { wallet } = createContainer(network);
+  const { wallet, chain } = createContainer(network);
   const perRoundCostMotes = perRoundTreasuryCostMotes();
+  // Ask the adapter the same question the bet path and the cadence planner ask, so all three
+  // agree on what a dry treasury actually breaks.
+  const selfCustodialBets = PROPHETS.every((p) => chain.canSelfSign?.(p.id) === true);
   try {
     const [account, balanceMotes] = await Promise.all([
       wallet.accountFor(OPERATOR_AGENT_ID),
@@ -141,9 +144,16 @@ async function treasuryBalance(network: CasperNetwork): Promise<HealthInputs["tr
       accountHash: account.accountHash,
       balanceMotes,
       perRoundCostMotes,
+      selfCustodialBets,
     };
   } catch {
-    return { account: "unavailable", accountHash: "unavailable", balanceMotes: "0", perRoundCostMotes };
+    return {
+      account: "unavailable",
+      accountHash: "unavailable",
+      balanceMotes: "0",
+      perRoundCostMotes,
+      selfCustodialBets,
+    };
   }
 }
 

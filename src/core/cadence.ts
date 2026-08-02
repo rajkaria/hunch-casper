@@ -30,12 +30,37 @@ export type EconomyCadence = "full" | "reduced" | "minimal" | "paused";
 export interface CadenceInput {
   /** Operator/deployer purse, in motes — funds market creation and bet escrow. */
   treasuryMotes: string;
-  /** The POOREST agent purse, in motes. The fleet is as healthy as its weakest member. */
+  /** The POOREST agent purse, in motes — the early-warning number the plan reports. */
   minFleetBalanceMotes: string;
+  /**
+   * The RICHEST agent purse, in motes — "can ANY agent still act?".
+   *
+   * Betting is gated on this, not on the poorest, because each agent pays for its own turn out of
+   * its own purse: one drained Prophet is one Prophet sitting rounds out (`runProphet` checks its
+   * own balance and skips), not a reason to stop the other three. Gating the fleet on its weakest
+   * member is how a single empty purse silenced an economy that three funded agents could still
+   * have run — degrade, don't die.
+   *
+   * Optional so existing callers keep the old conservative behaviour: absent, it falls back to the
+   * poorest purse and the gate is exactly as before.
+   */
+  maxFleetBalanceMotes?: string;
   /** What one full round costs the treasury, in motes. */
   perRoundTreasuryCostMotes: string;
   /** What one full round costs a single agent, in motes. */
   perRoundAgentCostMotes: string;
+  /**
+   * Do the agents sign and fund their own bet escrows (S30/W1)?
+   *
+   * This decides whether the treasury gates betting at all. Under the old two-transaction model the
+   * agent paid an x402 stake but the TREASURY signed and funded the escrow, so a dry treasury made
+   * every escrow revert after the agent had already paid — which is why betting was gated on both
+   * purses. A self-custodial agent spends only its own purse, so a dry treasury can no longer break
+   * its bet, and gating on the treasury would idle a funded fleet for no reason.
+   *
+   * Defaults to `false`: an unconfigured deployment keeps the conservative both-purses rule.
+   */
+  selfCustodialBets?: boolean;
 }
 
 export interface CadencePlan {
@@ -61,6 +86,22 @@ export const SEEDING_FLOOR_ROUNDS = 144;
 export const CREATION_FLOOR_ROUNDS = 48;
 export const BETTING_FLOOR_ROUNDS = 12;
 
+/**
+ * How often the economy actually ticks — the ten-minute `schedule` cron in
+ * `.github/workflows/economy.yml`, the only heartbeat in production.
+ *
+ * Rounds are the natural unit for a spend decision and a useless unit for a human deciding whether
+ * to act tonight or in the morning. This is what converts one into the other, and it lives beside
+ * the floors so the two can never disagree about what a "round" is worth in wall-clock time.
+ */
+export const TICK_INTERVAL_MS = 10 * 60 * 1000;
+
+/** Rounds of runway → hours, for an operator deciding how urgent a refill is. */
+export function runwayHours(rounds: number): number {
+  if (!Number.isFinite(rounds)) return Number.POSITIVE_INFINITY;
+  return Math.round(((rounds * TICK_INTERVAL_MS) / 3_600_000) * 10) / 10;
+}
+
 /** Whole rounds `balance` can fund at `perRound`. A zero cost is unlimited, not a divide-by-zero. */
 export function roundsOfRunway(balanceMotes: string, perRoundMotes: string): number {
   const perRound = BigInt(perRoundMotes);
@@ -74,15 +115,29 @@ export function roundsOfRunway(balanceMotes: string, perRoundMotes: string): num
 export function planCadence(input: CadenceInput): CadencePlan {
   const treasuryRounds = roundsOfRunway(input.treasuryMotes, input.perRoundTreasuryCostMotes);
   const fleetRounds = roundsOfRunway(input.minFleetBalanceMotes, input.perRoundAgentCostMotes);
+  // "Can anyone still bet?" — the richest purse, falling back to the poorest when the caller does
+  // not distinguish them (pre-S31 behaviour, unchanged).
+  const bestAgentRounds = roundsOfRunway(
+    input.maxFleetBalanceMotes ?? input.minFleetBalanceMotes,
+    input.perRoundAgentCostMotes,
+  );
 
-  // Seeding and creation are treasury-funded. Betting spends from BOTH purses: the agent pays
-  // the x402 stake, but the escrow that turns that payment into a bet is signed and funded by
-  // the treasury (the two-transaction model). Gating bets on the fleet alone let a rich fleet
-  // keep paying a dry treasury — every escrow reverted "Insufficient funds", the paid-not-placed
-  // breaker tripped, and the agents had bought nothing. Both purses must have runway.
+  // Seeding and creation are treasury-funded, always.
+  //
+  // Betting depends on the custody model. Under the two-transaction model it spent from BOTH
+  // purses — the agent paid the x402 stake, but the escrow that turned that payment into a bet was
+  // signed and funded by the treasury — so gating on the fleet alone let a rich fleet keep paying a
+  // dry treasury: every escrow reverted "Insufficient funds", the paid-not-placed breaker tripped,
+  // and the agents had bought nothing.
+  //
+  // A self-custodial agent (S30/W1) signs and funds its own escrow, so a dry treasury cannot break
+  // its bet and must not veto it. Keeping the old gate here is what left 755 CSPR of funded agents
+  // idle behind an empty operator purse on 2026-08-02.
   const allowHouseSeeding = treasuryRounds >= SEEDING_FLOOR_ROUNDS;
   const allowMarketCreation = treasuryRounds >= CREATION_FLOOR_ROUNDS;
-  const allowProphetBets = fleetRounds >= BETTING_FLOOR_ROUNDS && treasuryRounds >= BETTING_FLOOR_ROUNDS;
+  const betsNeedTreasury = input.selfCustodialBets !== true;
+  const allowProphetBets =
+    bestAgentRounds >= BETTING_FLOOR_ROUNDS && (!betsNeedTreasury || treasuryRounds >= BETTING_FLOOR_ROUNDS);
 
   // Betting off is never "full": before this ranked, a starving fleet with a rich treasury
   // reported full cadence while placing nothing.
@@ -100,10 +155,12 @@ export function planCadence(input: CadenceInput): CadencePlan {
           !allowMarketCreation && `market creation off (treasury runway ${treasuryRounds} < ${CREATION_FLOOR_ROUNDS})`,
           !allowProphetBets &&
             `prophet betting off (${
-              fleetRounds < BETTING_FLOOR_ROUNDS
-                ? `fleet runway ${fleetRounds}`
+              bestAgentRounds < BETTING_FLOOR_ROUNDS
+                ? `fleet runway ${bestAgentRounds} even for the best-funded agent`
                 : `treasury runway ${treasuryRounds}`
-            } < ${BETTING_FLOOR_ROUNDS})`,
+            } < ${BETTING_FLOOR_ROUNDS})${
+              betsNeedTreasury ? "" : " — agents fund their own escrows, so only the fleet gates this"
+            }`,
         ]
           .filter(Boolean)
           .join("; ") + " — refill to restore full cadence";

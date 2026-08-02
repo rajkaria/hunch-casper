@@ -106,11 +106,17 @@ async function currentCadence(container: Container): Promise<CadencePlan | null>
     ...PROPHETS.map((p) => read(p.id)),
   ]);
   const minFleet = fleet.length > 0 ? fleet.reduce((min, b) => (b < min ? b : min)) : 0n;
+  const maxFleet = fleet.length > 0 ? fleet.reduce((max, b) => (b > max ? b : max)) : 0n;
   const plan = planCadence({
     treasuryMotes: treasury.toString(),
     minFleetBalanceMotes: minFleet.toString(),
+    maxFleetBalanceMotes: maxFleet.toString(),
     perRoundTreasuryCostMotes: perRoundTreasuryCostMotes(),
     perRoundAgentCostMotes: perRoundAgentCostMotes(),
+    // Ask the adapter, not the environment: `canSelfSign` answers from the key material this
+    // deployment actually holds, which is the same predicate the bet path itself branches on. A
+    // fleet that self-signs is not gated on the treasury for betting.
+    selfCustodialBets: PROPHETS.every((p) => container.chain.canSelfSign?.(p.id) === true),
   });
   if (plan.cadence !== "full") console.warn(`[economy] throttled: ${plan.reason}`);
   return plan;
