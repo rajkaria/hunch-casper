@@ -29,8 +29,10 @@
 *.pem
 
 # Casper deploy keys — secret_key.pem is covered by *.pem, but public_key_hex
-# is not; ignore the whole dir so no key material can ever be staged
-contracts/keys/
+# is not; ignore the whole dir so no key material can ever be staged.
+# No trailing slash on purpose: a git worktree runs its chain commands against a SYMLINK to the
+# main checkout's keys, and `contracts/keys/` (directory-only) leaves that symlink stageable.
+contracts/keys
 
 # debug
 npm-debug.log*

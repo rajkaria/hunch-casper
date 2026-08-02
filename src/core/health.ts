@@ -53,6 +53,8 @@ export interface HealthInputs {
     /** `NEXT_PUBLIC_*_FIELD_MARKET` — the only legal target for a wide-field slug. */
     fieldMarket?: string;
     agentRegistry?: string;
+    /** `NEXT_PUBLIC_*_RESOLUTION_HOOK` — where a resolution becomes an event other protocols act on. */
+    resolutionHook?: string;
   };
   /**
    * How many catalogue markets are wide fields (the 177-finalist buildathon market is one). They
@@ -265,6 +267,25 @@ function contractChecks(i: HealthInputs): HealthCheck[] {
           "warn",
           "AgentRegistry not wired — /api/agents/register answers 501 and an 'agent' is only a string in a request body; " +
             "deploy with `cargo run --bin contracts_catalogue -- registry-deploy` and set NEXT_PUBLIC_<NETWORK>_AGENT_REGISTRY",
+        ),
+  );
+  // Settlement hooks. This one earned its check the hard way: `dispatchResolutionHooks` is
+  // deliberately total — an unconfigured hook is logged and absorbed so a broken integration can
+  // never withhold a settled payout — which also means an unwired address looks EXACTLY like a
+  // healthy resolution from the outside. Markets resolved, money moved, and no consumer protocol
+  // was ever told. Nothing else on this board would have noticed.
+  out.push(
+    i.contracts.resolutionHook
+      ? check(
+          "contracts.resolutionHook",
+          "ok",
+          "ResolutionHook wired — resolutions dispatch to consumer protocols on chain",
+        )
+      : check(
+          "contracts.resolutionHook",
+          "warn",
+          "ResolutionHook not wired — every resolution silently skips dispatch, so the oracle-as-a-service claim has nothing behind it; " +
+            "deploy with `cargo run --bin contracts_catalogue -- hook-deploy` and set NEXT_PUBLIC_<NETWORK>_RESOLUTION_HOOK",
         ),
   );
   return out;

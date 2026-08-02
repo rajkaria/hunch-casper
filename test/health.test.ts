@@ -37,6 +37,7 @@ function healthyReal(): HealthInputs {
       vaultV2: "hash-" + "ce".repeat(32),
       fieldMarket: "hash-" + "dd".repeat(32),
       agentRegistry: "hash-" + "a9".repeat(32),
+      resolutionHook: "hash-" + "35".repeat(32),
     },
     marketAddressCount: 6,
     fieldMarketCount: 1,
@@ -656,5 +657,43 @@ describe("the AgentRegistry check", () => {
     const detail = report.checks.find((c) => c.name === "contracts.agentRegistry")!.detail;
     expect(detail).toContain("registry-deploy");
     expect(detail).toContain("NEXT_PUBLIC_<NETWORK>_AGENT_REGISTRY");
+  });
+});
+
+/**
+ * The ResolutionHook check — the one that exists because its absence was invisible.
+ *
+ * `dispatchResolutionHooks` is deliberately total: an unconfigured hook is logged and absorbed so
+ * a third party's broken contract can never withhold a settled payout. The cost of that choice is
+ * that an UNWIRED hook produces exactly the same observable behaviour as a healthy resolution —
+ * markets resolve, winners get paid, and no consumer protocol is ever told. On 2026-08-02 that is
+ * precisely what happened to `testnet:cspr-hourly-updown#20666`, and nothing on the board flagged
+ * it. A silent skip needs a loud check.
+ */
+describe("the ResolutionHook check", () => {
+  it("is ok when the hook is wired", () => {
+    expect(statusOf(buildHealthReport(healthyReal()), "contracts.resolutionHook")).toBe("ok");
+  });
+
+  it("warns, not fails, when it is not — resolutions still pay out", () => {
+    const base = healthyReal();
+    const report = buildHealthReport({
+      ...base,
+      contracts: { ...base.contracts, resolutionHook: undefined },
+    });
+    expect(statusOf(report, "contracts.resolutionHook")).toBe("warn");
+    expect(report.status).toBe("ok"); // a warn must not degrade the deployment
+  });
+
+  it("says what is silently lost, and names the command that fixes it", () => {
+    const base = healthyReal();
+    const report = buildHealthReport({
+      ...base,
+      contracts: { ...base.contracts, resolutionHook: undefined },
+    });
+    const detail = report.checks.find((c) => c.name === "contracts.resolutionHook")!.detail;
+    expect(detail).toContain("silently");
+    expect(detail).toContain("hook-deploy");
+    expect(detail).toContain("NEXT_PUBLIC_<NETWORK>_RESOLUTION_HOOK");
   });
 });

@@ -74,6 +74,16 @@ const SETTLE_GAS: u64 = 12_000_000_000;
 /// chain actually charged.
 const CREATE_GAS: u64 = 8_000_000_000;
 
+/// `ResolutionHook::dispatch` — one flag, one stored outcome, one event per registered consumer.
+/// Kept identical to `DISPATCH_GAS_MOTES` in `src/adapters/casper/real-chain.ts`: this driver is
+/// the manual lever for the same call the Arbiter makes, and a different limit here would publish
+/// a cost no production dispatch ever pays.
+const DISPATCH_GAS: u64 = 3_000_000_000;
+/// `AgentRegistry::register` — the third-party onboarding call, routed through the payable proxy.
+/// Held at the app's `DEFAULT_REGISTER_AGENT_GAS_MOTES` (8 CSPR) so the measured net cost is the
+/// one an agent registering through `POST /api/agents/register` actually pays.
+const REGISTER_AGENT_GAS: u64 = 8_000_000_000;
+
 /// `register_candidates` — one dictionary write per new candidate plus the batch event. A
 /// 40-key batch is a handful of writes more than a `create_market`, so 10 CSPR is comfortable
 /// headroom; the driver prints what each batch actually consumed (`HUNCH_GAS`).
@@ -256,16 +266,47 @@ fn main() {
         "hook-info" => {
             hook_info(&env, args.get(2).map(String::as_str));
         }
+        "hook-dispatch" => {
+            let market_id = args.get(2).expect("usage: hook-dispatch <market-id> <outcome> [bundle-hash]");
+            let outcome = args.get(3).expect("usage: hook-dispatch <market-id> <outcome> [bundle-hash]");
+            hook_dispatch(&env, market_id, outcome, args.get(4).map(String::as_str).unwrap_or(""));
+        }
+        "consumer-fund" => {
+            let market_id = args
+                .get(2)
+                .expect("usage: consumer-fund <market-id> <paying-outcome> <amount-cspr>");
+            let outcome = args
+                .get(3)
+                .expect("usage: consumer-fund <market-id> <paying-outcome> <amount-cspr>");
+            let amount: u64 = args
+                .get(4)
+                .and_then(|a| a.parse().ok())
+                .expect("amount must be a whole number of CSPR");
+            consumer_fund(&env, market_id, outcome, amount);
+        }
+        "consumer-settle" => {
+            consumer_settle(&env, args.get(2).expect("usage: consumer-settle <market-id>"));
+        }
         "registry-info" => {
             registry_info(&env, args.get(2).map(String::as_str));
+        }
+        "registry-register" => {
+            let name = args.get(2).expect("usage: registry-register <name> [metadata-uri] [bond-cspr]");
+            registry_register(
+                &env,
+                name,
+                args.get(3).map(String::as_str).unwrap_or(""),
+                args.get(4).and_then(|a| a.parse().ok()),
+            );
         }
         _ => {
             eprintln!(
                 "usage: contracts_catalogue <balance|lifecycle|catalogue|vault-deploy|\
                  catalogue-v2|create-v2|lifecycle-v2|list-markets|market-info|\
                  approve-oracle|open-creation|fleet-fund|plan-cost|\
-                 registry-deploy|registry-info|\
-                 hook-deploy|hook-consumer-deploy|hook-info|\
+                 registry-deploy|registry-info|registry-register|\
+                 hook-deploy|hook-consumer-deploy|hook-info|hook-dispatch|\
+                 consumer-fund|consumer-settle|\
                  field-deploy|field-register|field-freeze|field-info|field-resolve> ..."
             );
             std::process::exit(2);
@@ -323,6 +364,22 @@ fn registry_deploy(env: &HostEnv, min_bond_cspr: u64, cooldown_hours: u64) {
     println!("HUNCH_BALANCE end {}", env.balance_of(&caller));
 }
 
+/// Parse an account argument in either form the tooling hands you.
+///
+/// Casper 2.0 prints accounts as `entity-account-<hex>` — including from this very driver, whose
+/// `HUNCH_CALLER`/`HUNCH_REGISTRY registered=` lines are the most likely place an operator copies
+/// one from. Odra's `Address::from_str` only takes the `account-hash-` form, so pasting the
+/// printed string back in used to panic with `VmError(Deserialization)`. Accept both.
+fn parse_account(raw: &str) -> Address {
+    let normalised = match raw.strip_prefix("entity-account-") {
+        Some(hex) => format!("account-hash-{hex}"),
+        None => raw.to_string(),
+    };
+    Address::from_str(&normalised).unwrap_or_else(|err| {
+        panic!("bad account address {raw}: {err:?} (expected account-hash-<hex> or entity-account-<hex>)")
+    })
+}
+
 /// Free read of the registry's policy, and of one agent's standing when an address is given.
 fn registry_info(env: &HostEnv, account: Option<&str>) {
     let addr = std::env::var("HUNCH_AGENT_REGISTRY")
@@ -332,7 +389,7 @@ fn registry_info(env: &HostEnv, account: Option<&str>) {
     println!("HUNCH_REGISTRY cooldown_ms={}", registry.cooldown_ms());
     println!("HUNCH_REGISTRY agent_count={}", registry.agent_count());
     if let Some(account) = account {
-        let who = Address::from_str(account).expect("bad account address");
+        let who = parse_account(account);
         println!("HUNCH_REGISTRY registered={}", registry.is_registered(who));
         println!("HUNCH_REGISTRY active={}", registry.is_active(who));
         println!("HUNCH_REGISTRY bond={}", registry.bond_of(who));
@@ -393,16 +450,149 @@ fn hook_consumer_deploy(env: &HostEnv, hook: Option<&str>) {
 }
 
 /// Free read of a market's hook state — how many consumers are bound, and whether it has fired.
+///
+/// A dispatched market also prints the outcome and evidence hash the hook is serving, because
+/// that is the pair a consumer actually reads: `dispatched=true` alone says a transaction landed,
+/// while the outcome says *what other protocols will settle against*.
 fn hook_info(env: &HostEnv, market_id: Option<&str>) {
-    let addr = std::env::var("HUNCH_RESOLUTION_HOOK")
-        .expect("set HUNCH_RESOLUTION_HOOK to the deployed ResolutionHook package hash");
-    let hook = ResolutionHook::load(env, Address::from_str(&addr).expect("bad HUNCH_RESOLUTION_HOOK"));
+    let hook = load_hook(env);
     println!("HUNCH_HOOK resolver={}", hook.resolver().to_formatted_string());
     if let Some(market_id) = market_id {
         println!("HUNCH_HOOK market={market_id}");
         println!("HUNCH_HOOK hook_count={}", hook.hook_count(market_id.to_string()));
-        println!("HUNCH_HOOK dispatched={}", hook.is_dispatched(market_id.to_string()));
+        let dispatched = hook.is_dispatched(market_id.to_string());
+        println!("HUNCH_HOOK dispatched={dispatched}");
+        if dispatched {
+            println!("HUNCH_HOOK decided_outcome={}", hook.decided_outcome(market_id.to_string()));
+            println!("HUNCH_HOOK bundle_hash={}", hook.bundle_hash_of(market_id.to_string()));
+        }
     }
+}
+
+/// Load the deployed `ResolutionHook` from `HUNCH_RESOLUTION_HOOK`.
+fn load_hook(env: &HostEnv) -> contracts::resolution_hook::ResolutionHookHostRef {
+    let addr = std::env::var("HUNCH_RESOLUTION_HOOK")
+        .expect("set HUNCH_RESOLUTION_HOOK to the deployed ResolutionHook package hash");
+    ResolutionHook::load(env, Address::from_str(&addr).expect("bad HUNCH_RESOLUTION_HOOK"))
+}
+
+/// Load the deployed `EscrowConsumer` from `HUNCH_ESCROW_CONSUMER`.
+fn load_consumer(env: &HostEnv) -> contracts::hook_consumer::EscrowConsumerHostRef {
+    let addr = std::env::var("HUNCH_ESCROW_CONSUMER")
+        .expect("set HUNCH_ESCROW_CONSUMER to the deployed EscrowConsumer package hash");
+    EscrowConsumer::load(env, Address::from_str(&addr).expect("bad HUNCH_ESCROW_CONSUMER"))
+}
+
+/// Fire the hook for a resolved market — the same entrypoint, args and gas the Arbiter uses.
+///
+/// The app dispatches automatically at resolution (`src/agent/arbiter.ts`); this exists for the
+/// markets that resolved *before* the hook was wired into the deployment, and as the manual lever
+/// an operator can pull if a dispatch was skipped. `dispatch` is idempotent per market on chain,
+/// so a second call reverts with `AlreadyDispatched` rather than rewriting a served outcome.
+fn hook_dispatch(env: &HostEnv, market_id: &str, decided_outcome: &str, bundle_hash: &str) {
+    let caller = env.caller();
+    let mut hook = load_hook(env);
+    if hook.resolver() != caller {
+        eprintln!(
+            "hook-dispatch must be signed by the hook's resolver ({}); this key is {}",
+            hook.resolver().to_formatted_string(),
+            caller.to_formatted_string()
+        );
+        std::process::exit(1);
+    }
+    if hook.is_dispatched(market_id.to_string()) {
+        println!("HUNCH_HOOK already_dispatched={market_id}");
+        return;
+    }
+    let before = env.balance_of(&caller);
+    println!("HUNCH_STEP dispatch {market_id} outcome={decided_outcome}");
+    env.set_gas(DISPATCH_GAS);
+    hook.dispatch(
+        market_id.to_string(),
+        decided_outcome.to_string(),
+        bundle_hash.to_string(),
+    );
+    println!("HUNCH_GAS dispatch motes={}", before - env.balance_of(&caller));
+    println!("HUNCH_HOOK dispatched={market_id}");
+}
+
+/// Escrow real CSPR on the worked-example consumer against a market's outcome.
+///
+/// `beneficiary` and `refund_to` both default to the caller: the point of the exercise is to
+/// prove the settlement path moves money the way the outcome says, not to make a payment.
+fn consumer_fund(env: &HostEnv, market_id: &str, paying_outcome: &str, amount_cspr: u64) {
+    let caller = env.caller();
+    let mut consumer = load_consumer(env);
+    let amount = U512::from(amount_cspr) * U512::from(1_000_000_000u64);
+    let before = env.balance_of(&caller);
+    println!("HUNCH_STEP consumer-fund {market_id} outcome={paying_outcome} motes={amount}");
+    env.set_gas(SETTLE_GAS);
+    consumer
+        .with_tokens(amount)
+        .fund(market_id.to_string(), paying_outcome.to_string(), caller, caller);
+    let spent = before - env.balance_of(&caller);
+    println!("HUNCH_GAS consumer_fund motes={}", spent - amount);
+    println!("HUNCH_ESCROW funded={market_id} motes={amount}");
+}
+
+/// Push a funded escrow through settlement — permissionless, and the outcome comes from the hook.
+fn consumer_settle(env: &HostEnv, market_id: &str) {
+    let caller = env.caller();
+    let mut consumer = load_consumer(env);
+    let before = env.balance_of(&caller);
+    println!("HUNCH_STEP consumer-settle {market_id}");
+    env.set_gas(SETTLE_GAS);
+    consumer.settle(market_id.to_string());
+    let after = env.balance_of(&caller);
+    // The caller is the beneficiary here, so the purse moves by (escrow paid back − gas); print
+    // both directions rather than a single figure that could read as either.
+    println!("HUNCH_BALANCE before={before} after={after}");
+    let escrow = consumer.get_escrow(market_id.to_string());
+    println!(
+        "HUNCH_ESCROW settled={} paying_outcome={} amount={} bundle_hash={}",
+        escrow.settled, escrow.paying_outcome, escrow.amount, escrow.bundle_hash
+    );
+}
+
+/// Bond an agent identity into the `AgentRegistry` — the third-party onboarding call, measured.
+///
+/// The bond is attached value, not gas: it stays in the registry until `withdraw` after the
+/// cooldown. The printed `HUNCH_GAS` line subtracts it, so the number is the cost of the call
+/// itself — which is what `docs/GAS.md` quotes and what an agent operator budgets for.
+fn registry_register(env: &HostEnv, name: &str, metadata_uri: &str, bond_cspr: Option<u64>) {
+    let caller = env.caller();
+    let addr = std::env::var("HUNCH_AGENT_REGISTRY")
+        .expect("set HUNCH_AGENT_REGISTRY to the deployed AgentRegistry package hash");
+    let mut registry =
+        AgentRegistry::load(env, Address::from_str(&addr).expect("bad HUNCH_AGENT_REGISTRY"));
+    if registry.is_registered(caller) {
+        println!("HUNCH_REGISTRY already_registered={}", caller.to_formatted_string());
+        return;
+    }
+    let min_bond = registry.min_bond();
+    let bond = match bond_cspr {
+        Some(c) => U512::from(c) * U512::from(1_000_000_000u64),
+        None => min_bond,
+    };
+    if bond < min_bond {
+        eprintln!("bond {bond} is below the registry minimum {min_bond}");
+        std::process::exit(1);
+    }
+    let before = env.balance_of(&caller);
+    println!("HUNCH_STEP register-agent name={name} bond={bond}");
+    env.set_gas(REGISTER_AGENT_GAS);
+    registry
+        .with_tokens(bond)
+        .register(name.to_string(), metadata_uri.to_string());
+    let spent = before - env.balance_of(&caller);
+    // spent = bond + net gas. The bond is recoverable; the gas is the number worth publishing.
+    println!("HUNCH_GAS register motes={} limit={REGISTER_AGENT_GAS}", spent - bond);
+    println!(
+        "HUNCH_REGISTRY registered={} bond={} agent_count={}",
+        caller.to_formatted_string(),
+        registry.bond_of(caller),
+        registry.agent_count()
+    );
 }
 
 /// Top the fleet's agent wallets up from the deployer.

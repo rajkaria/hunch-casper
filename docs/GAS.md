@@ -88,14 +88,26 @@ Testnet: `hash-e226e709c6806bc9e7208e3e421859aa840fc88d27dd3604101426e61d3d9955`
 Measured 2026-08-02, deployed with `registry-deploy 100 48` (100 CSPR minimum bond, 48h
 withdrawal cooldown).
 
-| Call | net (CSPR) | limit |
-|---|---|---|
-| `AgentRegistry` install (308,722-byte wasm) | **329.43** | 450 |
-| `register` (agent bonds its own identity) | 8 (limit) | 8 |
+| Call | net (CSPR) | consumed | limit | transaction |
+|---|---|---|---|---|
+| `AgentRegistry` install (308,722-byte wasm) | **329.43** | — | 450 | — |
+| `register` (agent bonds its own identity) | **5.185** | 4.247 | 8 | `d23f176f…` |
 
 The install figure is the deployer purse before and after: 2000.00 → 1670.57 CSPR. It is a good
 reference point for "what does an Odra contract of ~300 KB cost to install", independent of what
 this particular contract does.
+
+`register` is the first number here that a **third party** pays, so it is measured rather than
+quoted: `registry-register "Hunch Operator" <uri>` at the app's own 8 CSPR limit
+(`DEFAULT_REGISTER_AGENT_GAS_MOTES`), purse 641.70 → 536.51 CSPR — of which 100 is the bond, not
+gas. The bond is attached value held by the registry and withdrawable after the 48h cooldown; the
+5.185 is what the call itself cost. 4.247 consumed under an 8 limit is 1.88x headroom, so the
+limit stays where it is: dropping it to 6 would save ~0.5 CSPR and leave 1.4x, which is not a
+trade worth making on the one call an outside agent has to get right on its first try.
+
+> **Budget to register: ~105.2 CSPR**, of which ~5.2 is spent and 100 is recoverable. It is
+> payable through the proxy (`register` is `#[odra(payable)]`), which is why it costs more than a
+> plain registry write like `register_market` (1.48).
 
 ## Oracle-as-a-service — ResolutionHook + a reference consumer
 
@@ -112,6 +124,27 @@ Deployer purse across the pair: 1372.74 → 766.93 CSPR. Install transactions `6
 `dispatch` is budgeted at a 3 CSPR limit — one flag, one stored outcome, one event per registered
 consumer. Consumers pay their own `settle` gas, which is the point of event dispatch: the oracle's
 cost does not grow with the number of protocols bound to it.
+
+The full loop was then run on chain against a real resolution
+(`testnet:cspr-hourly-updown#20666`, decided `down`) — see [ORACLE.md](ORACLE.md#3-proof-on-chain):
+
+| Call | net (CSPR) | consumed | limit | transaction |
+|---|---|---|---|---|
+| `ResolutionHook::dispatch` | **1.319** | 0.759 | 3 | `1472f9d1…` |
+| `EscrowConsumer::fund` (payable, via proxy) | **5.861** | 3.814 | 12 | `43e20702…` |
+| `EscrowConsumer::settle` (cross-contract read + transfer) | **6.165** | 4.220 | 12 | `6dd95ed3…` |
+
+Two things fall out of those numbers. First, **the oracle side is the cheap side**: 1.32 CSPR to
+publish an outcome every bound protocol can read, against 6.17 for one consumer to act on it —
+the asymmetry is what makes "notify N protocols" affordable for us and self-funding for them.
+Second, the reference keeper's `settle` limit was 5 CSPR against 4.220 consumed — 1.18x, thin
+enough that a slightly larger escrow could have run it out of gas. It is now 8 (1.9x).
+
+Consumed figures in these two tables are derived from the measured net under testnet's documented
+refund model (`consumed + 0.25 × (limit − consumed)`), not read from a receipt: CSPR.cloud reports
+`cost = payment_amount` for `payment_limited` transactions and leaves `consumed` null, so the
+purse delta is the only direct measurement available. The model is the one verified to the mote
+against the Jul 5 / Jul 18 transactions listed in `contracts/bin/catalogue.rs`.
 
 ## v1 per-market installs (historical)
 

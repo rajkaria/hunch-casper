@@ -33,8 +33,15 @@ const NODE_RPC = process.env.NODE_RPC ?? "https://node.testnet.casper.network/rp
 const CHAIN_NAME = process.env.CHAIN_NAME ?? "casper-test";
 const POLL_MS = Number(process.env.POLL_MS ?? 30_000);
 
-/** Gas for `settle` — a cross-contract read plus one transfer. */
-const SETTLE_GAS_MOTES = 5_000_000_000;
+/**
+ * Gas for `settle` — a cross-contract read plus one transfer.
+ *
+ * Measured on chain 2026-08-02 (tx `6dd95ed3…`): 4.220 CSPR consumed, 6.165 net. The original
+ * 5 CSPR limit left 1.18x headroom, and an out-of-gas `settle` burns the whole limit for nothing.
+ * 8 restores ~1.9x. Casper refunds 75% of the unused slack, so the extra 3 costs ~0.75 CSPR when
+ * unused and saves the whole transaction when it is not.
+ */
+const SETTLE_GAS_MOTES = 8_000_000_000;
 
 function requireEnv(name) {
   const value = process.env[name];

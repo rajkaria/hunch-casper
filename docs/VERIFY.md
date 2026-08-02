@@ -162,7 +162,18 @@ HUNCH_AGENT_REGISTRY=hash-e226e709c6806bc9e7208e3e421859aa840fc88d27dd3604101426
   cargo run --bin contracts_catalogue -- registry-info
 ```
 
-**Pass:** `min_bond=100000000000` (100 CSPR), `cooldown_ms=172800000` (48h), and an `agent_count`.
+**Pass:** `min_bond=100000000000` (100 CSPR), `cooldown_ms=172800000` (48h), and an `agent_count`
+of at least 1 — the first bonded identity was registered 2026-08-02 in transaction
+[`d23f176f…`](https://testnet.cspr.live/transaction/d23f176f92e774462f353b6d0c174ece6b86851aafd753e2fe9da0387af3db63)
+(100 CSPR bond, 5.185 CSPR of gas). Pass an account to see one agent's standing:
+
+```bash
+HUNCH_AGENT_REGISTRY=hash-e226e709c6806bc9e7208e3e421859aa840fc88d27dd3604101426e61d3d9955 \
+  cargo run --bin contracts_catalogue -- registry-info \
+  entity-account-532eb4f46277143025f3bbdc196b9af543e0b4a4f1ad7e6b6e519cf7898eb1ce
+```
+
+**Pass:** `registered=true`, `active=true`, `bond=100000000000`.
 
 **Full join flow** (needs a funded key of your own):
 
@@ -187,10 +198,24 @@ Both live on testnet:
 ```bash
 cd contracts
 HUNCH_RESOLUTION_HOOK=hash-35e2443be11ac4fed329e216338d702c45bbd8657d8687d1a18a7ed1fc020209 \
-  cargo run --bin contracts_catalogue -- hook-info <market-slug>
+  cargo run --bin contracts_catalogue -- hook-info 'testnet:cspr-hourly-updown#20666'
 ```
 
-**Pass:** prints the authorised `resolver`, plus `hook_count` and `dispatched` for that market.
+**Pass:** `dispatched=true`, `decided_outcome=down`, and a `bundle_hash` of
+`sha256:7d73a96395bd0cbd5d1f6dac5a7357413e27f436c19b82a0bf7b22c2923f6f68` — the same evidence
+bundle the Arbiter published for that resolution. The three transactions that produced it (escrow,
+dispatch, settle) are listed in [ORACLE.md §3](./ORACLE.md#3-proof-on-chain), along with a plain
+note on which of them was pushed manually and why. Substitute any other market id to see the
+`resolver` plus an undispatched market's `hook_count=0`/`dispatched=false`.
+
+Health now guards the wiring that made this necessary:
+
+```bash
+curl -s https://casper.playhunch.xyz/api/health | jq '.checks[] | select(.name=="contracts.resolutionHook")'
+```
+
+**Pass:** `ok`. A `warn` here means the hook address is unset, every resolution is silently
+skipping dispatch, and the fix is the command the detail line names.
 
 **The property worth checking yourself:** `EscrowConsumer::settle(market_id)` takes **no outcome
 argument**. Read [`contracts/src/hook_consumer.rs`](../contracts/src/hook_consumer.rs) — it reads
@@ -199,11 +224,23 @@ makes it safe to let a stranger run the keeper in [`examples/hook-keeper`](../ex
 
 ## B5. The x402 rail as an installable package
 
+Published: **[`x402-casper@0.1.0`](https://www.npmjs.com/package/x402-casper)**. Install it into an
+empty directory — no clone, no build:
+
+```bash
+npm i x402-casper && node -e "console.log(Object.keys(require('x402-casper')).join(', '))"
+```
+
+**Pass:** installs one package with zero dependencies and prints the exports, `requirePayment`
+and `payAndRetry` among them.
+
+From the tree, it still builds standalone:
+
 ```bash
 cd packages/x402-casper && npx tsc -p tsconfig.json && ls dist/x402
 ```
 
-**Pass:** builds standalone with zero runtime dependencies and emits `index.js` + `index.d.ts`.
+**Pass:** builds with zero runtime dependencies and emits `index.js` + `index.d.ts`.
 [`SPEC.md`](../packages/x402-casper/SPEC.md) documents the wire format precisely enough to
 reimplement in another language.
 
