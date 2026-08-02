@@ -1,0 +1,34 @@
+{
+  "name": "x402-casper",
+  "version": "0.1.0",
+  "description": "HTTP-402 micropayments settled by a real Casper transfer — payer-bound, single-use, zero dependencies.",
+  "license": "MIT",
+  "main": "dist/x402/index.js",
+  "types": "dist/x402/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "SPEC.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rajkaria/hunch-casper.git",
+    "directory": "packages/x402-casper"
+  },
+  "homepage": "https://github.com/rajkaria/hunch-casper",
+  "keywords": [
+    "casper",
+    "x402",
+    "micropayments",
+    "http-402",
+    "agent",
+    "paywall"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}

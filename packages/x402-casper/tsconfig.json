@@ -1,0 +1,19 @@
+{
+  // Standalone build of the SAME source the app ships (src/x402/index.ts + its import graph —
+  // pure, dependency-free modules only), exactly as packages/sdk does. Compiling the app's own
+  // module rather than a copy is what makes "the app runs on the published package" true by
+  // construction instead of by discipline.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "../../src",
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["../../src/x402/index.ts"]
+}

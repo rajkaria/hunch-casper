@@ -12,17 +12,14 @@ import { createContainer } from "@/lib/container";
 import { agentBet } from "@/lib/agent-bet";
 import { hydrateEconomyState, persistEconomyState } from "@/adapters/persist/economy-state";
 import { isCasperNetwork } from "@/config/network";
-import type { X402PaymentProof } from "@/ports/payment";
-
-function readPaymentHeader(req: Request): X402PaymentProof | undefined {
-  const header = req.headers.get("x-payment");
-  if (!header) return undefined;
-  try {
-    return JSON.parse(Buffer.from(header, "base64").toString("utf8")) as X402PaymentProof;
-  } catch {
-    return undefined;
-  }
-}
+// The published `x402-casper` package IS this module — the rail the fleet runs on is the rail
+// the package exports, so the two can never drift into "works for us, broken for you".
+import {
+  encodeChallenge,
+  encodePaymentResponse,
+  readProof,
+  PAYMENT_RESPONSE_HEADER,
+} from "@/x402";
 
 export async function POST(req: Request): Promise<Response> {
   let body: Record<string, unknown>;
@@ -45,7 +42,7 @@ export async function POST(req: Request): Promise<Response> {
     outcomeKey: String(outcomeKey ?? ""),
     amountMotes: String(amountMotes ?? ""),
     bettor: String(bettor ?? ""),
-    paymentProof: readPaymentHeader(req),
+    paymentProof: readProof(req),
   });
 
   if (res.status === "error") {
@@ -53,22 +50,9 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   if (res.status === "payment_required") {
-    const r = res.requirement;
     return NextResponse.json(
       {
-        x402Version: 1,
-        error: "payment required",
-        accepts: [
-          {
-            scheme: "casper-x402",
-            network: r.network,
-            asset: "CSPR",
-            maxAmountRequired: r.amountMotes,
-            payTo: r.payTo,
-            nonce: r.nonce,
-            resource: `/api/agent/v1/bet#${marketId}:${outcomeKey}`,
-          },
-        ],
+        ...encodeChallenge(res.requirement, `/api/agent/v1/bet#${marketId}:${outcomeKey}`),
         previewPayoutMotes: res.previewPayoutMotes,
       },
       { status: 402 },
@@ -78,9 +62,7 @@ export async function POST(req: Request): Promise<Response> {
   // Placed. Await the KV flush before responding — the escrow is already on chain, and a
   // serverless freeze after a fire-and-forget persist would drop the bet from the app's mirror.
   await persistEconomyState();
-  const paymentResponse = Buffer.from(
-    JSON.stringify({ success: true, deployHash: res.deployHash }),
-  ).toString("base64");
+  const paymentResponse = encodePaymentResponse(res.deployHash);
   return NextResponse.json(
     {
       deployHash: res.deployHash,
@@ -92,6 +74,6 @@ export async function POST(req: Request): Promise<Response> {
       totalStakedMotes: res.totalStakedMotes,
       poolByOutcomeMotes: res.poolByOutcomeMotes,
     },
-    { status: 200, headers: { "X-PAYMENT-RESPONSE": paymentResponse } },
+    { status: 200, headers: { [PAYMENT_RESPONSE_HEADER]: paymentResponse } },
   );
 }
